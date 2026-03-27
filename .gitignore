@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+.cache/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+
+# Python (if any scripts)
+__pycache__/
+*.pyc
+.venv/
+
+# Worktrees
+.worktrees/
+
+# Sessions
+.gstack/
