@@ -189,9 +189,7 @@ async function uploadToR2(
     })
   );
 
-  // R2 public URL (assumes public bucket or custom domain)
-  // Users configure this via R2 custom domain or public access
-  return `https://pub-${env.R2_ACCOUNT_ID}.r2.dev/${key}`;
+  return `${env.R2_PUBLIC_URL}/${key}`;
 }
 
 function saveAsset(
