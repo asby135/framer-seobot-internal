@@ -1,0 +1,5 @@
+{
+  "id": "crmchat-seo-engine",
+  "name": "CRMChat SEO Engine",
+  "modes": ["configureManagedCollection", "syncManagedCollection"]
+}

@@ -20,7 +20,8 @@ dist/
 .DS_Store
 Thumbs.db
 
-# SQLite
+# Data
+data/
 *.db
 *.db-wal
 *.db-shm

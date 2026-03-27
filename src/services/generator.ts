@@ -1,0 +1,470 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { nanoid } from "nanoid";
+import { getDb } from "../db/index.js";
+import { searchKB } from "./kb.js";
+import { generateThumbnail, processScreenshots } from "./assets.js";
+import { queryToSlug } from "../lib/utils.js";
+import { env } from "../lib/env.js";
+import { logger } from "../lib/logger.js";
+
+const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+
+interface GeneratedArticle {
+  title: string;
+  slug: string;
+  category: string;
+  summary: string;
+  content: string; // HTML
+}
+
+interface GenerationResult {
+  articleId: string;
+  status: "draft" | "review" | "generation_failed";
+  flags: Record<string, unknown>;
+}
+
+// Allowed HTML tags for sanitization (no scripts, no event handlers)
+const ALLOWED_TAGS = new Set([
+  "h1", "h2", "h3", "h4", "h5", "h6",
+  "p", "br", "hr",
+  "ul", "ol", "li",
+  "a", "strong", "em", "b", "i", "u",
+  "blockquote", "pre", "code",
+  "img", "figure", "figcaption",
+  "table", "thead", "tbody", "tr", "th", "td",
+  "div", "span",
+]);
+
+const ALLOWED_ATTRS = new Set([
+  "href", "src", "alt", "title", "loading", "class", "id",
+]);
+
+/**
+ * Generate an article for an approved keyword.
+ * Pipeline: context assembly → Claude generation → quality checks → grounding → assets → save.
+ */
+export async function generateArticle(
+  keywordId: string,
+  query: string
+): Promise<GenerationResult> {
+  const flags: Record<string, unknown> = {};
+
+  try {
+    // Step 1: Context assembly
+    const kbResults = searchKB(query, 3);
+    if (kbResults.length === 0) {
+      flags.low_kb_match = true;
+      logger.warn({ query }, "No KB articles matched query");
+    }
+
+    const relatedQueries = getRelatedQueries(query);
+    const existingSlugs = getExistingSlugs();
+
+    // Step 2: Claude generation (with retry on timeout/500)
+    const article = await callClaudeWithRetry(query, kbResults, relatedQueries, existingSlugs);
+
+    // Step 3: Quality checks
+    const qualityIssues = runQualityChecks(article, query, existingSlugs);
+    if (qualityIssues.length > 0) {
+      flags.quality_issues = qualityIssues;
+      logger.warn({ query, issues: qualityIssues }, "Quality check issues");
+    }
+
+    // Step 4: Grounding validation
+    if (kbResults.length > 0) {
+      const ungroundedClaims = await validateGrounding(article.content, kbResults);
+      if (ungroundedClaims.length > 0) {
+        flags.ungrounded_claims = ungroundedClaims;
+        logger.warn({ query, claims: ungroundedClaims }, "Ungrounded claims found");
+      }
+    }
+
+    // Step 5: Asset generation (parallel thumbnail + screenshot processing)
+    const articleId = nanoid();
+    let finalContent = article.content;
+
+    const [thumbnailUrl, screenshotResult] = await Promise.all([
+      generateThumbnail(articleId, article.title, query).catch((e) => {
+        logger.error({ error: e instanceof Error ? e.message : "unknown" }, "Thumbnail failed");
+        return null;
+      }),
+      processScreenshots(articleId, article.content).catch((e) => {
+        logger.error({ error: e instanceof Error ? e.message : "unknown" }, "Screenshots failed");
+        return { html: article.content, failed: [] as string[] };
+      }),
+    ]);
+
+    finalContent = screenshotResult.html;
+
+    if (!thumbnailUrl) {
+      flags.thumbnail_missing = true;
+    }
+    if (screenshotResult.failed.length > 0) {
+      flags.screenshots_failed = screenshotResult.failed;
+    }
+
+    // Step 6: Save to database
+    const status =
+      Object.keys(flags).length > 0 ? "review" : ("draft" as const);
+
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO articles (id, keyword_id, title, slug, category, summary, content, status, flags)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      articleId,
+      keywordId,
+      article.title,
+      article.slug,
+      article.category,
+      article.summary,
+      finalContent,
+      status,
+      JSON.stringify(flags)
+    );
+
+    // Update keyword status
+    db.prepare("UPDATE keywords SET status = 'generated' WHERE id = ?").run(
+      keywordId
+    );
+
+    logSync("generate", 1, "success");
+    logger.info({ articleId, query, status }, "Article generated");
+
+    return { articleId, status, flags };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    logger.error({ error: message, query }, "Article generation failed");
+
+    // Mark keyword as failed so it doesn't block the queue
+    const db = getDb();
+    const articleId = nanoid();
+    db.prepare(
+      `INSERT INTO articles (id, keyword_id, title, slug, category, summary, content, status, flags)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'generation_failed', ?)`
+    ).run(
+      articleId,
+      keywordId,
+      `Failed: ${query}`,
+      queryToSlug(query),
+      "",
+      "",
+      "",
+      JSON.stringify({ error: message })
+    );
+
+    db.prepare("UPDATE keywords SET status = 'generated' WHERE id = ?").run(
+      keywordId
+    );
+
+    logSync("generate", 0, "error");
+
+    return {
+      articleId,
+      status: "generation_failed",
+      flags: { error: message },
+    };
+  }
+}
+
+// --- Claude API calls with retry ---
+
+async function callClaudeWithRetry(
+  query: string,
+  kbResults: Array<{ title: string; content: string }>,
+  relatedQueries: string[],
+  existingSlugs: Set<string>
+): Promise<GeneratedArticle> {
+  try {
+    return await callClaude(query, kbResults, relatedQueries, existingSlugs);
+  } catch (e) {
+    const isRetryable =
+      e instanceof Error &&
+      (e.message.includes("timeout") ||
+        e.message.includes("500") ||
+        e.message.includes("529") ||
+        e.message.includes("overloaded"));
+
+    if (!isRetryable) throw e;
+
+    logger.warn({ query, error: e instanceof Error ? e.message : "unknown" }, "Claude API failed, retrying in 30s");
+    await new Promise((resolve) => setTimeout(resolve, 30_000));
+    return await callClaude(query, kbResults, relatedQueries, existingSlugs);
+  }
+}
+
+async function callClaude(
+  query: string,
+  kbResults: Array<{ title: string; content: string }>,
+  relatedQueries: string[],
+  existingSlugs: Set<string>
+): Promise<GeneratedArticle> {
+  const kbContext = kbResults
+    .map(
+      (kb, i) =>
+        `--- KB Article ${i + 1}: ${kb.title} ---\n${kb.content.slice(0, 2000)}`
+    )
+    .join("\n\n");
+
+  const relatedContext =
+    relatedQueries.length > 0
+      ? `\nRelated search queries people also search: ${relatedQueries.join(", ")}`
+      : "";
+
+  const existingArticles =
+    existingSlugs.size > 0
+      ? `\nExisting blog articles (avoid duplicating these topics): ${[...existingSlugs].slice(0, 20).join(", ")}`
+      : "";
+
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 4096,
+    system: `You are a senior content marketing writer for CRMChat, a Telegram CRM platform for sales teams.
+Write authoritative, practical blog articles that help sales professionals and business owners.
+
+Voice guidelines:
+- Professional but approachable, not corporate-speak
+- Focus on actionable advice with specific examples
+- Reference CRMChat features naturally where relevant (don't force mentions)
+- Use short paragraphs, subheadings, and bullet points for scannability
+- Target audience: sales managers, business owners, and growth marketers using Telegram for business
+
+You MUST respond with valid JSON matching this exact structure:
+{
+  "title": "SEO-optimized article title (include target keyword)",
+  "slug": "url-friendly-slug",
+  "category": "one of: outreach, crm, telegram, sales, automation, guides",
+  "summary": "1-2 sentence meta description for SEO (under 160 chars)",
+  "content": "Full HTML article body with proper headings (h2, h3), paragraphs, lists, etc."
+}
+
+HTML guidelines for the content field:
+- Use <h2> for main sections, <h3> for subsections
+- Use <p> for paragraphs
+- Use <ul>/<ol> and <li> for lists
+- Use <strong> for emphasis
+- Use <a href="/blog/slug"> for internal links (only link to existing articles)
+- Include the target keyword naturally in the first paragraph and at least one <h2>
+- Target length: 1,500-3,000 words
+- If mentioning competitor tools or websites, add a comment: <!-- screenshot:https://example.com --> where a screenshot would be valuable`,
+    messages: [
+      {
+        role: "user",
+        content: `Write a blog article targeting the keyword: "${query}"
+
+${kbContext ? `\nProduct knowledge base for accuracy:\n${kbContext}` : ""}
+${relatedContext}
+${existingArticles}
+
+Remember: respond with valid JSON only, no markdown code fences.`,
+      },
+    ],
+  });
+
+  const text =
+    response.content[0].type === "text" ? response.content[0].text : "";
+
+  // Parse the JSON response, stripping any markdown fences
+  const cleaned = text.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+
+  let parsed: GeneratedArticle;
+  try {
+    parsed = JSON.parse(cleaned) as GeneratedArticle;
+  } catch {
+    logger.error({ text: cleaned.slice(0, 200) }, "Claude returned invalid JSON");
+    throw new Error("Claude returned invalid JSON response");
+  }
+
+  // Ensure slug doesn't collide with existing articles
+  let slug = queryToSlug(parsed.slug || parsed.title);
+  if (existingSlugs.has(slug)) {
+    slug = `${slug}-${nanoid(6)}`;
+  }
+
+  // Sanitize HTML content
+  const sanitizedContent = sanitizeHTML(parsed.content || "");
+
+  return {
+    title: parsed.title,
+    slug,
+    category: parsed.category || "guides",
+    summary: parsed.summary || "",
+    content: sanitizedContent,
+  };
+}
+
+async function validateGrounding(
+  articleContent: string,
+  kbResults: Array<{ title: string; content: string }>
+): Promise<string[]> {
+  try {
+    const kbContext = kbResults
+      .map((kb) => `--- ${kb.title} ---\n${kb.content.slice(0, 2000)}`)
+      .join("\n\n");
+
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      system: `You are a fact-checker. Compare the article against the product knowledge base.
+Identify any specific product claims (pricing, features, capabilities, limitations) in the article that are NOT supported by the knowledge base.
+Respond with a JSON array of strings, each being an ungrounded claim.
+If all claims are grounded, respond with an empty array: []
+Only flag specific, verifiable product claims. General marketing language or industry knowledge is fine.`,
+      messages: [
+        {
+          role: "user",
+          content: `ARTICLE:\n${articleContent.slice(0, 6000)}\n\nKNOWLEDGE BASE:\n${kbContext}`,
+        },
+      ],
+    });
+
+    const text =
+      response.content[0].type === "text" ? response.content[0].text : "[]";
+    const cleaned = text.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+
+    try {
+      return JSON.parse(cleaned) as string[];
+    } catch {
+      logger.error({ text: cleaned.slice(0, 200) }, "Grounding check returned invalid JSON");
+      return ["Grounding validation returned invalid response - manual review recommended"];
+    }
+  } catch (e) {
+    logger.error(
+      { error: e instanceof Error ? e.message : "unknown" },
+      "Grounding validation failed"
+    );
+    return ["Grounding validation failed - manual review recommended"];
+  }
+}
+
+// --- HTML Sanitization ---
+
+/**
+ * Strip dangerous tags and attributes from generated HTML.
+ * Allows only safe structural/content tags.
+ */
+function sanitizeHTML(html: string): string {
+  // Remove script tags and their content
+  let clean = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+
+  // Remove style tags and their content
+  clean = clean.replace(/<style[\s\S]*?<\/style>/gi, "");
+
+  // Remove event handlers (onclick, onload, onerror, etc.)
+  clean = clean.replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, "");
+  clean = clean.replace(/\s+on\w+\s*=\s*\S+/gi, "");
+
+  // Remove javascript: URLs
+  clean = clean.replace(/href\s*=\s*["']javascript:[^"']*["']/gi, 'href="#"');
+  clean = clean.replace(/src\s*=\s*["']javascript:[^"']*["']/gi, "");
+
+  // Remove data: URLs from src (potential XSS vector)
+  clean = clean.replace(/src\s*=\s*["']data:[^"']*["']/gi, "");
+
+  // Strip disallowed tags but keep their content
+  clean = clean.replace(/<\/?(\w+)([^>]*)>/g, (match, tag, attrs) => {
+    const lowerTag = tag.toLowerCase();
+    if (!ALLOWED_TAGS.has(lowerTag)) return "";
+
+    // Filter attributes
+    const cleanAttrs = (attrs as string)
+      .match(/\s+[\w-]+\s*=\s*["'][^"']*["']/g)
+      ?.filter((attr: string) => {
+        const name = attr.trim().split(/\s*=/)[0].toLowerCase();
+        return ALLOWED_ATTRS.has(name);
+      })
+      .join("") || "";
+
+    // Self-closing tags
+    if (match.startsWith("</")) return `</${lowerTag}>`;
+    return `<${lowerTag}${cleanAttrs}>`;
+  });
+
+  // Preserve screenshot placeholder comments (needed for asset pipeline)
+  // They were already processed or will be processed by processScreenshots()
+
+  return clean;
+}
+
+// --- Quality checks ---
+
+function runQualityChecks(
+  article: GeneratedArticle,
+  query: string,
+  existingSlugs: Set<string>
+): string[] {
+  const issues: string[] = [];
+
+  // Check keyword in title
+  if (!article.title.toLowerCase().includes(query.toLowerCase())) {
+    issues.push("Target keyword not found in title");
+  }
+
+  // Check keyword in first paragraph
+  const firstPara = article.content.match(/<p>(.*?)<\/p>/s);
+  if (
+    firstPara &&
+    !firstPara[1].toLowerCase().includes(query.toLowerCase())
+  ) {
+    issues.push("Target keyword not found in first paragraph");
+  }
+
+  // Check word count (strip HTML tags)
+  const plainText = article.content.replace(/<[^>]+>/g, " ");
+  const wordCount = plainText.split(/\s+/).filter((w) => w.length > 0).length;
+  if (wordCount < 1500) {
+    issues.push(`Article too short: ${wordCount} words (minimum 1,500)`);
+  }
+  if (wordCount > 3000) {
+    issues.push(`Article too long: ${wordCount} words (maximum 3,000)`);
+  }
+
+  // Validate internal links
+  const linkRegex = /href="\/blog\/([^"]+)"/g;
+  let match;
+  while ((match = linkRegex.exec(article.content)) !== null) {
+    if (!existingSlugs.has(match[1])) {
+      issues.push(`Broken internal link: /blog/${match[1]}`);
+    }
+  }
+
+  return issues;
+}
+
+// --- Helpers ---
+
+function getRelatedQueries(query: string): string[] {
+  const db = getDb();
+  const queryTerms = query.toLowerCase().split(/\s+/);
+  const rows = db
+    .prepare(
+      `SELECT query FROM keywords
+       WHERE status IN ('pending', 'approved') AND id != ''
+       ORDER BY opportunity_score DESC LIMIT 50`
+    )
+    .all() as { query: string }[];
+
+  return rows
+    .filter((r) => {
+      const terms = r.query.toLowerCase().split(/\s+/);
+      return queryTerms.some((qt) => terms.includes(qt));
+    })
+    .map((r) => r.query)
+    .slice(0, 5);
+}
+
+function getExistingSlugs(): Set<string> {
+  const db = getDb();
+  return new Set(
+    (db.prepare("SELECT slug FROM articles").all() as { slug: string }[]).map(
+      (r) => r.slug
+    )
+  );
+}
+
+function logSync(action: string, count: number, status: string) {
+  const db = getDb();
+  db.prepare(
+    "INSERT INTO sync_log (id, action, items_count, status) VALUES (?, ?, ?, ?)"
+  ).run(nanoid(), action, count, status);
+}
