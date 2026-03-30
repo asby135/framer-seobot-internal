@@ -150,6 +150,7 @@ articles.post("/import", async (c) => {
       category: string;
       content: string;
       image_url?: string;
+      date?: string;
     }>;
   }>();
 
@@ -158,8 +159,8 @@ articles.post("/import", async (c) => {
   }
 
   const insertArticle = db.prepare(
-    `INSERT OR IGNORE INTO articles (id, keyword_id, title, slug, category, summary, content, status, flags)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'published', '{}')`
+    `INSERT OR IGNORE INTO articles (id, keyword_id, title, slug, category, summary, content, status, flags, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'published', '{}', ?, ?)`
   );
 
   const insertAsset = db.prepare(
@@ -179,7 +180,8 @@ articles.post("/import", async (c) => {
          VALUES (?, ?, 'import', 'generated', 0)`
       ).run(keywordId, a.title);
 
-      insertArticle.run(articleId, keywordId, a.title, a.slug, a.category || "guides", a.summary || "", a.content);
+      const dateStr = a.date ? new Date(a.date).toISOString().replace("T", " ").slice(0, 19) : new Date().toISOString().replace("T", " ").slice(0, 19);
+      insertArticle.run(articleId, keywordId, a.title, a.slug, a.category || "guides", a.summary || "", a.content, dateStr, dateStr);
 
       if (a.image_url) {
         insertAsset.run(nanoid(), articleId, a.image_url, a.title);

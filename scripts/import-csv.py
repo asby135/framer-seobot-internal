@@ -25,6 +25,7 @@ with open(CSV_PATH, encoding="utf-8") as f:
             "category": row.get("Category", "guides").lower(),
             "content": row.get("Content", ""),
             "image_url": row.get("Image", ""),
+            "date": row.get("Date", ""),
         })
 
 print(f"Found {len(articles)} articles to import:")
