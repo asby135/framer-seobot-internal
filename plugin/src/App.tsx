@@ -54,9 +54,9 @@ export function App() {
     setRefreshing(true);
     try {
       await api.rescoreKeywords();
-      setRefreshKey((k) => k + 1); // trigger topic list reload
-    } catch {
-      // silently fail
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      framer.notify(e instanceof Error ? e.message : "Re-score failed", { variant: "error" });
     } finally {
       setRefreshing(false);
     }
