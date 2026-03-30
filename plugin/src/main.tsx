@@ -1,3 +1,4 @@
+import { createRoot } from "react-dom/client";
 import { framer } from "framer-plugin";
 import { App } from "./App";
 import { SyncHandler } from "./components/SyncHandler";
@@ -15,8 +16,7 @@ if (mode === "syncManagedCollection") {
     width: 400,
     height: 600,
   });
-}
 
-export function renderApp() {
-  return <App />;
+  const root = createRoot(document.getElementById("root")!);
+  root.render(<App />);
 }

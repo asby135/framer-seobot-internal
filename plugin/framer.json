@@ -1,5 +1,6 @@
 {
-  "id": "crmchat-seo-engine",
+  "id": "seobtn",
   "name": "CRMChat SEO Engine",
+  "icon": "https://framer.com/m/favicon.ico",
   "modes": ["configureManagedCollection", "syncManagedCollection"]
 }
