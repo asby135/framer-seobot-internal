@@ -189,7 +189,7 @@ export function TopicQueue() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { display: "flex", flexDirection: "column", height: "100%" },
+  container: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" },
   center: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 },
   statsBar: { padding: "8px 16px", fontSize: 12, color: "#888", borderBottom: "1px solid #2a2a2a" },
   list: { flex: 1, overflow: "auto" },
@@ -199,7 +199,7 @@ const styles: Record<string, React.CSSProperties> = {
   rowContent: { flex: 1, minWidth: 0 },
   query: { color: "#e0e0e0", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   meta: { color: "#888", fontSize: 12, marginTop: 2 },
-  actions: { display: "flex", gap: 8, padding: "12px 16px", borderTop: "1px solid #333" },
+  actions: { display: "flex", gap: 8, padding: "12px 16px", borderTop: "1px solid #333", flexShrink: 0 },
   approveButton: { flex: 1, padding: "8px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
   rejectButton: { flex: 1, padding: "8px 0", background: "#5a2a2a", color: "#f88", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
   customButton: { padding: "8px 12px", background: "#333", color: "#aaa", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 },

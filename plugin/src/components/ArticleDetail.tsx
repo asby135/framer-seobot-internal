@@ -96,6 +96,17 @@ export function ArticleDetail({ articleId, onBack }: Props) {
         </div>
       )}
 
+      {/* Article content preview */}
+      {article.content && (
+        <div style={styles.section}>
+          <p style={styles.sectionLabel}>Article Preview</p>
+          <div
+            style={styles.contentPreview}
+            dangerouslySetInnerHTML={{ __html: article.content }}
+          />
+        </div>
+      )}
+
       {/* Actions */}
       <div style={styles.actions}>
         {(article.status === "draft" || article.status === "review") && (
@@ -133,6 +144,7 @@ const styles: Record<string, React.CSSProperties> = {
   section: { marginBottom: 16 },
   sectionLabel: { color: "#888", fontSize: 12, fontWeight: 500, margin: "0 0 4px" },
   summaryText: { color: "#ccc", margin: 0, lineHeight: 1.5 },
+  contentPreview: { background: "#222", borderRadius: 6, padding: "12px 16px", color: "#ccc", fontSize: 13, lineHeight: 1.6, maxHeight: 400, overflow: "auto" },
   actions: { display: "flex", gap: 8, marginTop: 8 },
   publishButton: { flex: 1, padding: "10px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 },
   disabled: { opacity: 0.4, cursor: "not-allowed" },
