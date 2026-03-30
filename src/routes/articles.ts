@@ -139,4 +139,59 @@ articles.post("/:id/regenerate", async (c) => {
   return c.json({ status: "queued", keyword_id: keyword.id, query: keyword.query });
 });
 
+// Bulk import articles (for migrating from external CMS)
+articles.post("/import", async (c) => {
+  const db = getDb();
+  const body = await c.req.json<{
+    articles: Array<{
+      title: string;
+      slug: string;
+      summary: string;
+      category: string;
+      content: string;
+      image_url?: string;
+    }>;
+  }>();
+
+  if (!body.articles?.length) {
+    return c.json({ error: "No articles provided" }, 400);
+  }
+
+  const insertArticle = db.prepare(
+    `INSERT OR IGNORE INTO articles (id, keyword_id, title, slug, category, summary, content, status, flags)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'published', '{}')`
+  );
+
+  const insertAsset = db.prepare(
+    `INSERT INTO assets (id, article_id, type, url, alt_text)
+     VALUES (?, ?, 'thumbnail', ?, ?)`
+  );
+
+  let imported = 0;
+  const importAll = db.transaction(() => {
+    for (const a of body.articles) {
+      const articleId = nanoid();
+      const keywordId = nanoid();
+
+      // Create a placeholder keyword
+      db.prepare(
+        `INSERT OR IGNORE INTO keywords (id, query, source, status, opportunity_score)
+         VALUES (?, ?, 'import', 'generated', 0)`
+      ).run(keywordId, a.title);
+
+      insertArticle.run(articleId, keywordId, a.title, a.slug, a.category || "guides", a.summary || "", a.content);
+
+      if (a.image_url) {
+        insertAsset.run(nanoid(), articleId, a.image_url, a.title);
+      }
+
+      imported++;
+    }
+  });
+
+  importAll();
+  logger.info({ imported }, "Articles imported");
+  return c.json({ status: "complete", imported });
+});
+
 export { articles };
