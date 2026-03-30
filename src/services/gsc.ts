@@ -114,7 +114,7 @@ export async function fetchGSCQueries(days: number = 90): Promise<GSCQuery[]> {
     if (res.status === 429) {
       throw new Error("GSC rate limit exceeded. Try again later.");
     }
-    throw new Error(`GSC API error: ${res.status}`);
+    throw new Error(`GSC API error: ${res.status} - ${body}`);
   }
 
   const data = (await res.json()) as GSCResponse;
