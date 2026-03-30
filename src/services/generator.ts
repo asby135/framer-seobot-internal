@@ -79,8 +79,23 @@ export async function generateArticle(
       }
     }
 
-    // Step 5: Asset generation (parallel thumbnail + screenshot processing)
+    // Step 5: Save article to database first (assets reference article via FK)
     const articleId = nanoid();
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO articles (id, keyword_id, title, slug, category, summary, content, status, flags)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', '{}')`
+    ).run(
+      articleId,
+      keywordId,
+      article.title,
+      article.slug,
+      article.category,
+      article.summary,
+      article.content
+    );
+
+    // Step 6: Asset generation (parallel thumbnail + screenshot processing)
     let finalContent = article.content;
 
     const [thumbnailUrl, screenshotResult] = await Promise.all([
@@ -103,25 +118,13 @@ export async function generateArticle(
       flags.screenshots_failed = screenshotResult.failed;
     }
 
-    // Step 6: Save to database
+    // Step 7: Update article with final content and flags
     const status =
       Object.keys(flags).length > 0 ? "review" : ("draft" as const);
 
-    const db = getDb();
     db.prepare(
-      `INSERT INTO articles (id, keyword_id, title, slug, category, summary, content, status, flags)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      articleId,
-      keywordId,
-      article.title,
-      article.slug,
-      article.category,
-      article.summary,
-      finalContent,
-      status,
-      JSON.stringify(flags)
-    );
+      `UPDATE articles SET content = ?, status = ?, flags = ? WHERE id = ?`
+    ).run(finalContent, status, JSON.stringify(flags), articleId);
 
     // Update keyword status
     db.prepare("UPDATE keywords SET status = 'generated' WHERE id = ?").run(
@@ -218,7 +221,7 @@ async function callClaude(
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
+    max_tokens: 8192,
     system: `You are a senior content marketing writer for CRMChat, a Telegram CRM platform for sales teams.
 Write authoritative, practical blog articles that help sales professionals and business owners.
 
@@ -245,7 +248,7 @@ HTML guidelines for the content field:
 - Use <strong> for emphasis
 - Use <a href="/blog/slug"> for internal links (only link to existing articles)
 - Include the target keyword naturally in the first paragraph and at least one <h2>
-- Target length: 1,500-3,000 words
+- IMPORTANT: The article MUST be at least 1,500 words (aim for 2,000). If the topic seems short, expand with practical examples, step-by-step guides, FAQs, common mistakes, or best practices. Maximum 3,000 words
 - If mentioning competitor tools or websites, add a comment: <!-- screenshot:https://example.com --> where a screenshot would be valuable`,
     messages: [
       {
@@ -320,11 +323,24 @@ Only flag specific, verifiable product claims. General marketing language or ind
 
     const text =
       response.content[0].type === "text" ? response.content[0].text : "[]";
-    const cleaned = text.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+    const cleaned = text
+      .trim()
+      .replace(/^```(?:json)?\s*/, "")
+      .replace(/\s*```$/, "");
 
     try {
-      return JSON.parse(cleaned) as string[];
+      const parsed = JSON.parse(cleaned);
+      if (Array.isArray(parsed)) return parsed as string[];
+      return [];
     } catch {
+      // Try to extract JSON array from the response
+      const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
+        try {
+          const parsed = JSON.parse(arrayMatch[0]);
+          if (Array.isArray(parsed)) return parsed as string[];
+        } catch { /* fall through */ }
+      }
       logger.error({ text: cleaned.slice(0, 200) }, "Grounding check returned invalid JSON");
       return ["Grounding validation returned invalid response - manual review recommended"];
     }
