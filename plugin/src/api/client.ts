@@ -124,9 +124,9 @@ class ApiClient {
   }
 
   // Topics
-  async getTopics(status: string = "pending") {
-    return this.request<{ topics: Topic[] }>(
-      `/api/topics?status=${status}`
+  async getTopics(status: string = "pending", page: number = 1) {
+    return this.request<{ topics: Topic[]; total: number; page: number; pages: number }>(
+      `/api/topics?status=${status}&page=${page}`
     );
   }
 
@@ -163,6 +163,22 @@ class ApiClient {
     return this.request<{ success: boolean }>(`/api/articles/${id}/publish`, {
       method: "POST",
     });
+  }
+
+  async deleteArticle(id: string) {
+    return this.request<{ success: boolean }>(`/api/articles/${id}/delete`, {
+      method: "POST",
+    });
+  }
+
+  async regenerateArticle(id: string, instructions?: string) {
+    return this.request<{ status: string; keyword_id: string; query: string }>(
+      `/api/articles/${id}/regenerate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ instructions }),
+      }
+    );
   }
 
   // Generate

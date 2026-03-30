@@ -190,7 +190,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   content: {
     flex: 1,
-    overflow: "auto",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column" as const,
   },
   textSecondary: {
     color: "#888",

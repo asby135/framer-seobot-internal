@@ -8,17 +8,22 @@ export function TopicQueue() {
   const [error, setError] = useState("");
   const [customQuery, setCustomQuery] = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
     loadTopics();
-  }, []);
+  }, [page]);
 
   async function loadTopics() {
     setLoading(true);
     setError("");
     try {
-      const { topics } = await api.getTopics("pending");
-      setTopics(topics);
+      const data = await api.getTopics("pending", page);
+      setTopics(data.topics);
+      setTotalPages(data.pages);
+      setTotal(data.total);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load topics");
     } finally {
@@ -71,10 +76,6 @@ export function TopicQueue() {
     loadTopics();
   }
 
-  // Stats bar
-  const pending = topics.length;
-  const approvedCount = 0; // Would need a separate call, skip for now
-
   if (loading) {
     return <div style={styles.center}><p style={styles.muted}>Loading topics...</p></div>;
   }
@@ -112,12 +113,31 @@ export function TopicQueue() {
 
   return (
     <div style={styles.container}>
-      {/* Stats bar */}
+      {/* Stats bar with pagination */}
       <div style={styles.statsBar}>
-        <span>{pending} pending</span>
+        <span>{total} pending</span>
+        {totalPages > 1 && (
+          <span style={styles.pagination}>
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              style={{ ...styles.pageButton, ...(page <= 1 ? styles.disabled : {}) }}
+            >
+              ‹
+            </button>
+            <span>{page}/{totalPages}</span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              style={{ ...styles.pageButton, ...(page >= totalPages ? styles.disabled : {}) }}
+            >
+              ›
+            </button>
+          </span>
+        )}
       </div>
 
-      {/* Topic list */}
+      {/* Topic list — scrollable */}
       <div style={styles.list}>
         {topics.map((t) => (
           <div
@@ -141,65 +161,70 @@ export function TopicQueue() {
         ))}
       </div>
 
-      {/* Actions */}
-      <div style={styles.actions}>
-        <button
-          onClick={handleApprove}
-          disabled={selected.size === 0}
-          style={{
-            ...styles.approveButton,
-            ...(selected.size === 0 ? styles.disabled : {}),
-          }}
-        >
-          ✓ Approve
-        </button>
-        <button
-          onClick={handleReject}
-          disabled={selected.size === 0}
-          style={{
-            ...styles.rejectButton,
-            ...(selected.size === 0 ? styles.disabled : {}),
-          }}
-        >
-          ✗ Reject
-        </button>
-        <button
-          onClick={() => setShowCustom(!showCustom)}
-          style={styles.customButton}
-        >
-          + Custom
-        </button>
-      </div>
-
-      {showCustom && (
-        <div style={styles.customRow}>
-          <input
-            value={customQuery}
-            onChange={(e) => setCustomQuery(e.target.value)}
-            placeholder="Enter a keyword..."
-            style={styles.customInput}
-            onKeyDown={(e) => e.key === "Enter" && handleCustomSubmit()}
-            autoFocus
-          />
-          <button onClick={handleCustomSubmit} style={styles.smallButton}>Add</button>
+      {/* Footer — pinned to bottom */}
+      <div style={styles.footer}>
+        <div style={styles.actions}>
+          <button
+            onClick={handleApprove}
+            disabled={selected.size === 0}
+            style={{
+              ...styles.approveButton,
+              ...(selected.size === 0 ? styles.disabled : {}),
+            }}
+          >
+            ✓ Approve
+          </button>
+          <button
+            onClick={handleReject}
+            disabled={selected.size === 0}
+            style={{
+              ...styles.rejectButton,
+              ...(selected.size === 0 ? styles.disabled : {}),
+            }}
+          >
+            ✗ Reject
+          </button>
+          <button
+            onClick={() => setShowCustom(!showCustom)}
+            style={styles.customButton}
+          >
+            + Custom
+          </button>
         </div>
-      )}
+
+        {showCustom && (
+          <div style={styles.customRow}>
+            <input
+              value={customQuery}
+              onChange={(e) => setCustomQuery(e.target.value)}
+              placeholder="Enter a keyword..."
+              style={styles.customInput}
+              onKeyDown={(e) => e.key === "Enter" && handleCustomSubmit()}
+              autoFocus
+            />
+            <button onClick={handleCustomSubmit} style={styles.smallButton}>Add</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" },
+  container: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 },
   center: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 },
-  statsBar: { padding: "8px 16px", fontSize: 12, color: "#888", borderBottom: "1px solid #2a2a2a" },
-  list: { flex: 1, overflow: "auto" },
+  statsBar: { padding: "8px 16px", fontSize: 12, color: "#888", borderBottom: "1px solid #2a2a2a", flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center" },
+  pagination: { display: "flex", alignItems: "center", gap: 6 },
+  pageButton: { background: "none", border: "1px solid #444", borderRadius: 4, color: "#aaa", cursor: "pointer", padding: "2px 6px", fontSize: 12 },
+  list: { flex: 1, overflow: "auto", minHeight: 0 },
+  footer: { flexShrink: 0, borderTop: "1px solid #333", background: "#1a1a1a" },
   row: { display: "flex", alignItems: "flex-start", padding: "10px 16px", borderBottom: "1px solid #2a2a2a", cursor: "pointer", gap: 8 },
   rowSelected: { background: "#2a2a2a" },
   checkbox: { color: "#888", fontSize: 14, marginTop: 1, flexShrink: 0 },
   rowContent: { flex: 1, minWidth: 0 },
   query: { color: "#e0e0e0", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   meta: { color: "#888", fontSize: 12, marginTop: 2 },
-  actions: { display: "flex", gap: 8, padding: "12px 16px", borderTop: "1px solid #333", flexShrink: 0 },
+  actions: { display: "flex", gap: 8, padding: "12px 16px" },
   approveButton: { flex: 1, padding: "8px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
   rejectButton: { flex: 1, padding: "8px 0", background: "#5a2a2a", color: "#f88", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
   customButton: { padding: "8px 12px", background: "#333", color: "#aaa", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 },

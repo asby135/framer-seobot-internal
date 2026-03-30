@@ -4,10 +4,13 @@ import { getDb } from "../db/index.js";
 
 const topics = new Hono();
 
-// List keyword opportunities (scored, ranked)
+// List keyword opportunities (scored, ranked) with pagination
 topics.get("/", (c) => {
   const db = getDb();
   const status = c.req.query("status") || "pending";
+  const page = Math.max(1, parseInt(c.req.query("page") || "1", 10));
+  const limit = Math.min(100, Math.max(1, parseInt(c.req.query("limit") || "50", 10)));
+  const offset = (page - 1) * limit;
 
   const rows = db
     .prepare(
@@ -16,11 +19,15 @@ topics.get("/", (c) => {
        FROM keywords
        WHERE status = ?
        ORDER BY opportunity_score DESC
-       LIMIT 50`
+       LIMIT ? OFFSET ?`
     )
-    .all(status);
+    .all(status, limit, offset);
 
-  return c.json({ topics: rows });
+  const total = (db
+    .prepare("SELECT COUNT(*) as count FROM keywords WHERE status = ?")
+    .get(status) as { count: number }).count;
+
+  return c.json({ topics: rows, total, page, pages: Math.ceil(total / limit) });
 });
 
 // Approve a topic for generation

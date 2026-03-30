@@ -11,6 +11,10 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [publishing, setPublishing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [showEditPrompt, setShowEditPrompt] = useState(false);
+  const [editInstructions, setEditInstructions] = useState("");
 
   useEffect(() => {
     loadArticle();
@@ -25,6 +29,30 @@ export function ArticleDetail({ articleId, onBack }: Props) {
       setError(e instanceof ApiError ? e.message : "Failed to load article");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await api.deleteArticle(articleId);
+      onBack();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to delete");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    try {
+      await api.regenerateArticle(articleId, editInstructions.trim() || undefined);
+      onBack();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to regenerate");
+    } finally {
+      setRegenerating(false);
     }
   }
 
@@ -107,20 +135,54 @@ export function ArticleDetail({ articleId, onBack }: Props) {
         </div>
       )}
 
+      {/* Edit / Regenerate prompt */}
+      {(article.status === "draft" || article.status === "review") && (
+        <div style={styles.section}>
+          <button
+            onClick={() => setShowEditPrompt(!showEditPrompt)}
+            style={styles.editToggle}
+          >
+            {showEditPrompt ? "Cancel Edit" : "✎ Edit & Regenerate"}
+          </button>
+          {showEditPrompt && (
+            <div style={styles.editArea}>
+              <textarea
+                value={editInstructions}
+                onChange={(e) => setEditInstructions(e.target.value)}
+                placeholder="e.g. Fix the grounding flags above, remove the claim about 800M users, add more detail about CRMChat's pipeline feature..."
+                style={styles.editTextarea}
+                rows={4}
+              />
+              <button
+                onClick={handleRegenerate}
+                disabled={regenerating}
+                style={{ ...styles.regenerateButton, ...(regenerating ? styles.disabled : {}) }}
+              >
+                {regenerating ? "Regenerating..." : "Regenerate Article"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Actions */}
       <div style={styles.actions}>
         {(article.status === "draft" || article.status === "review") && (
           <button
             onClick={handlePublish}
             disabled={publishing}
-            style={{
-              ...styles.publishButton,
-              ...(publishing ? styles.disabled : {}),
-            }}
+            style={{ ...styles.publishButton, ...(publishing ? styles.disabled : {}) }}
           >
             {publishing ? "Publishing..." : "Publish"}
           </button>
         )}
+        <button
+          onClick={handleDelete}
+          disabled={deleting}
+          style={{ ...styles.deleteButton, ...(deleting ? styles.disabled : {}) }}
+        >
+          {deleting ? "Deleting..." : "Delete"}
+        </button>
       </div>
     </div>
   );
@@ -145,7 +207,12 @@ const styles: Record<string, React.CSSProperties> = {
   sectionLabel: { color: "#888", fontSize: 12, fontWeight: 500, margin: "0 0 4px" },
   summaryText: { color: "#ccc", margin: 0, lineHeight: 1.5 },
   contentPreview: { background: "#222", borderRadius: 6, padding: "12px 16px", color: "#ccc", fontSize: 13, lineHeight: 1.6, maxHeight: 400, overflow: "auto" },
+  editToggle: { background: "none", border: "1px solid #444", borderRadius: 6, color: "#aaa", cursor: "pointer", padding: "6px 12px", fontSize: 13, width: "100%" },
+  editArea: { marginTop: 8, display: "flex", flexDirection: "column" as const, gap: 8 },
+  editTextarea: { background: "#2a2a2a", border: "1px solid #444", borderRadius: 6, padding: "8px 10px", color: "#fff", fontSize: 13, resize: "vertical" as const, outline: "none", fontFamily: "inherit", lineHeight: 1.4 },
+  regenerateButton: { padding: "8px 0", background: "#3a3a1a", color: "#fa0", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
   actions: { display: "flex", gap: 8, marginTop: 8 },
   publishButton: { flex: 1, padding: "10px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 },
+  deleteButton: { flex: 1, padding: "10px 0", background: "#5a2a2a", color: "#f88", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 },
   disabled: { opacity: 0.4, cursor: "not-allowed" },
 };
