@@ -14,6 +14,8 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>("topics");
   const [showSettings, setShowSettings] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     checkSetup();
@@ -48,6 +50,18 @@ export function App() {
     setIsSetup(true);
   }
 
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await api.rescoreKeywords();
+      setRefreshKey((k) => k + 1); // trigger topic list reload
+    } catch {
+      // silently fail
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   if (loading) {
     return (
       <div style={styles.center}>
@@ -69,13 +83,27 @@ export function App() {
       {/* Header */}
       <div style={styles.header}>
         <span style={styles.headerTitle}>CRMChat SEO Engine</span>
-        <button
-          onClick={() => setShowSettings(true)}
-          style={styles.gearButton}
-          title="Settings"
-        >
-          ⚙
-        </button>
+        <div style={{ display: "flex", gap: 4 }}>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            style={{
+              ...styles.gearButton,
+              opacity: refreshing ? 0.4 : 1,
+              animation: refreshing ? "spin 1s linear infinite" : "none",
+            }}
+            title="Re-score keywords"
+          >
+            ↻
+          </button>
+          <button
+            onClick={() => setShowSettings(true)}
+            style={styles.gearButton}
+            title="Settings"
+          >
+            ⚙
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -96,7 +124,7 @@ export function App() {
 
       {/* Content */}
       <div style={styles.content}>
-        {activeTab === "topics" && <TopicQueue />}
+        {activeTab === "topics" && <TopicQueue key={refreshKey} />}
         {activeTab === "articles" && <ArticleList />}
         {activeTab === "generate" && <GeneratePanel />}
       </div>

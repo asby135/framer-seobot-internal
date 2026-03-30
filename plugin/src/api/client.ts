@@ -108,6 +108,21 @@ class ApiClient {
     return result;
   }
 
+  // Research
+  async runResearch() {
+    return this.request<{ status: string; discovered: number; skipped: number }>(
+      "/api/research",
+      { method: "POST" }
+    );
+  }
+
+  async rescoreKeywords() {
+    return this.request<{ status: string; rescored: number }>(
+      "/api/research/rescore",
+      { method: "POST" }
+    );
+  }
+
   // Topics
   async getTopics(status: string = "pending") {
     return this.request<{ topics: Topic[] }>(
