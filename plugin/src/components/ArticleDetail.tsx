@@ -66,6 +66,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
       const parts: string[] = [];
       if (result.translated.length > 0) parts.push(`Translated: ${result.translated.join(", ")}`);
       if (result.skipped.length > 0) parts.push(`Already done: ${result.skipped.join(", ")}`);
+      if (result.failed.length > 0) parts.push(`Failed: ${result.failed.join(", ")}`);
       setTranslateResult(parts.join(". ") || "No translations needed");
     } catch (e) {
       setTranslateResult(e instanceof ApiError ? e.message : "Translation failed");
@@ -183,8 +184,8 @@ export function ArticleDetail({ articleId, onBack }: Props) {
         </div>
       )}
 
-      {/* Translation */}
-      <div style={styles.section}>
+      {/* Translation — only for articles with content */}
+      {article.content && article.status !== "generation_failed" && <div style={styles.section}>
         <button
           onClick={handleTranslate}
           disabled={translating}
@@ -195,7 +196,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
         {translateResult && (
           <p style={styles.translateResult}>{translateResult}</p>
         )}
-      </div>
+      </div>}
 
       {/* Actions */}
       <div style={styles.actions}>

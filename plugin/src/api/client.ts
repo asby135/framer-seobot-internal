@@ -172,7 +172,7 @@ class ApiClient {
   }
 
   async translateArticle(id: string, force: boolean = false) {
-    return this.request<{ translated: string[]; skipped: string[] }>(
+    return this.request<{ translated: string[]; skipped: string[]; failed: string[] }>(
       `/api/articles/${id}/translate`,
       {
         method: "POST",

@@ -68,22 +68,14 @@ sync.get("/collection", (c) => {
       contentByLocale[t.locale] = { action: "set", value: t.content };
     }
 
-    const hasTranslations = translations.length > 0;
-
     return {
       id: a.id,
       fieldData: {
-        title: hasTranslations
-          ? { type: "string", value: a.title, valueByLocale: titleByLocale }
-          : a.title,
+        title: { type: "string", value: a.title, valueByLocale: titleByLocale },
         slug: a.slug,
         category: a.category || "",
-        summary: hasTranslations
-          ? { type: "string", value: a.summary || "", valueByLocale: summaryByLocale }
-          : a.summary || "",
-        content: hasTranslations
-          ? { type: "formattedText", value: a.content || "", valueByLocale: contentByLocale }
-          : a.content || "",
+        summary: { type: "string", value: a.summary || "", valueByLocale: summaryByLocale },
+        content: { type: "formattedText", value: a.content || "", valueByLocale: contentByLocale },
         created: a.created_at,
         updated: a.updated_at,
         image: a.image_url || "",

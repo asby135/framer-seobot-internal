@@ -28,7 +28,7 @@ interface TranslationResult {
 export async function translateArticle(
   articleId: string,
   force: boolean = false
-): Promise<{ translated: string[]; skipped: string[] }> {
+): Promise<{ translated: string[]; skipped: string[]; failed: string[] }> {
   const db = getDb();
 
   const article = db
@@ -49,6 +49,7 @@ export async function translateArticle(
 
   const translated: string[] = [];
   const skipped: string[] = [];
+  const failed: string[] = [];
 
   for (const locale of LOCALES) {
     if (!force && existing.has(locale)) {
@@ -75,10 +76,11 @@ export async function translateArticle(
         { articleId, locale, error: e instanceof Error ? e.message : "unknown" },
         "Translation failed"
       );
+      failed.push(locale);
     }
   }
 
-  return { translated, skipped };
+  return { translated, skipped, failed };
 }
 
 async function callTranslation(
@@ -89,7 +91,7 @@ async function callTranslation(
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 8192,
+    max_tokens: 16384,
     system: `You are a professional translator specializing in marketing and tech content.
 Translate the provided article into ${langName}.
 

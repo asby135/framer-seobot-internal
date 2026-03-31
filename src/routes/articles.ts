@@ -87,7 +87,8 @@ articles.post("/:id/delete", (c) => {
     return c.json({ error: "Article not found" }, 404);
   }
 
-  // Delete assets first (FK constraint)
+  // Delete related data first (FK constraints)
+  db.prepare("DELETE FROM article_translations WHERE article_id = ?").run(id);
   db.prepare("DELETE FROM assets WHERE article_id = ?").run(id);
   db.prepare("DELETE FROM articles WHERE id = ?").run(id);
 
@@ -119,7 +120,8 @@ articles.post("/:id/regenerate", async (c) => {
     return c.json({ error: "Generation already in progress" }, 409);
   }
 
-  // Delete old article and assets
+  // Delete old article, translations, and assets
+  db.prepare("DELETE FROM article_translations WHERE article_id = ?").run(id);
   db.prepare("DELETE FROM assets WHERE article_id = ?").run(id);
   db.prepare("DELETE FROM articles WHERE id = ?").run(id);
 
