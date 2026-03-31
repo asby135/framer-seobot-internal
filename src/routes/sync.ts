@@ -3,7 +3,14 @@ import { getDb } from "../db/index.js";
 
 const sync = new Hono();
 
-// Get all published articles formatted for Framer CMS
+interface Translation {
+  locale: string;
+  title: string;
+  summary: string;
+  content: string;
+}
+
+// Get all published articles formatted for Framer CMS (with translations)
 sync.get("/collection", (c) => {
   const db = getDb();
 
@@ -28,23 +35,64 @@ sync.get("/collection", (c) => {
     image_url: string | null;
   }>;
 
-  // Format for Framer managed collection
-  const items = articles.map((a) => ({
-    id: a.id,
-    fieldData: {
-      title: a.title,
-      slug: a.slug,
-      category: a.category || "",
-      summary: a.summary || "",
-      content: a.content || "",
-      created: a.created_at,
-      updated: a.updated_at,
-      image: a.image_url || "",
-      tool: "crmchat-seo-engine",
-    },
-  }));
+  // Fetch all translations in one query
+  const allTranslations = db
+    .prepare(
+      `SELECT t.article_id, t.locale, t.title, t.summary, t.content
+       FROM article_translations t
+       JOIN articles a ON a.id = t.article_id
+       WHERE a.status = 'published'`
+    )
+    .all() as Array<Translation & { article_id: string }>;
 
-  return c.json({ items });
+  // Group translations by article
+  const translationsByArticle = new Map<string, Translation[]>();
+  for (const t of allTranslations) {
+    const existing = translationsByArticle.get(t.article_id) || [];
+    existing.push({ locale: t.locale, title: t.title, summary: t.summary, content: t.content });
+    translationsByArticle.set(t.article_id, existing);
+  }
+
+  // Format for Framer managed collection
+  const items = articles.map((a) => {
+    const translations = translationsByArticle.get(a.id) || [];
+
+    // Build valueByLocale maps for translatable fields
+    const titleByLocale: Record<string, { action: string; value: string }> = {};
+    const summaryByLocale: Record<string, { action: string; value: string }> = {};
+    const contentByLocale: Record<string, { action: string; value: string }> = {};
+
+    for (const t of translations) {
+      titleByLocale[t.locale] = { action: "set", value: t.title };
+      summaryByLocale[t.locale] = { action: "set", value: t.summary };
+      contentByLocale[t.locale] = { action: "set", value: t.content };
+    }
+
+    const hasTranslations = translations.length > 0;
+
+    return {
+      id: a.id,
+      fieldData: {
+        title: hasTranslations
+          ? { type: "string", value: a.title, valueByLocale: titleByLocale }
+          : a.title,
+        slug: a.slug,
+        category: a.category || "",
+        summary: hasTranslations
+          ? { type: "string", value: a.summary || "", valueByLocale: summaryByLocale }
+          : a.summary || "",
+        content: hasTranslations
+          ? { type: "formattedText", value: a.content || "", valueByLocale: contentByLocale }
+          : a.content || "",
+        created: a.created_at,
+        updated: a.updated_at,
+        image: a.image_url || "",
+        tool: "crmchat-seo-engine",
+      },
+    };
+  });
+
+  return c.json({ items, locales: ["ru", "ua", "fr"] });
 });
 
 export { sync };

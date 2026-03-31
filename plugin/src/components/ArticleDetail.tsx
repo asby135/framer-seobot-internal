@@ -15,6 +15,8 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   const [regenerating, setRegenerating] = useState(false);
   const [showEditPrompt, setShowEditPrompt] = useState(false);
   const [editInstructions, setEditInstructions] = useState("");
+  const [translating, setTranslating] = useState(false);
+  const [translateResult, setTranslateResult] = useState("");
 
   useEffect(() => {
     loadArticle();
@@ -53,6 +55,22 @@ export function ArticleDetail({ articleId, onBack }: Props) {
       setError(e instanceof ApiError ? e.message : "Failed to regenerate");
     } finally {
       setRegenerating(false);
+    }
+  }
+
+  async function handleTranslate() {
+    setTranslating(true);
+    setTranslateResult("");
+    try {
+      const result = await api.translateArticle(articleId);
+      const parts: string[] = [];
+      if (result.translated.length > 0) parts.push(`Translated: ${result.translated.join(", ")}`);
+      if (result.skipped.length > 0) parts.push(`Already done: ${result.skipped.join(", ")}`);
+      setTranslateResult(parts.join(". ") || "No translations needed");
+    } catch (e) {
+      setTranslateResult(e instanceof ApiError ? e.message : "Translation failed");
+    } finally {
+      setTranslating(false);
     }
   }
 
@@ -165,6 +183,20 @@ export function ArticleDetail({ articleId, onBack }: Props) {
         </div>
       )}
 
+      {/* Translation */}
+      <div style={styles.section}>
+        <button
+          onClick={handleTranslate}
+          disabled={translating}
+          style={{ ...styles.translateButton, ...(translating ? styles.disabled : {}) }}
+        >
+          {translating ? "Translating (RU, UA, FR)..." : "Translate to RU / UA / FR"}
+        </button>
+        {translateResult && (
+          <p style={styles.translateResult}>{translateResult}</p>
+        )}
+      </div>
+
       {/* Actions */}
       <div style={styles.actions}>
         {(article.status === "draft" || article.status === "review") && (
@@ -207,6 +239,8 @@ const styles: Record<string, React.CSSProperties> = {
   sectionLabel: { color: "#888", fontSize: 12, fontWeight: 500, margin: "0 0 4px" },
   summaryText: { color: "#ccc", margin: 0, lineHeight: 1.5 },
   contentPreview: { background: "#222", borderRadius: 6, padding: "12px 16px", color: "#ccc", fontSize: 13, lineHeight: 1.6, maxHeight: 400, overflow: "auto" },
+  translateButton: { width: "100%", padding: "8px 0", background: "#1a3a5a", color: "#8bf", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
+  translateResult: { color: "#8bf", fontSize: 12, marginTop: 6, textAlign: "center" as const },
   editToggle: { background: "none", border: "1px solid #444", borderRadius: 6, color: "#aaa", cursor: "pointer", padding: "6px 12px", fontSize: 13, width: "100%" },
   editArea: { marginTop: 8, display: "flex", flexDirection: "column" as const, gap: 8 },
   editTextarea: { background: "#2a2a2a", border: "1px solid #444", borderRadius: 6, padding: "8px 10px", color: "#fff", fontSize: 13, resize: "vertical" as const, outline: "none", fontFamily: "inherit", lineHeight: 1.4 },

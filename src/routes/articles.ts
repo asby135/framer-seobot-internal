@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
 import { enqueueGeneration, getQueueStatus } from "../services/queue.js";
+import { translateArticle } from "../services/translator.js";
 import { logger } from "../lib/logger.js";
 
 const articles = new Hono();
@@ -194,6 +195,43 @@ articles.post("/import", async (c) => {
   importAll();
   logger.info({ imported }, "Articles imported");
   return c.json({ status: "complete", imported });
+});
+
+// Translate an article into all configured locales
+articles.post("/:id/translate", async (c) => {
+  const { id } = c.req.param();
+  const body = await c.req.json<{ force?: boolean }>().catch(() => ({ force: false }));
+
+  try {
+    const result = await translateArticle(id, body.force ?? false);
+    return c.json(result);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    return c.json({ error: message }, 500);
+  }
+});
+
+// Translate all published articles
+articles.post("/translate-all", async (c) => {
+  const db = getDb();
+  const body = await c.req.json<{ force?: boolean }>().catch(() => ({ force: false }));
+
+  const publishedArticles = db
+    .prepare("SELECT id, title FROM articles WHERE status = 'published'")
+    .all() as Array<{ id: string; title: string }>;
+
+  const results: Array<{ id: string; title: string; translated: string[]; skipped: string[] }> = [];
+
+  for (const article of publishedArticles) {
+    try {
+      const result = await translateArticle(article.id, body.force ?? false);
+      results.push({ id: article.id, title: article.title, ...result });
+    } catch (e) {
+      logger.error({ articleId: article.id, error: e instanceof Error ? e.message : "unknown" }, "Translation failed");
+    }
+  }
+
+  return c.json({ status: "complete", articles: results });
 });
 
 export { articles };

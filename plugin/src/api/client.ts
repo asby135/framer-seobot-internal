@@ -171,6 +171,26 @@ class ApiClient {
     });
   }
 
+  async translateArticle(id: string, force: boolean = false) {
+    return this.request<{ translated: string[]; skipped: string[] }>(
+      `/api/articles/${id}/translate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ force }),
+      }
+    );
+  }
+
+  async translateAllArticles(force: boolean = false) {
+    return this.request<{ status: string; articles: Array<{ id: string; translated: string[]; skipped: string[] }> }>(
+      "/api/articles/translate-all",
+      {
+        method: "POST",
+        body: JSON.stringify({ force }),
+      }
+    );
+  }
+
   async regenerateArticle(id: string, instructions?: string) {
     return this.request<{ status: string; keyword_id: string; query: string }>(
       `/api/articles/${id}/regenerate`,
