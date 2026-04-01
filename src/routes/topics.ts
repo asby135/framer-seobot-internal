@@ -11,20 +11,25 @@ topics.get("/", (c) => {
   const page = Math.max(1, parseInt(c.req.query("page") || "1", 10));
   const limit = Math.min(100, Math.max(1, parseInt(c.req.query("limit") || "50", 10)));
   const offset = (page - 1) * limit;
+  const excludeWithArticles = c.req.query("exclude_with_articles") === "1";
+
+  const whereClause = excludeWithArticles
+    ? "WHERE k.status = ? AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.keyword_id = k.id)"
+    : "WHERE k.status = ?";
 
   const rows = db
     .prepare(
-      `SELECT id, query, source, impressions, clicks, ctr, position,
-              search_volume, opportunity_score, status, created_at
-       FROM keywords
-       WHERE status = ?
-       ORDER BY opportunity_score DESC
+      `SELECT k.id, k.query, k.source, k.impressions, k.clicks, k.ctr, k.position,
+              k.search_volume, k.opportunity_score, k.status, k.created_at
+       FROM keywords k
+       ${whereClause}
+       ORDER BY k.opportunity_score DESC
        LIMIT ? OFFSET ?`
     )
     .all(status, limit, offset);
 
   const total = (db
-    .prepare("SELECT COUNT(*) as count FROM keywords WHERE status = ?")
+    .prepare(`SELECT COUNT(*) as count FROM keywords k ${whereClause}`)
     .get(status) as { count: number }).count;
 
   return c.json({ topics: rows, total, page, pages: Math.ceil(total / limit) });

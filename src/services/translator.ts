@@ -132,7 +132,9 @@ Respond with JSON only, no markdown fences.`,
   const cleaned = text
     .trim()
     .replace(/^```(?:json)?\s*/, "")
-    .replace(/\s*```$/, "");
+    .replace(/\s*```$/, "")
+    // Remove control characters that break JSON parsing (except \n, \r, \t)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
 
   try {
     return JSON.parse(cleaned) as TranslationResult;

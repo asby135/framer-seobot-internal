@@ -124,9 +124,10 @@ class ApiClient {
   }
 
   // Topics
-  async getTopics(status: string = "pending", page: number = 1) {
+  async getTopics(status: string = "pending", page: number = 1, excludeWithArticles: boolean = false) {
+    const qs = `status=${status}&page=${page}${excludeWithArticles ? "&exclude_with_articles=1" : ""}`;
     return this.request<{ topics: Topic[]; total: number; page: number; pages: number }>(
-      `/api/topics?status=${status}&page=${page}`
+      `/api/topics?${qs}`
     );
   }
 

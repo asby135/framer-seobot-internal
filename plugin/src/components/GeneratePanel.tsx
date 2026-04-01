@@ -16,7 +16,7 @@ export function GeneratePanel() {
     setLoading(true);
     try {
       const [topicsRes, statusRes] = await Promise.all([
-        api.getTopics("approved"),
+        api.getTopics("approved", 1, true),
         api.getGenerationStatus(),
       ]);
       setTopics(topicsRes.topics);
