@@ -70,16 +70,17 @@ sync.get("/collection", (c) => {
 
     return {
       id: a.id,
+      slug: a.slug,
       fieldData: {
         title: { type: "string", value: a.title, valueByLocale: titleByLocale },
-        slug: a.slug,
-        category: a.category || "",
+        slug: { type: "string", value: a.slug },
+        category: { type: "string", value: a.category || "" },
         summary: { type: "string", value: a.summary || "", valueByLocale: summaryByLocale },
         content: { type: "formattedText", value: a.content || "", valueByLocale: contentByLocale },
-        created: a.created_at,
-        updated: a.updated_at,
-        image: a.image_url || "",
-        tool: "crmchat-seo-engine",
+        created: { type: "date", value: a.created_at },
+        updated: { type: "date", value: a.updated_at },
+        image: a.image_url ? { type: "image", value: a.image_url } : { type: "image", value: "" },
+        tool: { type: "string", value: "crmchat-seo-engine" },
       },
     };
   });

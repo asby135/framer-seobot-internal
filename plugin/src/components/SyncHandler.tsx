@@ -61,7 +61,7 @@ export async function SyncHandler() {
       }))
     );
 
-    // Transform field data: replace our locale codes with Framer locale IDs
+    // Transform field data: remap locale codes to Framer locale IDs
     const transformedItems = collectionRes.items.map((item) => {
       const fieldData: Record<string, unknown> = {};
 
@@ -87,23 +87,23 @@ export async function SyncHandler() {
           }
 
           if (Object.keys(remappedByLocale).length > 0) {
-            fieldData[key] = {
-              type: typedValue.type,
-              value: typedValue.value,
-              valueByLocale: remappedByLocale,
-            };
+            fieldData[key] = { ...typedValue, valueByLocale: remappedByLocale };
           } else {
-            // No matching locales, use plain value
-            fieldData[key] = typedValue.value;
+            // No matching locales, drop valueByLocale
+            fieldData[key] = { type: typedValue.type, value: typedValue.value };
           }
         } else {
           fieldData[key] = value;
         }
       }
 
+      // Extract slug for the top-level item property
+      const slugField = item.fieldData.slug as { value: string } | string;
+      const slug = typeof slugField === "string" ? slugField : slugField?.value || item.id;
+
       return {
         id: item.id,
-        slug: (item.fieldData.slug as string) || item.id,
+        slug,
         fieldData,
       };
     });
