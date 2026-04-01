@@ -6,6 +6,7 @@ const sync = new Hono();
 interface Translation {
   locale: string;
   title: string;
+  slug: string;
   summary: string;
   content: string;
 }
@@ -38,7 +39,7 @@ sync.get("/collection", (c) => {
   // Fetch all translations in one query
   const allTranslations = db
     .prepare(
-      `SELECT t.article_id, t.locale, t.title, t.summary, t.content
+      `SELECT t.article_id, t.locale, t.title, t.slug, t.summary, t.content
        FROM article_translations t
        JOIN articles a ON a.id = t.article_id
        WHERE a.status = 'published'`
@@ -49,7 +50,7 @@ sync.get("/collection", (c) => {
   const translationsByArticle = new Map<string, Translation[]>();
   for (const t of allTranslations) {
     const existing = translationsByArticle.get(t.article_id) || [];
-    existing.push({ locale: t.locale, title: t.title, summary: t.summary, content: t.content });
+    existing.push({ locale: t.locale, title: t.title, slug: t.slug, summary: t.summary, content: t.content });
     translationsByArticle.set(t.article_id, existing);
   }
 
@@ -59,11 +60,13 @@ sync.get("/collection", (c) => {
 
     // Build valueByLocale maps for translatable fields
     const titleByLocale: Record<string, { action: string; value: string }> = {};
+    const slugByLocale: Record<string, { action: string; value: string }> = {};
     const summaryByLocale: Record<string, { action: string; value: string }> = {};
     const contentByLocale: Record<string, { action: string; value: string }> = {};
 
     for (const t of translations) {
       titleByLocale[t.locale] = { action: "set", value: t.title };
+      if (t.slug) slugByLocale[t.locale] = { action: "set", value: t.slug };
       summaryByLocale[t.locale] = { action: "set", value: t.summary };
       contentByLocale[t.locale] = { action: "set", value: t.content };
     }
@@ -71,6 +74,7 @@ sync.get("/collection", (c) => {
     return {
       id: a.id,
       slug: a.slug,
+      slugByLocale,
       fieldData: {
         title: { type: "string", value: a.title, valueByLocale: titleByLocale },
         slug: { type: "string", value: a.slug },

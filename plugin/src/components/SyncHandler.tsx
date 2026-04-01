@@ -101,9 +101,22 @@ export async function SyncHandler() {
       const slugField = item.fieldData.slug as { value: string } | string;
       const slug = typeof slugField === "string" ? slugField : slugField?.value || item.id;
 
+      // Remap slugByLocale codes to Framer locale IDs
+      const rawSlugByLocale = (item as Record<string, unknown>).slugByLocale as Record<string, { action: string; value: string }> | undefined;
+      const remappedSlugByLocale: Record<string, { action: string; value: string }> = {};
+      if (rawSlugByLocale) {
+        for (const [localeCode, localeData] of Object.entries(rawSlugByLocale)) {
+          const framerLocaleId = localeIdMap.get(localeCode);
+          if (framerLocaleId) {
+            remappedSlugByLocale[framerLocaleId] = localeData;
+          }
+        }
+      }
+
       return {
         id: item.id,
         slug,
+        ...(Object.keys(remappedSlugByLocale).length > 0 ? { slugByLocale: remappedSlugByLocale } : {}),
         fieldData,
       };
     });

@@ -17,6 +17,7 @@ const LOCALE_NAMES: Record<Locale, string> = {
 
 interface TranslationResult {
   title: string;
+  slug: string;
   summary: string;
   content: string;
 }
@@ -61,13 +62,14 @@ export async function translateArticle(
       const result = await callTranslation(article, locale);
 
       db.prepare(
-        `INSERT INTO article_translations (id, article_id, locale, title, summary, content)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO article_translations (id, article_id, locale, title, slug, summary, content)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(article_id, locale) DO UPDATE SET
            title = excluded.title,
+           slug = excluded.slug,
            summary = excluded.summary,
            content = excluded.content`
-      ).run(nanoid(), articleId, locale, result.title, result.summary, result.content);
+      ).run(nanoid(), articleId, locale, result.title, result.slug, result.summary, result.content);
 
       translated.push(locale);
       logger.info({ articleId, locale }, "Article translated");
@@ -101,11 +103,18 @@ Rules:
 - Preserve all HTML tags and structure exactly — only translate the text content.
 - Keep URLs, links, and code blocks unchanged.
 - For technical terms with no common ${langName} equivalent, use the English term.
-- Maintain the same tone: professional but approachable.
+- Maintain the same tone: friendly and direct, like explaining to a friend.
+
+Slug rules:
+- Generate a URL-friendly slug for the translated title
+- For Russian and Ukrainian: use transliteration (Cyrillic → Latin letters). Example: "как парсить телеграм группы" → "kak-parsit-telegram-gruppy"
+- For French: use the French words directly (already Latin script). Example: "comment analyser les groupes telegram" → "comment-analyser-groupes-telegram"
+- Lowercase, hyphens only, no special characters, max 60 chars
 
 Respond with valid JSON:
 {
   "title": "translated title",
+  "slug": "transliterated-or-translated-slug",
   "summary": "translated summary/meta description",
   "content": "translated HTML content"
 }`,

@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS article_translations (
   article_id TEXT NOT NULL REFERENCES articles(id),
   locale TEXT NOT NULL, -- 'ru', 'ua', 'fr'
   title TEXT NOT NULL,
+  slug TEXT,
   summary TEXT,
   content TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
