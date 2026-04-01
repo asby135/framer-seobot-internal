@@ -1,5 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api, ApiError, type Article, type Asset } from "../api/client";
+
+// Track translating articles across tab switches (module-level state)
+const translatingArticles = new Set<string>();
 
 interface Props {
   articleId: string;
@@ -15,8 +18,9 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   const [regenerating, setRegenerating] = useState(false);
   const [showEditPrompt, setShowEditPrompt] = useState(false);
   const [editInstructions, setEditInstructions] = useState("");
-  const [translating, setTranslating] = useState(false);
+  const [translating, setTranslating] = useState(translatingArticles.has(articleId));
   const [translateResult, setTranslateResult] = useState("");
+  const abortRef = useRef(false);
 
   useEffect(() => {
     loadArticle();
@@ -58,20 +62,35 @@ export function ArticleDetail({ articleId, onBack }: Props) {
     }
   }
 
+  // Sync translating state when component mounts (handles tab switches)
+  useEffect(() => {
+    setTranslating(translatingArticles.has(articleId));
+    abortRef.current = false;
+    return () => { abortRef.current = true; };
+  }, [articleId]);
+
   async function handleTranslate() {
     setTranslating(true);
+    translatingArticles.add(articleId);
     setTranslateResult("");
     try {
       const result = await api.translateArticle(articleId);
-      const parts: string[] = [];
-      if (result.translated.length > 0) parts.push(`Translated: ${result.translated.join(", ")}`);
-      if (result.skipped.length > 0) parts.push(`Already done: ${result.skipped.join(", ")}`);
-      if (result.failed.length > 0) parts.push(`Failed: ${result.failed.join(", ")}`);
-      setTranslateResult(parts.join(". ") || "No translations needed");
+      if (!abortRef.current) {
+        const parts: string[] = [];
+        if (result.translated.length > 0) parts.push(`Translated: ${result.translated.join(", ")}`);
+        if (result.skipped.length > 0) parts.push(`Already done: ${result.skipped.join(", ")}`);
+        if (result.failed.length > 0) parts.push(`Failed: ${result.failed.join(", ")}`);
+        setTranslateResult(parts.join(". ") || "No translations needed");
+      }
     } catch (e) {
-      setTranslateResult(e instanceof ApiError ? e.message : "Translation failed");
+      if (!abortRef.current) {
+        setTranslateResult(e instanceof ApiError ? e.message : "Translation failed");
+      }
     } finally {
-      setTranslating(false);
+      translatingArticles.delete(articleId);
+      if (!abortRef.current) {
+        setTranslating(false);
+      }
     }
   }
 
