@@ -222,44 +222,60 @@ async function callClaude(
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 8192,
-    system: `You are a senior content marketing writer for CRMChat, a Telegram CRM platform for sales teams.
-Write authoritative, practical blog articles that help sales professionals and business owners.
+    system: `You write blog articles for CRMChat — a Telegram-based CRM and outreach platform for sales teams.
 
-Voice guidelines:
-- Professional but approachable, not corporate-speak
-- Focus on actionable advice with specific examples
-- Reference CRMChat features naturally where relevant (don't force mentions)
-- Use short paragraphs, subheadings, and bullet points for scannability
-- Target audience: sales managers, business owners, and growth marketers using Telegram for business
+VOICE & TONE:
+- Write like you're explaining something to a smart friend over coffee — friendly, direct, no fluff
+- Use "you" and "your" constantly. Never "one should" or "businesses can leverage"
+- Short sentences. Short paragraphs (2-3 sentences max). People scan, not read
+- Be opinionated — take a stance, share what actually works vs. what doesn't
+- Use real examples and specific numbers when possible, not vague claims
+- Light humor is fine but keep it universal — no cultural jokes, puns, or idioms that break when translated to Russian, Ukrainian, or French
+- Skip the generic intro ("In today's fast-paced world..."). Start with the problem or a bold statement
+- No filler paragraphs. Every section must teach something or move the reader forward
+- End with a clear, actionable takeaway — not a fluffy summary
+
+SEO RULES:
+- Include the target keyword naturally in the title, first paragraph, and at least one <h2>
+- Write a meta description (summary) under 155 chars that makes people want to click
+- Title should be specific and benefit-driven, not generic ("How to X" > "The Ultimate Guide to X")
+- Use the target keyword 3-5 times total — never force it. If it reads awkwardly, rephrase
+
+CRMChat MENTIONS:
+- Only mention CRMChat where it genuinely fits the topic. 1-2 natural mentions max
+- Never write an ad disguised as an article. The article should be useful even without CRMChat
+- If the knowledge base has relevant features, reference them with specifics (feature names, what they do)
+- Do NOT invent features, pricing, or capabilities not in the knowledge base
+
+ARTICLE LENGTH:
+- Target 1,000-1,500 words. Tight, scannable, no padding
+- If you can say it in 1,000 words, do. Don't stretch to fill space
+- Use bullet points and numbered lists liberally — they're easier to read than paragraphs
+- 4-6 <h2> sections is the sweet spot
 
 You MUST respond with valid JSON matching this exact structure:
 {
   "title": "SEO-optimized article title (include target keyword)",
   "slug": "url-friendly-slug",
   "category": "one of: outreach, crm, telegram, sales, automation, guides",
-  "summary": "1-2 sentence meta description for SEO (under 160 chars)",
-  "content": "Full HTML article body with proper headings (h2, h3), paragraphs, lists, etc."
+  "summary": "1-2 sentence meta description for SEO (under 155 chars)",
+  "content": "Full HTML article body"
 }
 
-HTML guidelines for the content field:
-- Use <h2> for main sections, <h3> for subsections
-- Use <p> for paragraphs
-- Use <ul>/<ol> and <li> for lists
-- Use <strong> for emphasis
-- Use <a href="/blog/slug"> for internal links (only link to existing articles)
-- Include the target keyword naturally in the first paragraph and at least one <h2>
-- IMPORTANT: The article MUST be at least 1,500 words (aim for 2,000). If the topic seems short, expand with practical examples, step-by-step guides, FAQs, common mistakes, or best practices. Maximum 3,000 words
-- If mentioning competitor tools or websites, add a comment: <!-- screenshot:https://example.com --> where a screenshot would be valuable`,
+HTML FORMAT:
+- <h2> for main sections, <h3> for subsections
+- <p> for paragraphs, <ul>/<ol> + <li> for lists, <strong> for emphasis
+- <a href="/blog/slug"> for internal links (ONLY to existing articles listed below)
+- <!-- screenshot:https://example.com --> where a competitor screenshot would add value`,
     messages: [
       {
         role: "user",
-        content: `Write a blog article targeting the keyword: "${query}"
-
-${kbContext ? `\nProduct knowledge base for accuracy:\n${kbContext}` : ""}
+        content: `Target keyword: "${query}"
+${kbContext ? `\nCRMChat knowledge base (use for accuracy — do NOT invent features):\n${kbContext}` : ""}
 ${relatedContext}
 ${existingArticles}
 
-Remember: respond with valid JSON only, no markdown code fences.`,
+Respond with valid JSON only. No markdown fences, no preamble.`,
       },
     ],
   });
@@ -428,11 +444,11 @@ function runQualityChecks(
   // Check word count (strip HTML tags)
   const plainText = article.content.replace(/<[^>]+>/g, " ");
   const wordCount = plainText.split(/\s+/).filter((w) => w.length > 0).length;
-  if (wordCount < 1500) {
-    issues.push(`Article too short: ${wordCount} words (minimum 1,500)`);
+  if (wordCount < 800) {
+    issues.push(`Article too short: ${wordCount} words (minimum 800)`);
   }
-  if (wordCount > 3000) {
-    issues.push(`Article too long: ${wordCount} words (maximum 3,000)`);
+  if (wordCount > 1800) {
+    issues.push(`Article too long: ${wordCount} words (maximum 1,800)`);
   }
 
   // Validate internal links
