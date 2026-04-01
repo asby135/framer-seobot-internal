@@ -32,6 +32,13 @@ export function initDb(): Database.Database {
   const schema = readFileSync(resolve(__dirname, "schema.sql"), "utf-8");
   db.exec(schema);
 
+  // Migrations — add columns that may not exist in older DBs
+  try {
+    db.exec("ALTER TABLE article_translations ADD COLUMN slug TEXT");
+  } catch {
+    // Column already exists
+  }
+
   logger.info({ path: dbPath }, "Database initialized");
   return db;
 }
