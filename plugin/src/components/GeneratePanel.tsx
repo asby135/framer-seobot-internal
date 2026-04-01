@@ -1,114 +1,129 @@
 import { useState, useEffect } from "react";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, type Topic } from "../api/client";
 
 export function GeneratePanel() {
-  const [generating, setGenerating] = useState(false);
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [loading, setLoading] = useState(true);
   const [remaining, setRemaining] = useState<number | null>(null);
-  const [lastResult, setLastResult] = useState<{
-    status: string;
-    query?: string;
-    error?: string;
-  } | null>(null);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [result, setResult] = useState<{ id: string; status: string; message: string } | null>(null);
 
   useEffect(() => {
-    loadStatus();
+    loadData();
   }, []);
 
-  async function loadStatus() {
+  async function loadData() {
+    setLoading(true);
     try {
-      const data = await api.getGenerationStatus();
-      setRemaining(data.remaining);
+      const [topicsRes, statusRes] = await Promise.all([
+        api.getTopics("approved"),
+        api.getGenerationStatus(),
+      ]);
+      setTopics(topicsRes.topics);
+      setRemaining(statusRes.remaining);
     } catch {
       // ignore
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function handleGenerate() {
-    setGenerating(true);
-    setLastResult(null);
+  async function handleGenerate(topicId: string, query: string) {
+    setGeneratingId(topicId);
+    setResult(null);
 
     try {
-      const result = await api.triggerGeneration();
-      setLastResult({ status: "queued", query: result.query });
-      setRemaining(result.remaining);
+      const res = await api.triggerGeneration();
+      setResult({ id: topicId, status: "success", message: `"${res.query}" queued. Check Articles tab.` });
+      setRemaining(res.remaining);
+      // Remove from list
+      setTopics((prev) => prev.filter((t) => t.id !== topicId));
     } catch (e) {
       if (e instanceof ApiError) {
         if (e.status === 429) {
-          setLastResult({ status: "error", error: "Rate limit reached. Try again later." });
-        } else if (e.status === 404) {
-          setLastResult({ status: "error", error: "No approved topics to generate. Approve topics first." });
+          setResult({ id: topicId, status: "error", message: "Rate limit reached. Try again later." });
+        } else if (e.status === 409) {
+          setResult({ id: topicId, status: "error", message: "Generation already in progress. Wait for it to finish." });
         } else {
-          setLastResult({ status: "error", error: e.message });
+          setResult({ id: topicId, status: "error", message: e.message });
         }
       } else {
-        setLastResult({ status: "error", error: "Failed to start generation." });
+        setResult({ id: topicId, status: "error", message: "Failed to start generation." });
       }
     } finally {
-      setGenerating(false);
+      setGeneratingId(null);
     }
+  }
+
+  if (loading) {
+    return <div style={styles.center}><p style={styles.muted}>Loading...</p></div>;
   }
 
   return (
     <div style={styles.container}>
-      <div style={styles.content}>
-        {remaining !== null && (
-          <p style={styles.muted}>{remaining} generations remaining this hour</p>
-        )}
-
-        {generating ? (
-          <div style={styles.generating}>
-            <p style={styles.generatingText}>Generating...</p>
-            <p style={styles.muted}>
-              You can close this window. Generation continues in the background on your server.
-            </p>
-          </div>
-        ) : lastResult ? (
-          <div style={styles.result}>
-            {lastResult.status === "queued" ? (
-              <>
-                <p style={styles.successText}>Generation started</p>
-                <p style={styles.muted}>"{lastResult.query}" is being generated. Check the Articles tab for results.</p>
-              </>
-            ) : (
-              <p style={styles.errorText}>{lastResult.error}</p>
-            )}
-          </div>
-        ) : (
-          <div style={styles.idle}>
-            <p style={styles.idleText}>Generate articles from approved topics</p>
-            <p style={styles.muted}>Each generation creates one article with thumbnail and screenshots.</p>
-          </div>
-        )}
+      {/* Header */}
+      <div style={styles.header}>
+        <span style={styles.muted}>
+          {remaining !== null ? `${remaining} generations remaining this hour` : ""}
+        </span>
       </div>
 
-      <div style={styles.actions}>
-        <button
-          onClick={handleGenerate}
-          disabled={generating || remaining === 0}
-          style={{
-            ...styles.generateButton,
-            ...(generating || remaining === 0 ? styles.disabled : {}),
-          }}
-        >
-          {generating ? "Generating..." : "Generate Article"}
-        </button>
-      </div>
+      {/* Result message */}
+      {result && (
+        <div style={result.status === "success" ? styles.successBanner : styles.errorBanner}>
+          <p style={styles.bannerText}>{result.message}</p>
+        </div>
+      )}
+
+      {/* Approved topics list */}
+      {topics.length === 0 ? (
+        <div style={styles.empty}>
+          <p style={styles.emptyTitle}>No approved topics</p>
+          <p style={styles.muted}>Approve topics in the Topics tab first, then come back here to generate articles.</p>
+        </div>
+      ) : (
+        <div style={styles.list}>
+          {topics.map((t) => (
+            <div key={t.id} style={styles.row}>
+              <div style={styles.rowContent}>
+                <div style={styles.query}>{t.query}</div>
+                <div style={styles.meta}>
+                  {t.opportunity_score?.toFixed(0)} pts · {t.impressions?.toLocaleString()} impressions
+                </div>
+              </div>
+              <button
+                onClick={() => handleGenerate(t.id, t.query)}
+                disabled={generatingId !== null || remaining === 0}
+                style={{
+                  ...styles.generateButton,
+                  ...(generatingId !== null || remaining === 0 ? styles.disabled : {}),
+                }}
+              >
+                {generatingId === t.id ? "..." : "Generate"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { display: "flex", flexDirection: "column", height: "100%", padding: 16 },
-  content: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" },
-  muted: { color: "#888", fontSize: 12, margin: "4px 0", textAlign: "center" as const },
-  generating: { textAlign: "center" as const },
-  generatingText: { color: "#e0e0e0", fontWeight: 500, fontSize: 15 },
-  result: { textAlign: "center" as const },
-  successText: { color: "#8f8", fontWeight: 500, fontSize: 15 },
-  errorText: { color: "#f88", fontSize: 13 },
-  idle: { textAlign: "center" as const },
-  idleText: { color: "#e0e0e0", fontWeight: 500, margin: "0 0 4px" },
-  actions: { borderTop: "1px solid #333", paddingTop: 12 },
-  generateButton: { width: "100%", padding: "10px 0", background: "#fff", color: "#000", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 },
+  container: { display: "flex", flexDirection: "column", height: "100%" },
+  center: { display: "flex", alignItems: "center", justifyContent: "center", height: "100%" },
+  header: { padding: "8px 16px", borderBottom: "1px solid #2a2a2a", flexShrink: 0 },
+  muted: { color: "#888", fontSize: 12, margin: 0, textAlign: "center" as const },
+  successBanner: { padding: "8px 16px", background: "#1a3a1a", flexShrink: 0 },
+  errorBanner: { padding: "8px 16px", background: "#3a1a1a", flexShrink: 0 },
+  bannerText: { color: "#ccc", fontSize: 12, margin: 0, textAlign: "center" as const },
+  list: { flex: 1, overflow: "auto", minHeight: 0 },
+  row: { display: "flex", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid #2a2a2a", gap: 8 },
+  rowContent: { flex: 1, minWidth: 0 },
+  query: { color: "#e0e0e0", fontWeight: 500, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" },
+  meta: { color: "#888", fontSize: 12, marginTop: 2 },
+  generateButton: { padding: "6px 14px", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, flexShrink: 0 },
   disabled: { opacity: 0.4, cursor: "not-allowed" },
+  empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", padding: 32, gap: 8 },
+  emptyTitle: { color: "#e0e0e0", fontWeight: 500, margin: 0 },
 };

@@ -108,7 +108,7 @@ export function App() {
 
       {/* Tabs */}
       <div style={styles.tabBar}>
-        {(["topics", "articles", "generate"] as Tab[]).map((tab) => (
+        {(["topics", "generate", "articles"] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
