@@ -1,8 +1,28 @@
 import { framer } from "framer-plugin";
 import { api } from "../api/client";
 
+// Map our internal locale codes to Framer locale codes
+const LOCALE_CODE_MAP: Record<string, string[]> = {
+  ru: ["ru", "ru-RU"],
+  ua: ["uk", "uk-UA", "ua"],
+  fr: ["fr", "fr-FR"],
+};
+
+function findFramerLocaleId(
+  localeCode: string,
+  framerLocales: readonly { id: string; code: string; slug: string }[]
+): string | null {
+  const candidates = LOCALE_CODE_MAP[localeCode] || [localeCode];
+  for (const candidate of candidates) {
+    const match = framerLocales.find(
+      (l) => l.code === candidate || l.slug === candidate || l.code.startsWith(candidate)
+    );
+    if (match) return match.id;
+  }
+  return null;
+}
+
 // Headless sync handler — runs when Framer's Sync button is clicked
-// No UI, just fetches published articles and syncs to managed collection
 export async function SyncHandler() {
   try {
     const collection = await framer.getManagedCollection();
@@ -16,11 +36,21 @@ export async function SyncHandler() {
 
     api.configure(baseUrl, apiKey);
 
-    // Fetch schema and published articles from backend
-    const [schemaRes, collectionRes] = await Promise.all([
+    // Fetch schema, articles, and Framer locales
+    const [schemaRes, collectionRes, framerLocales] = await Promise.all([
       api.getSchema(),
       api.getCollection(),
+      framer.getLocales(),
     ]);
+
+    // Build locale code → Framer locale ID map
+    const localeIdMap = new Map<string, string>();
+    for (const code of (collectionRes.locales || [])) {
+      const framerLocaleId = findFramerLocaleId(code, framerLocales);
+      if (framerLocaleId) {
+        localeIdMap.set(code, framerLocaleId);
+      }
+    }
 
     // Set fields on the managed collection
     await collection.setFields(
@@ -31,22 +61,63 @@ export async function SyncHandler() {
       }))
     );
 
-    // Get current items in collection for reconciliation
+    // Transform field data: replace our locale codes with Framer locale IDs
+    const transformedItems = collectionRes.items.map((item) => {
+      const fieldData: Record<string, unknown> = {};
+
+      for (const [key, value] of Object.entries(item.fieldData)) {
+        if (
+          value &&
+          typeof value === "object" &&
+          "valueByLocale" in (value as Record<string, unknown>)
+        ) {
+          const typedValue = value as {
+            type: string;
+            value: string;
+            valueByLocale: Record<string, { action: string; value: string }>;
+          };
+
+          // Remap locale codes to Framer locale IDs
+          const remappedByLocale: Record<string, { action: string; value: string }> = {};
+          for (const [localeCode, localeData] of Object.entries(typedValue.valueByLocale)) {
+            const framerLocaleId = localeIdMap.get(localeCode);
+            if (framerLocaleId) {
+              remappedByLocale[framerLocaleId] = localeData;
+            }
+          }
+
+          if (Object.keys(remappedByLocale).length > 0) {
+            fieldData[key] = {
+              type: typedValue.type,
+              value: typedValue.value,
+              valueByLocale: remappedByLocale,
+            };
+          } else {
+            // No matching locales, use plain value
+            fieldData[key] = typedValue.value;
+          }
+        } else {
+          fieldData[key] = value;
+        }
+      }
+
+      return {
+        id: item.id,
+        slug: (item.fieldData.slug as string) || item.id,
+        fieldData,
+      };
+    });
+
+    // Get current items for reconciliation
     const existingIds = await collection.getItemIds();
     const backendIds = new Set(collectionRes.items.map((i) => i.id));
 
-    // Items to remove (in collection but not in backend)
+    // Items to remove
     const toRemove = existingIds.filter((id) => !backendIds.has(id));
 
-    // Add/update all backend items (addItems is upsert per design assumption)
-    if (collectionRes.items.length > 0) {
-      await collection.addItems(
-        collectionRes.items.map((item) => ({
-          id: item.id,
-          slug: item.fieldData.slug || item.id,
-          fieldData: item.fieldData as Record<string, unknown>,
-        }))
-      );
+    // Add/update all items
+    if (transformedItems.length > 0) {
+      await collection.addItems(transformedItems);
     }
 
     // Remove stale items
@@ -57,8 +128,8 @@ export async function SyncHandler() {
     // Store last sync timestamp
     await collection.setPluginData("lastSync", new Date().toISOString());
 
-    const count = collectionRes.items.length;
-    framer.notify(`Synced ${count} article${count !== 1 ? "s" : ""}`, {
+    const count = transformedItems.length;
+    framer.notify(`Synced ${count} article${count !== 1 ? "s" : ""} (${localeIdMap.size} locales)`, {
       variant: "success",
     });
   } catch (e) {

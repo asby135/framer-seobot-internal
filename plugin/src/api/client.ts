@@ -218,7 +218,7 @@ class ApiClient {
 
   // Sync
   async getCollection() {
-    return this.request<{ items: CMSItem[] }>("/api/sync/collection");
+    return this.request<{ items: CMSItem[]; locales?: string[] }>("/api/sync/collection");
   }
 
   // Schema

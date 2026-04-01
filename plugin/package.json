@@ -8,7 +8,7 @@
     "build": "tsc && vite build"
   },
   "dependencies": {
-    "framer-plugin": "^0.4.0",
+    "framer-plugin": "^3.10.3",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },
