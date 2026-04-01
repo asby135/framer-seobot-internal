@@ -28,12 +28,12 @@ export function GeneratePanel() {
     }
   }
 
-  async function handleGenerate(topicId: string, query: string) {
+  async function handleGenerate(topicId: string) {
     setGeneratingId(topicId);
     setResult(null);
 
     try {
-      const res = await api.triggerGeneration();
+      const res = await api.triggerGeneration(topicId);
       setResult({ id: topicId, status: "success", message: `"${res.query}" queued. Check Articles tab.` });
       setRemaining(res.remaining);
       // Remove from list
@@ -92,7 +92,7 @@ export function GeneratePanel() {
                 </div>
               </div>
               <button
-                onClick={() => handleGenerate(t.id, t.query)}
+                onClick={() => handleGenerate(t.id)}
                 disabled={generatingId !== null || remaining === 0}
                 style={{
                   ...styles.generateButton,

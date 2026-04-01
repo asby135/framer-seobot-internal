@@ -15,7 +15,7 @@ function findFramerLocaleId(
   const candidates = LOCALE_CODE_MAP[localeCode] || [localeCode];
   for (const candidate of candidates) {
     const match = framerLocales.find(
-      (l) => l.code === candidate || l.slug === candidate || l.code.startsWith(candidate)
+      (l) => l.code === candidate || l.slug === candidate || l.code.startsWith(candidate + "-")
     );
     if (match) return match.id;
   }
@@ -129,7 +129,8 @@ export async function SyncHandler() {
     await collection.setPluginData("lastSync", new Date().toISOString());
 
     const count = transformedItems.length;
-    framer.notify(`Synced ${count} article${count !== 1 ? "s" : ""} (${localeIdMap.size} locales)`, {
+    const localeSuffix = localeIdMap.size > 0 ? ` (${localeIdMap.size} locales)` : "";
+    framer.notify(`Synced ${count} article${count !== 1 ? "s" : ""}${localeSuffix}`, {
       variant: "success",
     });
   } catch (e) {

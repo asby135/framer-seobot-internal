@@ -44,7 +44,7 @@ export interface CMSField {
 
 export interface CMSItem {
   id: string;
-  fieldData: Record<string, string>;
+  fieldData: Record<string, unknown>;
 }
 
 class ApiClient {
@@ -203,13 +203,16 @@ class ApiClient {
   }
 
   // Generate
-  async triggerGeneration() {
+  async triggerGeneration(keywordId?: string) {
     return this.request<{
       status: string;
       keyword_id: string;
       query: string;
       remaining: number;
-    }>("/api/generate", { method: "POST" });
+    }>("/api/generate", {
+      method: "POST",
+      body: keywordId ? JSON.stringify({ keyword_id: keywordId }) : undefined,
+    });
   }
 
   async getGenerationStatus() {

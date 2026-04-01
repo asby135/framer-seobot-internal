@@ -42,17 +42,31 @@ generate.post("/", async (c) => {
   }
 
   const db = getDb();
+  const body = await c.req.json<{ keyword_id?: string }>().catch(() => ({ keyword_id: undefined }));
 
-  // Find approved keywords without articles
-  const approved = db
-    .prepare(
-      `SELECT k.id, k.query FROM keywords k
-       WHERE k.status = 'approved'
-       AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.keyword_id = k.id)
-       ORDER BY k.opportunity_score DESC
-       LIMIT 1`
-    )
-    .get() as { id: string; query: string } | undefined;
+  let approved: { id: string; query: string } | undefined;
+
+  if (body.keyword_id) {
+    // Generate a specific topic
+    approved = db
+      .prepare(
+        `SELECT k.id, k.query FROM keywords k
+         WHERE k.id = ? AND k.status = 'approved'
+         AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.keyword_id = k.id)`
+      )
+      .get(body.keyword_id) as { id: string; query: string } | undefined;
+  } else {
+    // Pick the highest-scoring approved topic
+    approved = db
+      .prepare(
+        `SELECT k.id, k.query FROM keywords k
+         WHERE k.status = 'approved'
+         AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.keyword_id = k.id)
+         ORDER BY k.opportunity_score DESC
+         LIMIT 1`
+      )
+      .get() as { id: string; query: string } | undefined;
+  }
 
   if (!approved) {
     return c.json({ error: "No approved topics waiting for generation" }, 404);
