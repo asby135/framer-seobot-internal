@@ -146,15 +146,28 @@ Respond with JSON only, no markdown fences.`,
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
 
   try {
-    return JSON.parse(cleaned) as TranslationResult;
+    const result = JSON.parse(cleaned) as TranslationResult;
+    result.slug = sanitizeSlug(result.slug || "");
+    return result;
   } catch {
     // Try to extract JSON
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
-      return JSON.parse(match[0]) as TranslationResult;
+      const result = JSON.parse(match[0]) as TranslationResult;
+      result.slug = sanitizeSlug(result.slug || "");
+      return result;
     }
     throw new Error(`Translation returned invalid JSON for ${locale}`);
   }
+}
+
+function sanitizeSlug(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
 }
 
 export { LOCALES, type Locale };

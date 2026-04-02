@@ -6,7 +6,7 @@ const sync = new Hono();
 interface Translation {
   locale: string;
   title: string;
-  slug: string;
+  slug: string | null;
   summary: string;
   content: string;
 }
