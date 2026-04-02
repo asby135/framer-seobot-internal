@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { api, ApiError, type Article, type Asset } from "../api/client";
-
-// Track translating articles across tab switches (module-level state)
-const translatingArticles = new Set<string>();
+import { isTranslating as checkTranslating, startTranslating, stopTranslating, subscribe } from "../lib/translation-state";
 
 interface Props {
   articleId: string;
@@ -18,7 +16,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   const [regenerating, setRegenerating] = useState(false);
   const [showEditPrompt, setShowEditPrompt] = useState(false);
   const [editInstructions, setEditInstructions] = useState("");
-  const [translating, setTranslating] = useState(translatingArticles.has(articleId));
+  const [translating, setTranslating] = useState(checkTranslating(articleId));
   const [translateResult, setTranslateResult] = useState("");
   const abortRef = useRef(false);
 
@@ -62,16 +60,19 @@ export function ArticleDetail({ articleId, onBack }: Props) {
     }
   }
 
-  // Sync translating state when component mounts (handles tab switches)
+  // Sync translating state when component mounts and subscribe to changes
   useEffect(() => {
-    setTranslating(translatingArticles.has(articleId));
+    setTranslating(checkTranslating(articleId));
     abortRef.current = false;
-    return () => { abortRef.current = true; };
+    const unsub = subscribe(() => {
+      setTranslating(checkTranslating(articleId));
+    });
+    return () => { abortRef.current = true; unsub(); };
   }, [articleId]);
 
   async function handleTranslate() {
     setTranslating(true);
-    translatingArticles.add(articleId);
+    startTranslating(articleId);
     setTranslateResult("");
     try {
       const result = await api.translateArticle(articleId);
@@ -87,7 +88,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
         setTranslateResult(e instanceof ApiError ? e.message : "Translation failed");
       }
     } finally {
-      translatingArticles.delete(articleId);
+      stopTranslating(articleId);
       if (!abortRef.current) {
         setTranslating(false);
       }

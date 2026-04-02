@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { api, ApiError, type Article } from "../api/client";
 import { ArticleDetail } from "./ArticleDetail";
+import { isTranslating, hasAnyTranslating, subscribe } from "../lib/translation-state";
 
 export function ArticleList() {
   const [articles, setArticles] = useState<Article[]>([]);
@@ -8,12 +9,17 @@ export function ArticleList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [, forceUpdate] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Re-render when translation state changes
+  const triggerUpdate = useCallback(() => forceUpdate((n) => n + 1), []);
 
   useEffect(() => {
     loadArticles();
     checkGenerationStatus();
-    return () => stopPolling();
+    const unsub = subscribe(triggerUpdate);
+    return () => { stopPolling(); unsub(); };
   }, []);
 
   async function loadArticles() {
@@ -111,6 +117,8 @@ export function ArticleList() {
             try { flags = a.flags ? JSON.parse(a.flags) : {}; } catch { /* malformed flags */ }
             const hasFlags = Object.keys(flags).length > 0;
 
+            const translatingThis = isTranslating(a.id);
+
             return (
               <div
                 key={a.id}
@@ -129,6 +137,9 @@ export function ArticleList() {
                     }}>
                       {a.status}
                     </span>
+                    {translatingThis && (
+                      <span style={styles.translatingPill}>↻ translating</span>
+                    )}
                     {Boolean(flags.thumbnail_missing) && (
                       <span style={styles.flag}>No thumbnail</span>
                     )}
@@ -170,6 +181,7 @@ const styles: Record<string, React.CSSProperties> = {
   title: { color: "#e0e0e0", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   meta: { display: "flex", alignItems: "center", gap: 8, marginTop: 4 },
   statusPill: { fontSize: 11, padding: "1px 8px", borderRadius: 4, fontWeight: 500 },
+  translatingPill: { fontSize: 11, padding: "1px 8px", borderRadius: 4, fontWeight: 500, background: "#1a3a5a", color: "#8bf", animation: "spin 2s linear infinite" },
   flag: { fontSize: 11, color: "#888" },
   chevron: { color: "#555", fontSize: 18, flexShrink: 0 },
 };
