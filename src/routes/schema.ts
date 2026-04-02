@@ -7,7 +7,6 @@ const schema = new Hono();
 const FIELDS = [
   { id: "image", name: "Image", type: "image" },
   { id: "title", name: "Title", type: "string" },
-  { id: "slug", name: "Slug", type: "string" },
   { id: "category", name: "Category", type: "string" },
   { id: "created", name: "Created", type: "date" },
   { id: "updated", name: "Updated", type: "date" },

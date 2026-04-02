@@ -52,7 +52,11 @@ class ApiClient {
   private apiKey: string = "";
 
   configure(baseUrl: string, apiKey: string) {
-    this.baseUrl = baseUrl.replace(/\/$/, "");
+    let normalized = baseUrl.replace(/\/$/, "");
+    if (!/^https?:\/\//i.test(normalized)) {
+      normalized = `https://${normalized}`;
+    }
+    this.baseUrl = normalized;
     this.apiKey = apiKey;
   }
 
@@ -98,7 +102,11 @@ class ApiClient {
   }
 
   async setup(baseUrl: string, secret: string) {
-    this.baseUrl = baseUrl.replace(/\/$/, "");
+    let normalized = baseUrl.replace(/\/$/, "");
+    if (!/^https?:\/\//i.test(normalized)) {
+      normalized = `https://${normalized}`;
+    }
+    this.baseUrl = normalized;
     const result = await this.request<{ api_key: string }>("/api/setup", {
       method: "POST",
       body: JSON.stringify({ secret }),

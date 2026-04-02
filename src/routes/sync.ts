@@ -77,7 +77,6 @@ sync.get("/collection", (c) => {
       slugByLocale,
       fieldData: {
         title: { type: "string", value: a.title, valueByLocale: titleByLocale },
-        slug: { type: "string", value: a.slug },
         category: { type: "string", value: a.category || "" },
         summary: { type: "string", value: a.summary || "", valueByLocale: summaryByLocale },
         content: { type: "formattedText", value: a.content || "", valueByLocale: contentByLocale },
