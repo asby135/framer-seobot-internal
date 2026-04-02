@@ -101,9 +101,8 @@ export async function SyncHandler() {
         }
       }
 
-      // Extract slug for the top-level item property
-      const slugField = item.fieldData.slug as { value: string } | string;
-      const slug = typeof slugField === "string" ? slugField : slugField?.value || item.id;
+      // Extract slug from top-level item property (not fieldData)
+      const slug = (item as Record<string, unknown>).slug as string || item.id;
 
       // Remap slugByLocale codes to Framer locale IDs
       const rawSlugByLocale = (item as Record<string, unknown>).slugByLocale as Record<string, { action: string; value: string }> | undefined;
