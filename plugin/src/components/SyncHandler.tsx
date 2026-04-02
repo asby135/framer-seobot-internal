@@ -69,25 +69,7 @@ function buildItems(
 
     const slug = (item as unknown as Record<string, unknown>).slug as string || item.id;
 
-    const result: Record<string, unknown> = { id: item.id, slug, fieldData };
-
-    if (includeLocales) {
-      const rawSlugByLocale = (item as unknown as Record<string, unknown>).slugByLocale as Record<string, { action: string; value: string }> | undefined;
-      const remappedSlugByLocale: Record<string, { action: string; value: string }> = {};
-      if (rawSlugByLocale) {
-        for (const [localeCode, localeData] of Object.entries(rawSlugByLocale)) {
-          const framerLocaleId = localeIdMap.get(localeCode);
-          if (framerLocaleId) {
-            remappedSlugByLocale[framerLocaleId] = localeData;
-          }
-        }
-      }
-      if (Object.keys(remappedSlugByLocale).length > 0) {
-        result.slugByLocale = remappedSlugByLocale;
-      }
-    }
-
-    return result;
+    return { id: item.id, slug, fieldData };
   });
 }
 

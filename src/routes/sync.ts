@@ -60,13 +60,11 @@ sync.get("/collection", (c) => {
 
     // Build valueByLocale maps for translatable fields
     const titleByLocale: Record<string, { action: string; value: string }> = {};
-    const slugByLocale: Record<string, { action: string; value: string }> = {};
     const summaryByLocale: Record<string, { action: string; value: string }> = {};
     const contentByLocale: Record<string, { action: string; value: string }> = {};
 
     for (const t of translations) {
       titleByLocale[t.locale] = { action: "set", value: t.title };
-      if (t.slug) slugByLocale[t.locale] = { action: "set", value: t.slug };
       summaryByLocale[t.locale] = { action: "set", value: t.summary };
       contentByLocale[t.locale] = { action: "set", value: t.content };
     }
@@ -74,7 +72,6 @@ sync.get("/collection", (c) => {
     return {
       id: a.id,
       slug: a.slug,
-      slugByLocale,
       fieldData: {
         title: { type: "string", value: a.title, valueByLocale: titleByLocale },
         category: { type: "string", value: a.category || "" },
