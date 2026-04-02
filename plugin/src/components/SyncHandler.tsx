@@ -52,14 +52,18 @@ export async function SyncHandler() {
       }
     }
 
-    // Set fields on the managed collection
-    await collection.setFields(
-      schemaRes.fields.map((f) => ({
-        id: f.id,
-        name: f.name,
-        type: f.type as "string" | "image" | "date" | "formattedText",
-      }))
-    );
+    // Only set fields if collection has no fields yet (first sync)
+    // Calling setFields on every sync can break Framer variable references
+    const existingFields = await collection.getFields();
+    if (existingFields.length === 0) {
+      await collection.setFields(
+        schemaRes.fields.map((f) => ({
+          id: f.id,
+          name: f.name,
+          type: f.type as "string" | "image" | "date" | "formattedText",
+        }))
+      );
+    }
 
     // Transform field data: remap locale codes to Framer locale IDs
     const transformedItems = collectionRes.items.map((item) => {
