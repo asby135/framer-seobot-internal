@@ -216,7 +216,10 @@ class ApiClient {
   }
 
   async getGenerationStatus() {
-    return this.request<{ remaining: number }>("/api/generate/status");
+    return this.request<{
+      remaining: number;
+      queue: { pending: number; active: number; lastResult?: unknown };
+    }>("/api/generate/status");
   }
 
   // Sync
