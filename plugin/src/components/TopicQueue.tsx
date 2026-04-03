@@ -11,7 +11,6 @@ export function TopicQueue() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
-  const [approvedCount, setApprovedCount] = useState(0);
 
   useEffect(() => {
     loadTopics();
@@ -21,16 +20,10 @@ export function TopicQueue() {
     setLoading(true);
     setError("");
     try {
-      // Load approved keywords (no articles yet) and pending keywords
-      const [approved, pending] = await Promise.all([
-        api.getTopics("approved", 1, true),
-        api.getTopics("pending", page),
-      ]);
-      // Approved on top, then pending
-      setTopics([...approved.topics, ...pending.topics]);
-      setTotalPages(pending.pages);
-      setTotal(pending.total);
-      setApprovedCount(approved.total);
+      const data = await api.getTopics("pending", page);
+      setTopics(data.topics);
+      setTotalPages(data.pages);
+      setTotal(data.total);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load topics");
     } finally {
@@ -122,7 +115,7 @@ export function TopicQueue() {
     <div style={styles.container}>
       {/* Stats bar with pagination */}
       <div style={styles.statsBar}>
-        <span>{approvedCount > 0 ? `${approvedCount} approved · ` : ""}{total} pending</span>
+        <span>{total} pending</span>
         {totalPages > 1 && (
           <span style={styles.pagination}>
             <button
@@ -161,7 +154,6 @@ export function TopicQueue() {
             <div style={styles.rowContent}>
               <div style={styles.query}>{t.query}</div>
               <div style={styles.meta}>
-                {t.status === "approved" ? <span style={styles.approvedBadge}>APPROVED</span> : null}
                 {t.opportunity_score?.toFixed(0)} pts · {t.impressions?.toLocaleString()} impressions
               </div>
             </div>
@@ -231,8 +223,7 @@ const styles: Record<string, React.CSSProperties> = {
   checkbox: { color: "#888", fontSize: 14, marginTop: 1, flexShrink: 0 },
   rowContent: { flex: 1, minWidth: 0 },
   query: { color: "#e0e0e0", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  meta: { color: "#888", fontSize: 12, marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
-  approvedBadge: { background: "#2a5a2a", color: "#8f8", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
+  meta: { color: "#888", fontSize: 12, marginTop: 2 },
   actions: { display: "flex", gap: 8, padding: "12px 16px" },
   approveButton: { flex: 1, padding: "8px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
   rejectButton: { flex: 1, padding: "8px 0", background: "#5a2a2a", color: "#f88", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },

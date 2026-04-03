@@ -140,19 +140,20 @@ export function GeneratePanel() {
         </div>
       )}
 
-      {/* Approved topics list */}
+      {/* Approved topics list — custom first, then research-sourced */}
       {topics.length === 0 && !isGenerating ? (
         <div style={styles.empty}>
           <p style={styles.emptyTitle}>No approved topics</p>
-          <p style={styles.muted}>Approve topics in the Topics tab first, then come back here to generate articles.</p>
+          <p style={styles.muted}>Approve topics in the Topics tab or add custom keywords, then come back here to generate articles.</p>
         </div>
       ) : (
         <div style={styles.list}>
-          {topics.map((t) => (
+          {[...topics].sort((a, b) => (a.source === "custom" ? -1 : 0) - (b.source === "custom" ? -1 : 0)).map((t) => (
             <div key={t.id} style={styles.row}>
               <div style={styles.rowContent}>
                 <div style={styles.query}>{t.query}</div>
                 <div style={styles.meta}>
+                  {t.source === "custom" && <span style={styles.customBadge}>CUSTOM</span>}
                   {t.opportunity_score?.toFixed(0)} pts · {t.impressions?.toLocaleString()} impressions
                 </div>
               </div>
@@ -187,7 +188,8 @@ const styles: Record<string, React.CSSProperties> = {
   row: { display: "flex", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid #2a2a2a", gap: 8 },
   rowContent: { flex: 1, minWidth: 0 },
   query: { color: "#e0e0e0", fontWeight: 500, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" },
-  meta: { color: "#888", fontSize: 12, marginTop: 2 },
+  meta: { color: "#888", fontSize: 12, marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
+  customBadge: { background: "#3a3a1a", color: "#fa0", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   generateButton: { padding: "6px 14px", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, flexShrink: 0 },
   disabled: { opacity: 0.4, cursor: "not-allowed" },
   empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", padding: 32, gap: 8 },
