@@ -16,6 +16,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   const [regenerating, setRegenerating] = useState(false);
   const [showEditPrompt, setShowEditPrompt] = useState(false);
   const [editInstructions, setEditInstructions] = useState("");
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
   const [translating, setTranslating] = useState(checkTranslating(articleId));
   const [translateResult, setTranslateResult] = useState("");
   const abortRef = useRef(false);
@@ -49,11 +50,11 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   }
 
   async function handleRegenerate() {
-    if (article?.status === "published") {
-      if (!window.confirm("This will delete the published article and all translations. It will be unavailable on your site until regeneration completes and you re-sync. Continue?")) {
-        return;
-      }
+    if (article?.status === "published" && !confirmRegenerate) {
+      setConfirmRegenerate(true);
+      return;
     }
+    setConfirmRegenerate(false);
     setRegenerating(true);
     try {
       await api.regenerateArticle(articleId, editInstructions.trim() || undefined);
@@ -193,12 +194,15 @@ export function ArticleDetail({ articleId, onBack }: Props) {
                 style={styles.editTextarea}
                 rows={4}
               />
+              {confirmRegenerate && (
+                <p style={styles.confirmWarning}>This will delete the published article and all translations. It will be unavailable until regeneration completes and you re-sync.</p>
+              )}
               <button
                 onClick={handleRegenerate}
                 disabled={regenerating}
-                style={{ ...styles.regenerateButton, ...(regenerating ? styles.disabled : {}) }}
+                style={{ ...(confirmRegenerate ? styles.confirmButton : styles.regenerateButton), ...(regenerating ? styles.disabled : {}) }}
               >
-                {regenerating ? "Regenerating..." : "Regenerate Article"}
+                {regenerating ? "Regenerating..." : confirmRegenerate ? "Confirm — Delete & Regenerate" : "Regenerate Article"}
               </button>
             </div>
           )}
@@ -284,6 +288,8 @@ const styles: Record<string, React.CSSProperties> = {
   editArea: { marginTop: 8, display: "flex", flexDirection: "column" as const, gap: 8 },
   editTextarea: { background: "#2a2a2a", border: "1px solid #444", borderRadius: 6, padding: "8px 10px", color: "#fff", fontSize: 13, resize: "vertical" as const, outline: "none", fontFamily: "inherit", lineHeight: 1.4 },
   regenerateButton: { padding: "8px 0", background: "#3a3a1a", color: "#fa0", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
+  confirmWarning: { color: "#f88", fontSize: 12, margin: "0 0 8px", lineHeight: 1.4 },
+  confirmButton: { padding: "8px 0", background: "#5a2a2a", color: "#f88", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, width: "100%" },
   actions: { display: "flex", gap: 8, marginTop: 8 },
   publishButton: { flex: 1, padding: "10px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 },
   deleteButton: { flex: 1, padding: "10px 0", background: "#5a2a2a", color: "#f88", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 },
