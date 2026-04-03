@@ -75,15 +75,9 @@ export function ArticleDetail({ articleId, onBack }: Props) {
     startTranslating(articleId);
     setTranslateResult("");
     try {
-      const result = await api.translateArticle(articleId, force);
+      await api.translateArticle(articleId, force);
       if (!abortRef.current) {
-        const parts: string[] = [];
-        if (result.translated.length > 0) parts.push(`Translated: ${result.translated.join(", ")}`);
-        if (result.skipped.length > 0) parts.push(`Already done: ${result.skipped.join(", ")}`);
-        if (result.failed.length > 0) parts.push(`Failed: ${result.failed.join(", ")}`);
-        setTranslateResult(parts.join(". ") || "No translations needed");
-        // Reload article to get updated translatedLocales
-        loadArticle();
+        setTranslateResult("Translation started. This may take a minute. Reload to check progress.");
       }
     } catch (e) {
       if (!abortRef.current) {

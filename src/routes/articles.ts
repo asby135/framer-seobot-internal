@@ -204,20 +204,31 @@ articles.post("/import", async (c) => {
 });
 
 // Translate an article into all configured locales
+// Runs in background to avoid Railway request timeout on long articles
 articles.post("/:id/translate", async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json<{ force?: boolean }>().catch(() => ({ force: false }));
 
-  try {
-    const result = await translateArticle(id, body.force ?? false);
-    return c.json(result);
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Unknown error";
-    return c.json({ error: message }, 500);
+  // Verify article exists before starting background work
+  const db = getDb();
+  const article = db.prepare("SELECT id FROM articles WHERE id = ?").get(id);
+  if (!article) {
+    return c.json({ error: "Article not found" }, 404);
   }
+
+  // Fire and forget — translation runs in background
+  translateArticle(id, body.force ?? false)
+    .then((result) => {
+      logger.info({ articleId: id, ...result }, "Translation completed");
+    })
+    .catch((e) => {
+      logger.error({ articleId: id, error: e instanceof Error ? e.message : "unknown" }, "Translation failed");
+    });
+
+  return c.json({ status: "translating", message: "Translation started in background" });
 });
 
-// Translate all published articles
+// Translate all published articles (runs in background)
 articles.post("/translate-all", async (c) => {
   const db = getDb();
   const body = await c.req.json<{ force?: boolean }>().catch(() => ({ force: false }));
@@ -226,18 +237,20 @@ articles.post("/translate-all", async (c) => {
     .prepare("SELECT id, title FROM articles WHERE status = 'published'")
     .all() as Array<{ id: string; title: string }>;
 
-  const results: Array<{ id: string; title: string; translated: string[]; skipped: string[] }> = [];
-
-  for (const article of publishedArticles) {
-    try {
-      const result = await translateArticle(article.id, body.force ?? false);
-      results.push({ id: article.id, title: article.title, ...result });
-    } catch (e) {
-      logger.error({ articleId: article.id, error: e instanceof Error ? e.message : "unknown" }, "Translation failed");
+  // Fire and forget — translations run in background
+  (async () => {
+    for (const article of publishedArticles) {
+      try {
+        const result = await translateArticle(article.id, body.force ?? false);
+        logger.info({ articleId: article.id, ...result }, "Article translation completed");
+      } catch (e) {
+        logger.error({ articleId: article.id, error: e instanceof Error ? e.message : "unknown" }, "Translation failed");
+      }
     }
-  }
+    logger.info({ count: publishedArticles.length }, "Translate-all completed");
+  })();
 
-  return c.json({ status: "complete", articles: results });
+  return c.json({ status: "translating", count: publishedArticles.length, message: "Translations started in background" });
 });
 
 export { articles };
