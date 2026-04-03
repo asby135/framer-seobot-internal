@@ -145,7 +145,7 @@ async function callTranslation(
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 32768,
+    max_tokens: 16000,
     system: `You are a professional translator specializing in marketing and tech content.
 Translate the provided article into ${langName}.
 
