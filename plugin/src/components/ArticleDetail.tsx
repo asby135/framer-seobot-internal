@@ -49,6 +49,11 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   }
 
   async function handleRegenerate() {
+    if (article?.status === "published") {
+      if (!window.confirm("This will delete the published article and all translations. It will be unavailable on your site until regeneration completes and you re-sync. Continue?")) {
+        return;
+      }
+    }
     setRegenerating(true);
     try {
       await api.regenerateArticle(articleId, editInstructions.trim() || undefined);
