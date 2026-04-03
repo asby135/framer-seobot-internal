@@ -26,6 +26,7 @@ export interface Article {
   updated_at: string;
   published_at: string | null;
   assets?: Asset[];
+  translatedLocales?: string[];
 }
 
 export interface Asset {
@@ -181,7 +182,7 @@ class ApiClient {
   }
 
   async translateArticle(id: string, force: boolean = false) {
-    return this.request<{ translated: string[]; skipped: string[]; failed: string[] }>(
+    return this.request<{ status: string; message: string }>(
       `/api/articles/${id}/translate`,
       {
         method: "POST",
@@ -191,7 +192,7 @@ class ApiClient {
   }
 
   async translateAllArticles(force: boolean = false) {
-    return this.request<{ status: string; articles: Array<{ id: string; translated: string[]; skipped: string[] }> }>(
+    return this.request<{ status: string; count: number; message: string }>(
       "/api/articles/translate-all",
       {
         method: "POST",

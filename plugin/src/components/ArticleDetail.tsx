@@ -202,10 +202,10 @@ export function ArticleDetail({ articleId, onBack }: Props) {
 
       {/* Translation — only for articles with content */}
       {article.content && article.status !== "generation_failed" && <div style={styles.section}>
-        {(article as unknown as { translatedLocales?: string[] }).translatedLocales?.length ? (
+        {article.translatedLocales?.length ? (
           <>
             <p style={styles.translatedLabel}>
-              Translated: {(article as unknown as { translatedLocales: string[] }).translatedLocales.join(", ").toUpperCase()}
+              Translated: {article.translatedLocales.join(", ").toUpperCase()}
             </p>
             <button
               onClick={() => handleTranslate(true)}

@@ -131,6 +131,7 @@ export async function SyncHandler() {
       } catch (localeError) {
         // Locale sync failed (likely orphaned variable references in Framer project)
         // Fall back to syncing without locale data so user isn't blocked
+        console.warn("Locale sync failed, falling back to sync without translations:", localeError instanceof Error ? localeError.message : localeError);
         const itemsWithoutLocales = buildItems(collectionRes, localeIdMap, false);
         await collection.addItems(itemsWithoutLocales as unknown as Parameters<typeof collection.addItems>[0]);
       }

@@ -50,6 +50,9 @@ interface TranslationResult {
   content: string;
 }
 
+// Guard against concurrent translations of the same article
+const translatingArticles = new Set<string>();
+
 /**
  * Translate an article into all configured locales.
  * Skips locales that already have translations unless force=true.
@@ -57,6 +60,23 @@ interface TranslationResult {
 export async function translateArticle(
   articleId: string,
   force: boolean = false
+): Promise<{ translated: string[]; skipped: string[]; failed: string[] }> {
+  if (translatingArticles.has(articleId)) {
+    logger.warn({ articleId }, "Translation already in progress, skipping");
+    return { translated: [], skipped: [], failed: [] };
+  }
+  translatingArticles.add(articleId);
+
+  try {
+    return await doTranslateArticle(articleId, force);
+  } finally {
+    translatingArticles.delete(articleId);
+  }
+}
+
+async function doTranslateArticle(
+  articleId: string,
+  force: boolean
 ): Promise<{ translated: string[]; skipped: string[]; failed: string[] }> {
   const db = getDb();
 
