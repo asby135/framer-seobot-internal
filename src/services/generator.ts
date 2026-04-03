@@ -242,7 +242,10 @@ VOICE & TONE:
 SEO RULES:
 - Include the target keyword naturally in the title, first paragraph, and at least one <h2>
 - Write a meta description (summary) under 155 chars that makes people want to click
-- Title should be specific and benefit-driven, not generic ("How to X" > "The Ultimate Guide to X")
+- Title should be specific and benefit-driven, not generic
+- NEVER use these overused title patterns: "Complete Guide", "Ultimate Guide", "Comprehensive Guide", "Everything You Need to Know", "A Deep Dive"
+- Good titles: "How to Parse Telegram Groups for Sales Leads", "5 Ways to Avoid Telegram Bans During Outreach", "Telegram CRM: Why Your Sales Team Needs One"
+- Bad titles: "The Complete Guide to Telegram Parsing", "Everything You Need to Know About Telegram Outreach"
 - Use the target keyword 3-5 times total — never force it. If it reads awkwardly, rephrase
 
 CRMChat MENTIONS:
