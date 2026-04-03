@@ -59,9 +59,10 @@ export async function generateArticle(
 
     const relatedQueries = getRelatedQueries(query);
     const existingSlugs = getExistingSlugs();
+    const existingArticles = getExistingArticlesForLinking();
 
     // Step 2: Claude generation (with retry on timeout/500)
-    const article = await callClaudeWithRetry(query, kbResults, relatedQueries, existingSlugs);
+    const article = await callClaudeWithRetry(query, kbResults, relatedQueries, existingSlugs, existingArticles);
 
     // Step 3: Quality checks
     const qualityIssues = runQualityChecks(article, query, existingSlugs);
@@ -176,10 +177,11 @@ async function callClaudeWithRetry(
   query: string,
   kbResults: Array<{ title: string; content: string }>,
   relatedQueries: string[],
-  existingSlugs: Set<string>
+  existingSlugs: Set<string>,
+  existingArticles: Array<{ slug: string; title: string }>
 ): Promise<GeneratedArticle> {
   try {
-    return await callClaude(query, kbResults, relatedQueries, existingSlugs);
+    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles);
   } catch (e) {
     const isRetryable =
       e instanceof Error &&
@@ -192,7 +194,7 @@ async function callClaudeWithRetry(
 
     logger.warn({ query, error: e instanceof Error ? e.message : "unknown" }, "Claude API failed, retrying in 30s");
     await new Promise((resolve) => setTimeout(resolve, 30_000));
-    return await callClaude(query, kbResults, relatedQueries, existingSlugs);
+    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles);
   }
 }
 
@@ -200,7 +202,8 @@ async function callClaude(
   query: string,
   kbResults: Array<{ title: string; content: string }>,
   relatedQueries: string[],
-  existingSlugs: Set<string>
+  existingSlugs: Set<string>,
+  existingArticles: Array<{ slug: string; title: string }>
 ): Promise<GeneratedArticle> {
   const kbContext = kbResults
     .map(
@@ -214,9 +217,10 @@ async function callClaude(
       ? `\nRelated search queries people also search: ${relatedQueries.join(", ")}`
       : "";
 
-  const existingArticles =
-    existingSlugs.size > 0
-      ? `\nExisting blog articles (avoid duplicating these topics): ${[...existingSlugs].slice(0, 20).join(", ")}`
+  const existingArticlesList =
+    existingArticles.length > 0
+      ? `\nExisting blog articles you can link to using <a href="/blog/slug">:
+${existingArticles.map((a) => `- /blog/${a.slug} — "${a.title}"`).join("\n")}`
       : "";
 
   const response = await anthropic.messages.create({
@@ -265,7 +269,7 @@ You MUST respond with valid JSON matching this exact structure:
 HTML FORMAT:
 - <h2> for main sections, <h3> for subsections
 - <p> for paragraphs, <ul>/<ol> + <li> for lists, <strong> for emphasis
-- <a href="/blog/slug"> for internal links (ONLY to existing articles listed below)
+- <a href="/blog/slug"> for internal links to related existing articles (ONLY use slugs from the list provided — link 2-4 related articles naturally within the text)
 - <!-- screenshot:https://example.com --> where a competitor screenshot would add value`,
     messages: [
       {
@@ -273,7 +277,7 @@ HTML FORMAT:
         content: `Target keyword: "${query}"
 ${kbContext ? `\nCRMChat knowledge base (use for accuracy — do NOT invent features):\n${kbContext}` : ""}
 ${relatedContext}
-${existingArticles}
+${existingArticlesList}
 
 Respond with valid JSON only. No markdown fences, no preamble.`,
       },
@@ -492,6 +496,12 @@ function getExistingSlugs(): Set<string> {
       (r) => r.slug
     )
   );
+}
+
+function getExistingArticlesForLinking(): Array<{ slug: string; title: string }> {
+  const db = getDb();
+  return db.prepare("SELECT slug, title FROM articles WHERE status = 'published' ORDER BY published_at DESC LIMIT 30")
+    .all() as Array<{ slug: string; title: string }>;
 }
 
 function logSync(action: string, count: number, status: string) {
