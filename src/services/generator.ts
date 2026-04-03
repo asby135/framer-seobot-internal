@@ -223,6 +223,14 @@ async function callClaude(
 ${existingArticles.map((a) => `- /blog/${a.slug} — "${a.title}"`).join("\n")}`
       : "";
 
+  const sitePages = `
+Key site pages you can link to where relevant:
+- https://crmchat.ai/ — "CRMChat homepage" (link when mentioning CRMChat as a product)
+- https://crmchat.ai/case-studies — "Case Studies" (link when referencing real results or success stories)
+- https://crmchat.ai/help-center — "Help Center" (link when mentioning setup, configuration, or how-to for CRMChat)
+- https://crmchat.ai/telegram-account-warmup — "Telegram Account Warmup" (link when discussing account warmup or avoiding bans)
+- https://developers.crmchat.ai/ — "CRMChat API" (link when mentioning integrations, API, or developer features)`;
+
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 8192,
@@ -281,6 +289,7 @@ HTML FORMAT:
 ${kbContext ? `\nCRMChat knowledge base (use for accuracy — do NOT invent features):\n${kbContext}` : ""}
 ${relatedContext}
 ${existingArticlesList}
+${sitePages}
 
 Respond with valid JSON only. No markdown fences, no preamble.`,
       },
