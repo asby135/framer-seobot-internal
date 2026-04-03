@@ -120,6 +120,12 @@ export async function SyncHandler() {
     const backendIds = new Set(collectionRes.items.map((i) => i.id));
     const toRemove = existingIds.filter((id) => !backendIds.has(id));
 
+    // Remove stale items BEFORE adding new ones to avoid duplicate slug errors
+    // (e.g. regenerated article gets a new ID but keeps the same slug)
+    if (toRemove.length > 0) {
+      await collection.removeItems(toRemove);
+    }
+
     // Try full sync with locale data first
     let syncedWithLocales = false;
     const itemsWithLocales = buildItems(collectionRes, localeIdMap, true);
@@ -135,10 +141,6 @@ export async function SyncHandler() {
         const itemsWithoutLocales = buildItems(collectionRes, localeIdMap, false);
         await collection.addItems(itemsWithoutLocales as unknown as Parameters<typeof collection.addItems>[0]);
       }
-    }
-
-    if (toRemove.length > 0) {
-      await collection.removeItems(toRemove);
     }
 
     await collection.setPluginData("lastSync", new Date().toISOString());
