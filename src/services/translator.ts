@@ -15,6 +15,34 @@ const LOCALE_NAMES: Record<Locale, string> = {
   fr: "French",
 };
 
+// Terms that must be translated consistently across all articles
+const GLOSSARY: Array<{ en: string; ru: string; ua: string; fr: string }> = [
+  { en: "Account warmup", ru: "Прогрев аккаунтов", ua: "Прогрів акаунтів", fr: "Warm-up de compte" },
+  { en: "Automation", ru: "Автоматизация", ua: "Автоматизація", fr: "Automatisation" },
+  { en: "Bot", ru: "Бот", ua: "Бот", fr: "Bot" },
+  { en: "Broadcast", ru: "Рассылка", ua: "Розсилка", fr: "Diffusion" },
+  { en: "Contact", ru: "Контакт", ua: "Контакт", fr: "Contact" },
+  { en: "CRM", ru: "CRM", ua: "CRM", fr: "CRM" },
+  { en: "CRMChat", ru: "CRMChat", ua: "CRMChat", fr: "CRMChat" },
+  { en: "Dashboard", ru: "Дашборд", ua: "Дашборд", fr: "Tableau de bord" },
+  { en: "Deal", ru: "Сделка", ua: "Угода", fr: "Deal" },
+  { en: "Funnel", ru: "Воронка", ua: "Воронка", fr: "Tunnel" },
+  { en: "Lead", ru: "Лид", ua: "Лід", fr: "Lead" },
+  { en: "Mini App", ru: "Мини-приложение", ua: "Міні-застосунок", fr: "Mini App" },
+  { en: "Onboarding", ru: "Онбординг", ua: "Онбординг", fr: "Onboarding" },
+  { en: "Outreach", ru: "Аутрич", ua: "Аутріч", fr: "Prospection" },
+  { en: "Parsing", ru: "Парсинг", ua: "Парсинг", fr: "Parsing" },
+  { en: "Pipeline", ru: "Пайплайн", ua: "Пайплайн", fr: "Pipeline" },
+  { en: "Sequence", ru: "Последовательность", ua: "Послідовність", fr: "Séquence" },
+  { en: "Tag", ru: "Тег", ua: "Тег", fr: "Tag" },
+  { en: "Telegram Ads", ru: "Telegram Ads", ua: "Telegram Ads", fr: "Telegram Ads" },
+  { en: "Template", ru: "Шаблон", ua: "Шаблон", fr: "Modèle" },
+  { en: "Warmup", ru: "Прогрев", ua: "Прогрів", fr: "Warm-up" },
+  { en: "Workspace", ru: "Рабочее пространство", ua: "Робочий простір", fr: "Espace de travail" },
+  { en: "Spintax", ru: "Спинтакс", ua: "Спінтакс", fr: "Spintax" },
+  { en: "lead generation", ru: "лидогенерация", ua: "лідогенерація", fr: "génération de leads" },
+];
+
 interface TranslationResult {
   title: string;
   slug: string;
@@ -91,6 +119,10 @@ async function callTranslation(
 ): Promise<TranslationResult> {
   const langName = LOCALE_NAMES[locale];
 
+  const glossaryLines = GLOSSARY
+    .map((g) => `"${g.en}" → "${g[locale]}"`)
+    .join("\n");
+
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 16384,
@@ -104,6 +136,9 @@ Rules:
 - Keep URLs, links, and code blocks unchanged.
 - For technical terms with no common ${langName} equivalent, use the English term.
 - Maintain the same tone: friendly and direct, like explaining to a friend.
+
+Glossary — use these exact translations:
+${glossaryLines}
 
 Slug rules:
 - Generate a URL-friendly slug for the translated title
