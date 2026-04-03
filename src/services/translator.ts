@@ -140,7 +140,7 @@ async function callTranslation(
   const langName = LOCALE_NAMES[locale];
 
   const glossaryLines = GLOSSARY
-    .map((g) => `"${g.en}" → "${g[locale]}"`)
+    .map((g) => `${g.en} = ${g[locale]}`)
     .join("\n");
 
   const response = await anthropic.messages.create({
@@ -156,9 +156,6 @@ Rules:
 - Keep URLs, links, and code blocks unchanged.
 - For technical terms with no common ${langName} equivalent, use the English term.
 - Maintain the same tone: friendly and direct, like explaining to a friend.
-
-Glossary — use these exact translations:
-${glossaryLines}
 
 Slug rules:
 - Generate a URL-friendly slug for the translated title
@@ -176,7 +173,10 @@ Respond with valid JSON:
     messages: [
       {
         role: "user",
-        content: `Translate this article into ${langName}:
+        content: `Translate this article into ${langName}.
+
+Use these exact translations for these terms:
+${glossaryLines}
 
 TITLE: ${article.title}
 
