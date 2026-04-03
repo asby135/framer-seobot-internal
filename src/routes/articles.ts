@@ -51,7 +51,11 @@ articles.get("/:id", (c) => {
     .prepare("SELECT * FROM assets WHERE article_id = ?")
     .all(id);
 
-  return c.json({ ...article, assets });
+  const translatedLocales = (
+    db.prepare("SELECT locale FROM article_translations WHERE article_id = ?").all(id) as { locale: string }[]
+  ).map((r) => r.locale);
+
+  return c.json({ ...article, assets, translatedLocales });
 });
 
 // Mark article as published
