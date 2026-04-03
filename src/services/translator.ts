@@ -125,7 +125,7 @@ async function callTranslation(
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 16384,
+    max_tokens: 32768,
     system: `You are a professional translator specializing in marketing and tech content.
 Translate the provided article into ${langName}.
 
@@ -172,6 +172,11 @@ Respond with JSON only, no markdown fences.`,
 
   const text =
     response.content[0].type === "text" ? response.content[0].text : "";
+  const stopReason = response.stop_reason;
+
+  if (stopReason === "max_tokens") {
+    logger.warn({ locale, textLength: text.length }, "Translation hit max_tokens limit — response truncated");
+  }
 
   const cleaned = text
     .trim()
@@ -188,10 +193,13 @@ Respond with JSON only, no markdown fences.`,
     // Try to extract JSON
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
-      const result = JSON.parse(match[0]) as TranslationResult;
-      result.slug = sanitizeSlug(result.slug || "");
-      return result;
+      try {
+        const result = JSON.parse(match[0]) as TranslationResult;
+        result.slug = sanitizeSlug(result.slug || "");
+        return result;
+      } catch { /* fall through */ }
     }
+    logger.error({ locale, stopReason, responseLength: text.length, first500: text.slice(0, 500) }, "Translation returned invalid JSON");
     throw new Error(`Translation returned invalid JSON for ${locale}`);
   }
 }
