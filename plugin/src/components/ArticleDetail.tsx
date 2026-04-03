@@ -171,7 +171,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
       )}
 
       {/* Edit / Regenerate prompt */}
-      {(article.status === "draft" || article.status === "review") && (
+      {(article.status === "draft" || article.status === "review" || article.status === "published") && (
         <div style={styles.section}>
           <button
             onClick={() => setShowEditPrompt(!showEditPrompt)}
