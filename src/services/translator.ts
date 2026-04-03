@@ -209,8 +209,11 @@ Respond with JSON only, no markdown fences.`,
     const result = JSON.parse(cleaned) as TranslationResult;
     result.slug = sanitizeSlug(result.slug || "");
     return result;
-  } catch {
-    // Try to extract JSON
+  } catch (parseError) {
+    const parseMsg = parseError instanceof Error ? parseError.message : "unknown";
+    logger.warn({ locale, parseError: parseMsg }, "Initial JSON parse failed, trying recovery");
+
+    // Try to extract JSON block
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
       try {
@@ -219,7 +222,26 @@ Respond with JSON only, no markdown fences.`,
         return result;
       } catch { /* fall through */ }
     }
-    logger.error({ locale, stopReason, responseLength: text.length, first500: text.slice(0, 500) }, "Translation returned invalid JSON");
+
+    // Try to extract fields manually as a last resort
+    try {
+      const titleMatch = cleaned.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      const slugMatch = cleaned.match(/"slug"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      const summaryMatch = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      const contentMatch = cleaned.match(/"content"\s*:\s*"([\s\S]*)"\s*\}?\s*$/);
+
+      if (titleMatch && summaryMatch && contentMatch) {
+        logger.info({ locale }, "Recovered translation via field extraction");
+        return {
+          title: titleMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
+          slug: sanitizeSlug(slugMatch?.[1] || ""),
+          summary: summaryMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
+          content: contentMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
+        };
+      }
+    } catch { /* fall through */ }
+
+    logger.error({ locale, stopReason, parseError: parseMsg, responseLength: text.length, first500: text.slice(0, 500) }, "Translation returned invalid JSON");
     throw new Error(`Translation returned invalid JSON for ${locale}`);
   }
 }
