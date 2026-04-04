@@ -232,7 +232,7 @@ Key site pages you can link to where relevant:
 - https://developers.crmchat.ai/ — "CRMChat API" (link when mentioning integrations, API, or developer features)`;
 
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-6",
     max_tokens: 8192,
     system: `You write blog articles for CRMChat — a Telegram-based CRM and outreach platform for sales teams.
 
