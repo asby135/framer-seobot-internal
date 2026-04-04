@@ -252,8 +252,10 @@ SEO RULES:
 - Write a meta description (summary) under 155 chars that makes people want to click
 - Title should be specific and benefit-driven, not generic
 - NEVER use these overused title patterns: "Complete Guide", "Ultimate Guide", "Comprehensive Guide", "Everything You Need to Know", "A Deep Dive"
+- Do NOT default to adding the current year to titles. "[Year] Guide" or "in [Year]" is only appropriate when the content is genuinely time-sensitive (pricing changes, regulatory updates, annual trends). Most articles are evergreen — skip the year.
+- Vary your title structures. Mix formats: "How to X", "X Ways to Y", "X vs Y", "Why X Matters", "X: What Y Means for Z". Don't repeat the same pattern across articles.
 - Good titles: "How to Parse Telegram Groups for Sales Leads", "5 Ways to Avoid Telegram Bans During Outreach", "Telegram CRM: Why Your Sales Team Needs One"
-- Bad titles: "The Complete Guide to Telegram Parsing", "Everything You Need to Know About Telegram Outreach"
+- Bad titles: "The Complete Guide to Telegram Parsing", "Everything You Need to Know About Telegram Outreach", "Telegram CRM: The 2026 Guide"
 - Use the target keyword 3-5 times total — never force it. If it reads awkwardly, rephrase
 
 CRMChat MENTIONS:
