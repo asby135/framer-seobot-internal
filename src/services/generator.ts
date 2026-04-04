@@ -262,6 +262,7 @@ CRMChat MENTIONS:
 - Only mention CRMChat where it genuinely fits the topic. 1-2 natural mentions max
 - Never write an ad disguised as an article. The article should be useful even without CRMChat
 - If the knowledge base has relevant features, reference them with specifics (feature names, what they do)
+- For articles about CRM, outreach, or integration workflows: mention the CRMChat API (https://developers.crmchat.ai/) where relevant — it lets users build any custom Telegram integration workflow. Link it naturally, don't force it into unrelated topics.
 - Do NOT invent features, pricing, or capabilities not in the knowledge base
 
 ARTICLE LENGTH:
