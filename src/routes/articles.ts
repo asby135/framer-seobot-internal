@@ -103,6 +103,51 @@ articles.post("/:id/delete", (c) => {
   return c.json({ success: true });
 });
 
+// Update article fields (title, summary, content) without regenerating
+articles.post("/:id/update", async (c) => {
+  const db = getDb();
+  const { id } = c.req.param();
+  const body = await c.req.json<{ title?: string; summary?: string; content?: string }>().catch(() => ({} as { title?: string; summary?: string; content?: string }));
+
+  const article = db.prepare("SELECT id, status FROM articles WHERE id = ?").get(id) as { id: string; status: string } | undefined;
+  if (!article) {
+    return c.json({ error: "Article not found" }, 404);
+  }
+
+  if (article.status === "generation_failed") {
+    return c.json({ error: "Cannot edit a failed article" }, 400);
+  }
+
+  const updates: string[] = [];
+  const values: unknown[] = [];
+
+  if (body.title !== undefined && body.title.trim()) {
+    updates.push("title = ?");
+    values.push(body.title.trim());
+  }
+  if (body.summary !== undefined) {
+    updates.push("summary = ?");
+    values.push(body.summary.trim());
+  }
+  if (body.content !== undefined) {
+    updates.push("content = ?");
+    values.push(body.content);
+  }
+
+  if (updates.length === 0) {
+    return c.json({ error: "No fields to update" }, 400);
+  }
+
+  updates.push("updated_at = datetime('now')");
+  values.push(id);
+
+  db.prepare(`UPDATE articles SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+
+  const updated = db.prepare("SELECT * FROM articles WHERE id = ?").get(id);
+  logger.info({ articleId: id, fields: updates.length - 1 }, "Article updated manually");
+  return c.json(updated);
+});
+
 // Regenerate an article with optional editing instructions
 articles.post("/:id/regenerate", async (c) => {
   const db = getDb();

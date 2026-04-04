@@ -201,6 +201,13 @@ class ApiClient {
     );
   }
 
+  async updateArticle(id: string, fields: { title?: string; summary?: string; content?: string }) {
+    return this.request<Article>(`/api/articles/${id}/update`, {
+      method: "POST",
+      body: JSON.stringify(fields),
+    });
+  }
+
   async regenerateArticle(id: string, instructions?: string) {
     return this.request<{ status: string; keyword_id: string; query: string }>(
       `/api/articles/${id}/regenerate`,

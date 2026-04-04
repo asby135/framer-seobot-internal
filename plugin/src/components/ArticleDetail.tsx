@@ -19,6 +19,11 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   const [confirmRegenerate, setConfirmRegenerate] = useState(false);
   const [translating, setTranslating] = useState(checkTranslating(articleId));
   const [translateResult, setTranslateResult] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editSummary, setEditSummary] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [saving, setSaving] = useState(false);
   const abortRef = useRef(false);
 
   useEffect(() => {
@@ -109,6 +114,43 @@ export function ArticleDetail({ articleId, onBack }: Props) {
     }
   }
 
+  function startEditing() {
+    if (!article) return;
+    setEditTitle(article.title);
+    setEditSummary(article.summary || "");
+    setEditContent(article.content || "");
+    setEditing(true);
+  }
+
+  function cancelEditing() {
+    setEditing(false);
+  }
+
+  async function handleSave() {
+    if (!article) return;
+    setSaving(true);
+    setError("");
+    try {
+      const fields: { title?: string; summary?: string; content?: string } = {};
+      if (editTitle.trim() !== article.title) fields.title = editTitle.trim();
+      if (editSummary.trim() !== (article.summary || "")) fields.summary = editSummary.trim();
+      if (editContent !== (article.content || "")) fields.content = editContent;
+
+      if (Object.keys(fields).length === 0) {
+        setEditing(false);
+        return;
+      }
+
+      await api.updateArticle(articleId, fields);
+      await loadArticle();
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) {
     return <div style={styles.center}><p style={styles.muted}>Loading...</p></div>;
   }
@@ -131,7 +173,15 @@ export function ArticleDetail({ articleId, onBack }: Props) {
     <div style={styles.container}>
       <button onClick={onBack} style={styles.backLink}>← Back to Articles</button>
 
-      <h3 style={styles.title}>{article.title}</h3>
+      {editing ? (
+        <input
+          value={editTitle}
+          onChange={(e) => setEditTitle(e.target.value)}
+          style={styles.editTitleInput}
+        />
+      ) : (
+        <h3 style={styles.title}>{article.title}</h3>
+      )}
 
       <div style={styles.statusRow}>
         <span>Status: </span>
@@ -158,26 +208,67 @@ export function ArticleDetail({ articleId, onBack }: Props) {
       )}
 
       {/* Summary */}
-      {article.summary && (
+      {(article.summary || editing) && (
         <div style={styles.section}>
           <p style={styles.sectionLabel}>Summary</p>
-          <p style={styles.summaryText}>{article.summary}</p>
+          {editing ? (
+            <textarea
+              value={editSummary}
+              onChange={(e) => setEditSummary(e.target.value)}
+              style={styles.editTextarea}
+              rows={3}
+            />
+          ) : (
+            <p style={styles.summaryText}>{article.summary}</p>
+          )}
         </div>
       )}
 
       {/* Article content preview */}
-      {article.content && (
+      {(article.content || editing) && (
         <div style={styles.section}>
-          <p style={styles.sectionLabel}>Article Preview</p>
-          <div
-            style={styles.contentPreview}
-            dangerouslySetInnerHTML={{ __html: article.content }}
-          />
+          <p style={styles.sectionLabel}>{editing ? "Article HTML" : "Article Preview"}</p>
+          {editing ? (
+            <textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              style={{ ...styles.editTextarea, fontFamily: "monospace", fontSize: 12 }}
+              rows={16}
+            />
+          ) : (
+            <div
+              style={styles.contentPreview}
+              dangerouslySetInnerHTML={{ __html: article.content }}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Manual edit controls */}
+      {article.status !== "generation_failed" && !editing && (
+        <div style={styles.section}>
+          <button onClick={startEditing} style={styles.editToggle}>
+            ✎ Edit Title & Content
+          </button>
+        </div>
+      )}
+      {editing && (
+        <div style={{ ...styles.section, display: "flex", gap: 8 }}>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            style={{ ...styles.saveButton, ...(saving ? styles.disabled : {}) }}
+          >
+            {saving ? "Saving..." : "Save Changes"}
+          </button>
+          <button onClick={cancelEditing} disabled={saving} style={styles.cancelButton}>
+            Cancel
+          </button>
         </div>
       )}
 
       {/* Edit / Regenerate prompt */}
-      {(article.status === "draft" || article.status === "review" || article.status === "published") && (
+      {!editing && (article.status === "draft" || article.status === "review" || article.status === "published") && (
         <div style={styles.section}>
           <button
             onClick={() => setShowEditPrompt(!showEditPrompt)}
@@ -284,6 +375,9 @@ const styles: Record<string, React.CSSProperties> = {
   translatedLabel: { color: "#8f8", fontSize: 12, fontWeight: 500, margin: "0 0 6px", textAlign: "center" as const },
   forceTranslateButton: { width: "100%", padding: "8px 0", background: "#2a2a2a", color: "#aaa", border: "1px solid #444", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
   translateResult: { color: "#8bf", fontSize: 12, marginTop: 6, textAlign: "center" as const },
+  editTitleInput: { background: "#2a2a2a", border: "1px solid #444", borderRadius: 6, padding: "8px 10px", color: "#fff", fontSize: 16, fontWeight: 600, outline: "none", fontFamily: "inherit", width: "100%", boxSizing: "border-box" as const, marginBottom: 8 },
+  saveButton: { flex: 1, padding: "8px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  cancelButton: { flex: 1, padding: "8px 0", background: "#2a2a2a", color: "#aaa", border: "1px solid #444", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
   editToggle: { background: "none", border: "1px solid #444", borderRadius: 6, color: "#aaa", cursor: "pointer", padding: "6px 12px", fontSize: 13, width: "100%" },
   editArea: { marginTop: 8, display: "flex", flexDirection: "column" as const, gap: 8 },
   editTextarea: { background: "#2a2a2a", border: "1px solid #444", borderRadius: 6, padding: "8px 10px", color: "#fff", fontSize: 13, resize: "vertical" as const, outline: "none", fontFamily: "inherit", lineHeight: 1.4 },
