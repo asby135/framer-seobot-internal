@@ -233,7 +233,7 @@ Key site pages you can link to where relevant:
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 8192,
+    max_tokens: 16384,
     system: `You write blog articles for CRMChat — a Telegram-based CRM and outreach platform for sales teams.
 
 VOICE & TONE:
