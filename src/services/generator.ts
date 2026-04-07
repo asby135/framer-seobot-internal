@@ -297,11 +297,15 @@ ${sitePages}
 
 Respond with valid JSON only. No markdown fences, no preamble.`,
       },
+      {
+        role: "assistant",
+        content: "{",
+      },
     ],
   });
 
   const text =
-    response.content[0].type === "text" ? response.content[0].text : "";
+    "{" + (response.content[0].type === "text" ? response.content[0].text : "");
 
   if (response.stop_reason === "max_tokens") {
     logger.error({ stop_reason: response.stop_reason, textLength: text.length }, "Claude response truncated — max_tokens hit");
@@ -319,12 +323,26 @@ Respond with valid JSON only. No markdown fences, no preamble.`,
   try {
     parsed = JSON.parse(cleaned) as GeneratedArticle;
   } catch {
-    // Log more context for debugging: first 500 chars and last 500 chars
-    logger.error(
-      { textStart: cleaned.slice(0, 500), textEnd: cleaned.slice(-500), textLength: cleaned.length, stopReason: response.stop_reason },
-      "Claude returned invalid JSON"
-    );
-    throw new Error("Claude returned invalid JSON response");
+    // Attempt to repair: if content field was cut off, try closing the JSON
+    let repaired = cleaned;
+    // If it ends mid-string, close the string and objects
+    if (!repaired.trimEnd().endsWith("}")) {
+      // Close any open string, then close the object
+      repaired = repaired.replace(/,?\s*$/, "");
+      if (!repaired.endsWith('"')) repaired += '"';
+      repaired += "}";
+    }
+    try {
+      parsed = JSON.parse(repaired) as GeneratedArticle;
+      logger.warn({ textLength: cleaned.length }, "Repaired incomplete JSON from Claude");
+    } catch {
+      // Log more context for debugging: first 500 chars and last 500 chars
+      logger.error(
+        { textStart: cleaned.slice(0, 500), textEnd: cleaned.slice(-500), textLength: cleaned.length, stopReason: response.stop_reason },
+        "Claude returned invalid JSON"
+      );
+      throw new Error("Claude returned invalid JSON response");
+    }
   }
 
   // Ensure slug doesn't collide with existing articles
