@@ -234,6 +234,24 @@ Key site pages you can link to where relevant:
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 16384,
+    tools: [
+      {
+        name: "publish_article",
+        description: "Publish the generated blog article with all required fields.",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            title: { type: "string" as const, description: "SEO-optimized article title (include target keyword)" },
+            slug: { type: "string" as const, description: "URL-friendly slug" },
+            category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
+            summary: { type: "string" as const, description: "1-2 sentence meta description for SEO (under 155 chars)" },
+            content: { type: "string" as const, description: "Full HTML article body" },
+          },
+          required: ["title", "slug", "category", "summary", "content"],
+        },
+      },
+    ],
+    tool_choice: { type: "tool" as const, name: "publish_article" },
     system: `You write blog articles for CRMChat — a Telegram-based CRM and outreach platform for sales teams.
 
 VOICE & TONE:
@@ -272,14 +290,7 @@ ARTICLE LENGTH:
 - Use bullet points and numbered lists liberally — they're easier to read than paragraphs
 - 4-6 <h2> sections is the sweet spot
 
-You MUST respond with valid JSON matching this exact structure:
-{
-  "title": "SEO-optimized article title (include target keyword)",
-  "slug": "url-friendly-slug",
-  "category": "one of: outreach, crm, telegram, sales, automation, guides",
-  "summary": "1-2 sentence meta description for SEO (under 155 chars)",
-  "content": "Full HTML article body"
-}
+Call the publish_article tool with your generated article.
 
 HTML FORMAT:
 - <h2> for main sections, <h3> for subsections
@@ -295,55 +306,19 @@ ${relatedContext}
 ${existingArticlesList}
 ${sitePages}
 
-Respond with valid JSON only. No markdown fences, no preamble.`,
-      },
-      {
-        role: "assistant",
-        content: "{",
+Write the article and call the publish_article tool.`,
       },
     ],
   });
 
-  const text =
-    "{" + (response.content[0].type === "text" ? response.content[0].text : "");
-
-  if (response.stop_reason === "max_tokens") {
-    logger.error({ stop_reason: response.stop_reason, textLength: text.length }, "Claude response truncated — max_tokens hit");
+  // Extract structured output from tool_use response
+  const toolBlock = response.content.find((b) => b.type === "tool_use");
+  if (!toolBlock || toolBlock.type !== "tool_use") {
+    logger.error({ stopReason: response.stop_reason, contentTypes: response.content.map((b) => b.type) }, "Claude did not return tool_use block");
+    throw new Error("Claude did not return structured article output");
   }
 
-  // Parse the JSON response, stripping any markdown fences or preamble
-  let cleaned = text.replace(/^```(?:json)?\s*/s, "").replace(/\s*```\s*$/s, "");
-  // If Claude added preamble text before the JSON, extract the JSON object
-  const jsonStart = cleaned.indexOf("{");
-  if (jsonStart > 0) {
-    cleaned = cleaned.slice(jsonStart);
-  }
-
-  let parsed: GeneratedArticle;
-  try {
-    parsed = JSON.parse(cleaned) as GeneratedArticle;
-  } catch {
-    // Attempt to repair: if content field was cut off, try closing the JSON
-    let repaired = cleaned;
-    // If it ends mid-string, close the string and objects
-    if (!repaired.trimEnd().endsWith("}")) {
-      // Close any open string, then close the object
-      repaired = repaired.replace(/,?\s*$/, "");
-      if (!repaired.endsWith('"')) repaired += '"';
-      repaired += "}";
-    }
-    try {
-      parsed = JSON.parse(repaired) as GeneratedArticle;
-      logger.warn({ textLength: cleaned.length }, "Repaired incomplete JSON from Claude");
-    } catch {
-      // Log more context for debugging: first 500 chars and last 500 chars
-      logger.error(
-        { textStart: cleaned.slice(0, 500), textEnd: cleaned.slice(-500), textLength: cleaned.length, stopReason: response.stop_reason },
-        "Claude returned invalid JSON"
-      );
-      throw new Error("Claude returned invalid JSON response");
-    }
-  }
+  const parsed = toolBlock.input as GeneratedArticle;
 
   // Ensure slug doesn't collide with existing articles
   let slug = queryToSlug(parsed.slug || parsed.title);
