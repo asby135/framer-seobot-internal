@@ -303,14 +303,27 @@ Respond with valid JSON only. No markdown fences, no preamble.`,
   const text =
     response.content[0].type === "text" ? response.content[0].text : "";
 
-  // Parse the JSON response, stripping any markdown fences
-  const cleaned = text.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+  if (response.stop_reason === "max_tokens") {
+    logger.error({ stop_reason: response.stop_reason, textLength: text.length }, "Claude response truncated — max_tokens hit");
+  }
+
+  // Parse the JSON response, stripping any markdown fences or preamble
+  let cleaned = text.replace(/^```(?:json)?\s*/s, "").replace(/\s*```\s*$/s, "");
+  // If Claude added preamble text before the JSON, extract the JSON object
+  const jsonStart = cleaned.indexOf("{");
+  if (jsonStart > 0) {
+    cleaned = cleaned.slice(jsonStart);
+  }
 
   let parsed: GeneratedArticle;
   try {
     parsed = JSON.parse(cleaned) as GeneratedArticle;
   } catch {
-    logger.error({ text: cleaned.slice(0, 200) }, "Claude returned invalid JSON");
+    // Log more context for debugging: first 500 chars and last 500 chars
+    logger.error(
+      { textStart: cleaned.slice(0, 500), textEnd: cleaned.slice(-500), textLength: cleaned.length, stopReason: response.stop_reason },
+      "Claude returned invalid JSON"
+    );
     throw new Error("Claude returned invalid JSON response");
   }
 
