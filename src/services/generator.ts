@@ -311,6 +311,10 @@ Write the article and call the publish_article tool.`,
     ],
   });
 
+  if (response.stop_reason === "max_tokens") {
+    logger.error({ stopReason: response.stop_reason }, "Claude response truncated — tool_use output may be incomplete");
+  }
+
   // Extract structured output from tool_use response
   const toolBlock = response.content.find((b) => b.type === "tool_use");
   if (!toolBlock || toolBlock.type !== "tool_use") {
@@ -319,6 +323,10 @@ Write the article and call the publish_article tool.`,
   }
 
   const parsed = toolBlock.input as GeneratedArticle;
+  if (!parsed.title || !parsed.content) {
+    logger.error({ input: JSON.stringify(parsed).slice(0, 500) }, "Tool output missing required fields");
+    throw new Error("Claude returned incomplete article data");
+  }
 
   // Ensure slug doesn't collide with existing articles
   let slug = queryToSlug(parsed.slug || parsed.title);
