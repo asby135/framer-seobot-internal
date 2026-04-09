@@ -31,7 +31,7 @@ export async function generateThumbnail(
   try {
     const response = await openai.images.generate({
       model: "dall-e-3",
-      prompt: `Professional blog header image for an article titled "${title}" about ${keyword}. Modern, clean design with abstract business/tech imagery. No text overlay. Suitable for a SaaS blog about CRM and sales automation.`,
+      prompt: `Minimal, editorial-style blog header illustration for an article about "${keyword}". Style: flat vector art with a muted, sophisticated color palette (soft blues, warm grays, subtle accents). Show one simple, clear visual metaphor related to the topic — not a collage of icons. Think: a single object or scene, plenty of whitespace, like an illustration from a premium tech magazine. Absolutely NO text, NO words, NO letters, NO logos, NO busy compositions, NO floating icons, NO generic tech collages. Clean and understated.`,
       n: 1,
       size: "1792x1024", // Closest to 1200x630 aspect ratio
       quality: "standard",
