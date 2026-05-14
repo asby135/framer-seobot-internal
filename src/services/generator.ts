@@ -7,6 +7,7 @@ import { queryToSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
+import { namesCompetitor } from "../lib/competitors.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -202,6 +203,69 @@ async function callClaudeWithRetry(
   }
 }
 
+/**
+ * Web-search research pass — runs ONLY for topics that name a competitor.
+ *
+ * Why a separate call: generateArticle's main call forces
+ * tool_choice=publish_article for guaranteed structured output, which leaves
+ * no room for the model to invoke web_search in that same turn. So competitor
+ * research is a preceding pass whose factual brief is injected into the
+ * generation prompt as grounding context.
+ *
+ * Non-blocking: if the search fails, returns "" and the article still
+ * generates — just without verified competitor facts.
+ */
+async function researchCompetitorContext(query: string): Promise<string> {
+  try {
+    const webSearchTool = {
+      type: "web_search_20260209",
+      name: "web_search",
+      max_uses: 4, // cap searches per article to control cost
+    };
+
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 2048,
+      tools: [webSearchTool] as Parameters<
+        typeof anthropic.messages.create
+      >[0]["tools"],
+      system: `You are researching factual, current information for a blog article.
+Search the web for accurate, up-to-date facts about the competitor product(s) named in the topic.
+Focus on: pricing, key features, integration/Telegram capabilities, and notable limitations.
+Be precise. Do NOT invent or estimate — if you cannot verify a specific number (e.g. exact pricing), say so explicitly rather than guessing.
+Return a concise factual brief as bullet points. No marketing language, no preamble.`,
+      messages: [
+        {
+          role: "user",
+          content: `Research the competitor(s) named in this article topic: "${query}"
+
+Gather accurate, current facts. Explicitly flag anything you could not verify.`,
+        },
+      ],
+    });
+
+    // web_search runs server-side; we just collect the model's final text.
+    const text = response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { text: string }).text)
+      .join("\n")
+      .trim();
+
+    if (!text) {
+      logger.warn({ query }, "Competitor research returned no text");
+      return "";
+    }
+    logger.info({ query, length: text.length }, "Competitor research complete");
+    return text;
+  } catch (e) {
+    logger.error(
+      { query, error: e instanceof Error ? e.message : "unknown" },
+      "Competitor research failed — generating without web context"
+    );
+    return "";
+  }
+}
+
 async function callClaude(
   query: string,
   kbResults: Array<{ title: string; content: string }>,
@@ -215,6 +279,12 @@ async function callClaude(
         `--- KB Article ${i + 1}: ${kb.title} ---\n${kb.content.slice(0, 2000)}`
     )
     .join("\n\n");
+
+  // Competitor topics get a web-search research pass for accurate, current
+  // competitor facts (the KB only covers CRMChat's own product).
+  const competitorContext = namesCompetitor(query)
+    ? await researchCompetitorContext(query)
+    : "";
 
   const relatedContext =
     relatedQueries.length > 0
@@ -318,6 +388,13 @@ CRMChat MENTIONS (in body text):
 - For Web3/crypto/blockchain topics: mention CRMChat's Web3 B2B decision-makers database (https://crmchat.ai/web3-database).
 - Never invent features, pricing, or capabilities not in the knowledge base.
 
+COMPETITOR & COMPARISON TOPICS:
+Some topics name a competitor (e.g. "CRMChat vs nReach", "Vtiger Telegram integration setup guide"). When the topic involves a competitor:
+- If a "COMPETITOR RESEARCH" block is provided in the user message, treat it as the source of truth for competitor facts. If a fact (especially pricing) is NOT in that block, do NOT state it as fact — write "check their site for current details" instead of inventing a number.
+- For "X vs CRMChat" topics: write an honest, balanced comparison. Do not disparage the competitor. Let CRMChat win on the dimensions that genuinely matter — Telegram-native depth, no integration overhead — a fair comparison that lands favorably, never a hit piece.
+- For "competitor + task/integration" topics (e.g. "Vtiger Telegram integration"): genuinely help the reader accomplish the task — that usefulness is what earns the citation. Then include CRMChat as a natural reframe: "...or skip the integration overhead entirely, since CRMChat is built on Telegram natively." An honest reframe, not a tacked-on ad.
+- Never claim a competitor lacks a feature unless the research block confirms it. Inaccurate competitor claims destroy credibility — and AI engines won't cite a source they can't trust.
+
 HTML FORMAT:
 - <h2> for main sections, <h3> for subsections.
 - <p> for paragraphs, <ul>/<ol> + <li> for lists, <strong> for emphasis.
@@ -364,6 +441,7 @@ Call the publish_article tool with all six fields populated.`,
         content: `Target keyword: "${query}"
 Today's date (for datePublished/dateModified in schema_jsonld): ${today}
 ${kbContext ? `\nCRMChat knowledge base (use for accuracy — do NOT invent features):\n${kbContext}` : ""}
+${competitorContext ? `\nCOMPETITOR RESEARCH (verified web facts — the source of truth for competitor claims; do not state competitor facts not found here):\n${competitorContext}` : ""}
 ${relatedContext}
 ${existingArticlesList}
 ${sitePages}

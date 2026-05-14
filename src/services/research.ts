@@ -1,25 +1,11 @@
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
 import { fetchEraQueries } from "./era.js";
+import { namesCompetitor } from "../lib/competitors.js";
 import { queryToSlug } from "../lib/utils.js";
 import { logger } from "../lib/logger.js";
 
 const ERA_SCORE_FILTER = 30; // Skip rows with opportunity_score below this threshold
-
-// Competitor brand names. A topic that names a competitor but does NOT mention
-// CRMChat is "pure competitor SEO" — UNLESS it also has a task/integration
-// angle (see TASK_SIGNALS), in which case it's a how-to topic where CRMChat is
-// a natural alternative and worth keeping. Add competitors here as they show
-// up in Era data.
-const COMPETITORS = [
-  "nreach",
-  "enreach",
-  "entergram",
-  "vtiger",
-  "hubspot",
-  "zoho",
-  "salesforce",
-];
 
 // Task/integration signals. If a competitor-named topic also contains one of
 // these, it's a how-to / pain-point topic (e.g. "Vtiger Telegram integration
@@ -56,8 +42,7 @@ const TASK_SIGNALS = [
 function isPureCompetitorTopic(query: string): boolean {
   const q = query.toLowerCase();
   if (q.includes("crmchat")) return false; // comparison / migration / brand — keep
-  const namesCompetitor = COMPETITORS.some((c) => q.includes(c));
-  if (!namesCompetitor) return false; // generic / category — keep
+  if (!namesCompetitor(query)) return false; // generic / category — keep
   const hasTaskAngle = TASK_SIGNALS.some((s) => q.includes(s));
   return !hasTaskAngle; // competitor named, no task angle, no CRMChat — skip
 }
