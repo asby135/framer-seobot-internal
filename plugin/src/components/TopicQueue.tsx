@@ -222,7 +222,7 @@ const styles: Record<string, React.CSSProperties> = {
   rowSelected: { background: "#2a2a2a" },
   checkbox: { color: "#888", fontSize: 14, marginTop: 1, flexShrink: 0 },
   rowContent: { flex: 1, minWidth: 0 },
-  query: { color: "#e0e0e0", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  query: { color: "#e0e0e0", fontWeight: 500, lineHeight: 1.35, overflowWrap: "anywhere" },
   meta: { color: "#888", fontSize: 12, marginTop: 2 },
   actions: { display: "flex", gap: 8, padding: "12px 16px" },
   approveButton: { flex: 1, padding: "8px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
