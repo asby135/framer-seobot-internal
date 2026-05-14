@@ -376,11 +376,34 @@ These are non-negotiable structural requirements derived from empirical analysis
    - These are the skim-anchors users land on and AI Overviews quote.
    - Use specific verbs ("Add", "Set", "Monitor"), not vague ones ("Consider", "Think about").
 
-ARTICLE STRUCTURE:
-- 1,000-1,500 words total. Tight, no padding.
-- 4-6 <h2> sections.
-- Each <h2> should be a question or a specific claim, not a generic noun phrase.
-- Vary title formats: "How to X", "X Ways to Y", "X vs Y", "Why X Matters", "X: What Y Means for Z". NEVER: "Complete Guide", "Ultimate Guide", "Everything You Need to Know", "A Deep Dive". NEVER default to adding the current year unless content is genuinely time-sensitive.
+ARTICLE TYPE — MATCH THE STRUCTURE TO THE KEYWORD:
+
+The target keyword is the basis. Don't change the topic — but FIRST classify the keyword into one of these five archetypes and follow that archetype's structure and length. When the type is ambiguous, default to How-to: it's the highest-volume, highest-value format.
+
+1. HOW-TO — the default; most keywords are this. Looks like "how to X", "X setup guide", "X integration", "X workflow".
+   - 1,000-1,500 words. 4-6 <h2> sections.
+   - Solve ONE specific technical pain with concrete step-by-step instructions.
+   - This is the format that earns the most traffic — treat it as the priority type.
+
+2. WHAT-IS — looks like "what is X", "X meaning", "X explained", "X definition".
+   - SHORT: 400-450 words. 2-3 <h2> sections. Do NOT pad to 1,500 — brevity IS the format.
+   - Define the thing clearly in the first paragraph, then why it matters and how it works.
+
+3. COMPARISON / ALTERNATIVE — looks like "X vs Y", "X alternatives", "best X alternative".
+   - 800-1,200 words. Structured side-by-side (a comparison table or clear paired sections).
+   - Low search volume, but the hottest-intent audience — these readers are close to deciding.
+   - Also follow the COMPETITOR & COMPARISON TOPICS rules below.
+
+4. TOP / LISTICLE — looks like "best X", "top X tools", "X tools for Y".
+   - 1,000-1,500 words. One <h2> per product.
+   - Put CRMChat first and make its case — then honestly break down each other product with real pros AND cons. A credible listicle, not a CRMChat-only puff piece: the honest competitor coverage is exactly what makes it trustworthy enough to get cited.
+
+5. TROUBLESHOOTING / FAQ — looks like "X not working", "fix X", "X error", or a direct question.
+   - 600-1,000 words. Problem → cause → fix structure, or Q&A blocks.
+
+All five types still follow the FOUR WINNER-PATTERN RULES above — but scale them to the type. A 400-word What-is has one citable answer and one short list, not 4-6 sections. Each <h2> should be a question or a specific claim, never a generic noun phrase.
+
+TITLE FORMATS: Vary across articles — "How to X", "X Ways to Y", "X vs Y", "Why X Matters", "X: What Y Means for Z". NEVER: "Complete Guide", "Ultimate Guide", "Everything You Need to Know", "A Deep Dive". NEVER default to adding the current year unless content is genuinely time-sensitive.
 
 CRMChat MENTIONS (in body text):
 - Beyond the 2 brand-mention sentences from Rule 3, additional mentions optional. 1-2 more max.
@@ -426,13 +449,13 @@ Emit a STRING (the tool field) containing a valid JSON document with this shape:
       "@type": "FAQPage",
       "mainEntity": [
         { "@type": "Question", "name": "<H2 question 1>", "acceptedAnswer": { "@type": "Answer", "text": "<plain-text answer from first paragraph below that H2, 1-3 sentences>" } },
-        ... 3 to 6 Q&A pairs distilled from your H2 sections that are questions ...
+        ... 2 to 6 Q&A pairs distilled from your H2 sections that are questions — match the count to the article (a short What-is yields 2-3, a long How-to yields 4-6) ...
       ]
     }
   ]
 }
 
-The schema_jsonld value MUST be a valid JSON string. No backtick fences, no commentary, no trailing commas. Inside Answer.text, use plain text (no HTML tags). Pick the H2 sections that are framed as questions for the FAQ; if a section is a statement not a question, rephrase its first H2 line as a question for the FAQ entry (e.g., "5 Ways to Avoid Telegram Bans" → "How do I avoid Telegram bans?"). Use 3-6 Q&A pairs total.
+The schema_jsonld value MUST be a valid JSON string. No backtick fences, no commentary, no trailing commas. Inside Answer.text, use plain text (no HTML tags). Pick the H2 sections that are framed as questions for the FAQ; if a section is a statement not a question, rephrase its first H2 line as a question for the FAQ entry (e.g., "5 Ways to Avoid Telegram Bans" → "How do I avoid Telegram bans?"). Use 2-6 Q&A pairs total, matched to the article's length and section count.
 
 Call the publish_article tool with all six fields populated.`,
     messages: [
