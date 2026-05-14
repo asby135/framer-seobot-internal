@@ -20,19 +20,35 @@ const r2 = new S3Client({
 });
 
 /**
- * Distinct editorial illustration styles. One is picked at random per article
- * so a batch of thumbnails doesn't look like one obviously-AI-generated set.
- * Each is self-contained: art style + palette + composition. The base prompt
- * keeps the hard constraints (single metaphor, no text, no icon collage).
+ * Distinct editorial illustration styles. Styles rotate round-robin per article
+ * (keyed off the thumbnail count) so consecutive articles never share a style and
+ * a batch doesn't look like one obviously-AI-generated set. Palettes are spread
+ * across the color wheel — cool, warm, pastel, monochrome, dark — so no two are
+ * close. Each is self-contained: art style + palette + composition. The base
+ * prompt keeps the hard constraints (single metaphor, no text, no icon collage).
  */
 const THUMBNAIL_STYLES = [
-  "Flat vector illustration. Muted palette of soft blues and warm grays with one subtle accent color. A single centered object, generous whitespace around it.",
+  "Flat vector illustration. Cool palette — slate blue, steel gray, off-white — with one crisp accent color. A single centered object, generous whitespace around it.",
   "Soft geometric shapes with gentle gradients. Warm earth tones — terracotta, sand, cream. Asymmetric composition, the subject off to one side.",
-  "Thin-stroke line-art illustration. Near-monochrome with a single bold accent color. Lots of negative space, like a New Yorker spot illustration.",
-  "Layered paper-cut style with subtle drop shadows for depth. Pastel palette — dusty pink, pale blue, soft yellow. One simple central shape.",
-  "Minimal isometric illustration. Cool palette — teal, slate, off-white. A single object sitting on a plain flat background, no scene clutter.",
-  "Risograph-style print look — slightly grainy texture, a limited two-color palette, one bold simple shape. Retro-editorial, lots of breathing room.",
+  "Thin-stroke line-art illustration. Near-monochrome — black ink on cream — with one bold accent color. Lots of negative space, like a New Yorker spot illustration.",
+  "Layered paper-cut style with subtle drop shadows for depth. Pastel palette — dusty pink, lilac, pale yellow. One simple central shape.",
+  "Minimal isometric illustration. Deep cool palette — emerald, teal, charcoal — on off-white. A single object on a plain flat background, no scene clutter.",
+  "Risograph-style print look — slightly grainy texture, a bold high-contrast two-color palette (electric blue and red-orange), one simple shape. Retro-editorial.",
+  "Dark-mode editorial illustration. Deep charcoal or navy background, a single luminous accent-colored shape glowing against it. Minimal, lots of dark negative space.",
+  "Bold flat illustration with a vivid saturated palette — one dominant bright color blocked against white. Strong simple silhouette, poster-like, high impact.",
 ];
+
+/**
+ * Round-robin index for thumbnail styles: the Nth thumbnail ever generated gets
+ * style N % length, so consecutive articles always step to a different style.
+ */
+function nextStyleIndex(): number {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT COUNT(*) as count FROM assets WHERE type = 'thumbnail'")
+    .get() as { count: number };
+  return row.count % THUMBNAIL_STYLES.length;
+}
 
 /**
  * Generate a thumbnail with gpt-image-2 and upload to R2.
@@ -44,8 +60,7 @@ export async function generateThumbnail(
   keyword: string
 ): Promise<string | null> {
   try {
-    const style =
-      THUMBNAIL_STYLES[Math.floor(Math.random() * THUMBNAIL_STYLES.length)];
+    const style = THUMBNAIL_STYLES[nextStyleIndex()];
 
     const response = await openai.images.generate({
       model: "gpt-image-2",
