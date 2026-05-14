@@ -33,23 +33,21 @@ export function initDb(): Database.Database {
   db.exec(schema);
 
   // Migrations — add columns that may not exist in older DBs.
-  // Each ALTER is wrapped in its own try/catch so a single existing column
-  // doesn't block subsequent migrations.
-  try {
-    db.exec("ALTER TABLE article_translations ADD COLUMN slug TEXT");
-  } catch {
-    // Column already exists
-  }
-  try {
-    db.exec("ALTER TABLE articles ADD COLUMN schema_jsonld TEXT");
-  } catch {
-    // Column already exists
-  }
-  try {
-    db.exec("ALTER TABLE article_translations ADD COLUMN schema_jsonld TEXT");
-  } catch {
-    // Column already exists
-  }
+  // Each ALTER is wrapped so an already-applied migration is a no-op, but a
+  // genuine failure (locked DB, disk error, corruption) still throws — booting
+  // against a half-migrated schema would surface as confusing "no such column"
+  // errors at query time instead.
+  const addColumn = (sql: string) => {
+    try {
+      db.exec(sql);
+    } catch (e) {
+      if (!String(e).includes("duplicate column name")) throw e;
+      // Column already exists — migration already applied.
+    }
+  };
+  addColumn("ALTER TABLE article_translations ADD COLUMN slug TEXT");
+  addColumn("ALTER TABLE articles ADD COLUMN schema_jsonld TEXT");
+  addColumn("ALTER TABLE article_translations ADD COLUMN schema_jsonld TEXT");
 
   logger.info({ path: dbPath }, "Database initialized");
   return db;

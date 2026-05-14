@@ -12,6 +12,7 @@ const FIELDS = [
   { id: "updated", name: "Updated", type: "date" },
   { id: "summary", name: "Summary", type: "string" },
   { id: "content", name: "Content", type: "formattedText" },
+  { id: "schema_jsonld", name: "Schema JSON-LD", type: "string" },
   { id: "tool", name: "Tool", type: "string" },
 ];
 

@@ -109,7 +109,10 @@ async function eraFetch<T>(path: string): Promise<T> {
 
   if (!res.ok) {
     const body = await res.text();
-    logger.error({ status: res.status, body, path }, "Era API request failed");
+    logger.error(
+      { status: res.status, body: body.slice(0, 500), path },
+      "Era API request failed"
+    );
 
     if (res.status === 401) {
       throw new Error("Era auth failed: invalid X-API-Key");
@@ -164,8 +167,13 @@ export async function fetchEraQueries(): Promise<EraQuery[]> {
     return [];
   }
 
-  // Min-max normalize count to 0-100 within this batch
-  const maxCount = Math.max(...data.items.map((i) => i.count), 1);
+  // Min-max normalize count to 0-100 within this batch.
+  // reduce (not Math.max spread) to avoid call-stack limits if the API
+  // ever returns a batch larger than expected.
+  const maxCount = Math.max(
+    data.items.reduce((m, i) => (i.count > m ? i.count : m), 0),
+    1
+  );
 
   const queries: EraQuery[] = data.items.map((item) => {
     const countScore = (item.count / maxCount) * 100;
@@ -174,8 +182,9 @@ export async function fetchEraQueries(): Promise<EraQuery[]> {
 
     // Use LEAF of cluster_path (most specific) — e.g. "CRMChat Pricing"
     // is more useful than the root "Telegram CRM and Outreach"
-    const path = item.cluster_path ?? [];
-    const category = path.length > 0 ? path[path.length - 1] : null;
+    const clusterPath = item.cluster_path ?? [];
+    const category =
+      clusterPath.length > 0 ? clusterPath[clusterPath.length - 1] : null;
 
     return {
       query: item.query,

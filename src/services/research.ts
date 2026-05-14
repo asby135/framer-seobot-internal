@@ -64,8 +64,10 @@ export async function runResearch(): Promise<{
   const toInsert: Array<{ query: string; score: number }> = [];
 
   for (const q of queries) {
-    // Skip if we already have this keyword
-    if (existingQueries.has(q.query.toLowerCase())) {
+    const queryKey = q.query.toLowerCase();
+
+    // Skip if we already have this keyword (existing rows OR earlier in this batch)
+    if (existingQueries.has(queryKey)) {
       skipped++;
       continue;
     }
@@ -82,6 +84,11 @@ export async function runResearch(): Promise<{
       skipped++;
       continue;
     }
+
+    // Stage the row AND record its keys so a case-insensitive duplicate
+    // or slug collision later in the SAME batch is also skipped.
+    existingQueries.add(queryKey);
+    existingSlugs.add(slug);
 
     toInsert.push({
       query: q.query,

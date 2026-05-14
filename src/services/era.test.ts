@@ -1,12 +1,23 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, afterAll, vi } from "vitest";
 
 // Set env BEFORE importing era.ts so the module reads our test values.
+// Capture the originals so we can restore them — otherwise these mutations
+// leak into other test files in the same vitest process.
+const _origApiKey = process.env.ERA_AI_API_KEY;
+const _origBrandId = process.env.ERA_AI_BRAND_ID;
 process.env.ERA_AI_API_KEY = "omg_test_key";
 process.env.ERA_AI_BRAND_ID = "test-brand-id";
 
 const { fetchEraQueries, listBrands } = await import("./era.js");
 
 const originalFetch = globalThis.fetch;
+
+afterAll(() => {
+  if (_origApiKey === undefined) delete process.env.ERA_AI_API_KEY;
+  else process.env.ERA_AI_API_KEY = _origApiKey;
+  if (_origBrandId === undefined) delete process.env.ERA_AI_BRAND_ID;
+  else process.env.ERA_AI_BRAND_ID = _origBrandId;
+});
 
 function mockFetch(handler: (url: string) => Response | Promise<Response>) {
   globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
