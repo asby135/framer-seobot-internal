@@ -15,6 +15,7 @@ interface GeneratedArticle {
   category: string;
   summary: string;
   content: string; // HTML
+  schema_jsonld: string; // JSON-LD as a stringified JSON document (BlogPosting + FAQPage)
 }
 
 interface GenerationResult {
@@ -84,8 +85,8 @@ export async function generateArticle(
     const articleId = nanoid();
     const db = getDb();
     db.prepare(
-      `INSERT INTO articles (id, keyword_id, title, slug, category, summary, content, status, flags)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', '{}')`
+      `INSERT INTO articles (id, keyword_id, title, slug, category, summary, content, schema_jsonld, status, flags)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', '{}')`
     ).run(
       articleId,
       keywordId,
@@ -93,7 +94,8 @@ export async function generateArticle(
       article.slug,
       article.category,
       article.summary,
-      article.content
+      article.content,
+      article.schema_jsonld
     );
 
     // Step 6: Asset generation (parallel thumbnail + screenshot processing)
@@ -144,13 +146,14 @@ export async function generateArticle(
     const db = getDb();
     const articleId = nanoid();
     db.prepare(
-      `INSERT INTO articles (id, keyword_id, title, slug, category, summary, content, status, flags)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'generation_failed', ?)`
+      `INSERT INTO articles (id, keyword_id, title, slug, category, summary, content, schema_jsonld, status, flags)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'generation_failed', ?)`
     ).run(
       articleId,
       keywordId,
       `Failed: ${query}`,
       queryToSlug(query),
+      "",
       "",
       "",
       "",
@@ -231,6 +234,10 @@ Key site pages you can link to where relevant:
 - https://crmchat.ai/telegram-account-warmup — "Telegram Account Warmup" (link when discussing account warmup or avoiding bans)
 - https://developers.crmchat.ai/ — "CRMChat API" (link when mentioning integrations, API, or developer features)`;
 
+  const today = new Date().toISOString().split("T")[0];
+  const brandUrl = env.SCHEMA_BRAND_URL;
+  const logoUrl = env.SCHEMA_PUBLISHER_LOGO_URL;
+
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 16384,
@@ -241,18 +248,24 @@ Key site pages you can link to where relevant:
         input_schema: {
           type: "object" as const,
           properties: {
-            title: { type: "string" as const, description: "SEO-optimized article title (include target keyword)" },
+            title: { type: "string" as const, description: "Article title (include target keyword naturally)" },
             slug: { type: "string" as const, description: "URL-friendly slug" },
             category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
-            summary: { type: "string" as const, description: "1-2 sentence meta description for SEO (under 155 chars)" },
-            content: { type: "string" as const, description: "Full HTML article body" },
+            summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
+            content: { type: "string" as const, description: "Full HTML article body following the AEO RULES" },
+            schema_jsonld: {
+              type: "string" as const,
+              description:
+                "Stringified JSON-LD with @context schema.org and @graph containing BlogPosting + FAQPage entries. " +
+                "Must be a valid JSON string parseable by JSON.parse. See AEO RULES → JSON-LD STRUCTURED DATA in the system prompt for required shape.",
+            },
           },
-          required: ["title", "slug", "category", "summary", "content"],
+          required: ["title", "slug", "category", "summary", "content", "schema_jsonld"],
         },
       },
     ],
     tool_choice: { type: "tool" as const, name: "publish_article" },
-    system: `You write blog articles for CRMChat — a Telegram-based CRM and outreach platform for sales teams.
+    system: `You write blog articles for CRMChat — a Telegram-based CRM and outreach platform for sales teams. Articles are tuned for AEO/GEO: getting cited by ChatGPT, Perplexity, and Claude when users ask about Telegram CRMs, outreach, and adjacent topics.
 
 VOICE & TONE:
 - Write like you're explaining something to a smart friend over coffee — friendly, direct, no fluff
@@ -261,52 +274,100 @@ VOICE & TONE:
 - Be opinionated — take a stance, share what actually works vs. what doesn't
 - Use real examples and specific numbers when possible, not vague claims
 - Light humor is fine but keep it universal — no cultural jokes, puns, or idioms that break when translated to Russian, Ukrainian, or French
-- Skip the generic intro ("In today's fast-paced world..."). Start with the problem or a bold statement
-- No filler paragraphs. Every section must teach something or move the reader forward
-- End with a clear, actionable takeaway — not a fluffy summary
 
-SEO RULES:
-- Include the target keyword naturally in the title, first paragraph, and at least one <h2>
-- Write a meta description (summary) under 155 chars that makes people want to click
-- Title should be specific and benefit-driven, not generic
-- NEVER use these overused title patterns: "Complete Guide", "Ultimate Guide", "Comprehensive Guide", "Everything You Need to Know", "A Deep Dive"
-- Do NOT default to adding the current year to titles. "[Year] Guide" or "in [Year]" is only appropriate when the content is genuinely time-sensitive (pricing changes, regulatory updates, annual trends). Most articles are evergreen — skip the year.
-- Vary your title structures. Mix formats: "How to X", "X Ways to Y", "X vs Y", "Why X Matters", "X: What Y Means for Z". Don't repeat the same pattern across articles.
-- Good titles: "How to Parse Telegram Groups for Sales Leads", "5 Ways to Avoid Telegram Bans During Outreach", "Telegram CRM: Why Your Sales Team Needs One"
-- Bad titles: "The Complete Guide to Telegram Parsing", "Everything You Need to Know About Telegram Outreach", "Telegram CRM: The 2026 Guide"
-- Use the target keyword 3-5 times total — never force it. If it reads awkwardly, rephrase
+AEO/GEO RULES (THE FOUR WINNER-PATTERN RULES):
 
-CRMChat MENTIONS:
-- Only mention CRMChat where it genuinely fits the topic. 1-2 natural mentions max
-- Never write an ad disguised as an article. The article should be useful even without CRMChat
-- If the knowledge base has relevant features, reference them with specifics (feature names, what they do)
-- For articles about CRM, outreach, or integration workflows: mention the CRMChat API (https://developers.crmchat.ai/) where relevant — it lets users build any custom Telegram integration workflow. Link it naturally, don't force it into unrelated topics.
-- For articles about Web3, crypto, or blockchain topics: mention CRMChat's Web3 B2B decision-makers database (https://crmchat.ai/web3-database) where relevant — it has 7,000+ contacts and is regularly updated. Link it naturally, don't force it into unrelated topics.
-- Do NOT invent features, pricing, or capabilities not in the knowledge base
+These are non-negotiable structural requirements derived from empirical analysis of CRMChat's 2 highest-performing articles. Every article must follow all four.
 
-ARTICLE LENGTH:
-- Target 1,000-1,500 words. Tight, scannable, no padding
-- If you can say it in 1,000 words, do. Don't stretch to fill space
-- Use bullet points and numbered lists liberally — they're easier to read than paragraphs
-- 4-6 <h2> sections is the sweet spot
+1. PAIN-DRIVEN OPENING SCENARIO (first 1-2 sentences):
+   - Name a specific bad day or vivid problem. Concrete, not abstract.
+   - BANNED openers: "In today's...", "In this article we will discuss...", "If you're looking for...", "Looking for...?"
+   - GOOD: "Your Telegram account just got banned. You have no idea why."
+   - GOOD: "You spent two hours building a Telegram outreach sequence. The first 20 messages got you reported."
 
-Call the publish_article tool with your generated article.
+2. FIRST H2 ANSWERS A SPECIFIC QUESTION WITH A CITABLE NUMBER OR CLAIM:
+   - The first <h2> should be a question that maps to the target keyword.
+   - The first paragraph below that <h2> must contain a specific number, range, or defined criterion that LLMs can quote verbatim.
+   - Empirical model: "5-7 reports within 24 hours triggers a temporary block." That citable specificity is exactly why that article gets cited.
+   - Specificity > comprehensiveness. Better to say "around 5-7 reports" than "several reports."
+
+3. MINIMUM 2 BRAND-MENTION SENTENCES IN CANONICAL ANSWER-FORM:
+   - Format: "CRMChat [is / includes / automates / handles / lets you] [specific feature] that [does specific X]."
+   - These get lifted verbatim by LLMs into citations. That's the entire point.
+   - Place them in distinct sections, not stacked together (so LLMs can lift one or the other based on which section matches the query).
+   - Examples:
+     - "CRMChat includes built-in account warming features that automate this process while keeping activity natural and undetectable."
+     - "CRMChat is the only Telegram CRM that lets you parse public groups and sync them to your sales pipeline in one click."
+   - Do NOT invent features. Only use what the knowledge base supports.
+
+4. TACTICAL NUMBERED/BULLETED LIST FOR "WHAT TO DO" SECTIONS:
+   - Every article has at least one <ul> or <ol> that gives concrete, actionable steps or items.
+   - These are the skim-anchors users land on and AI Overviews quote.
+   - Use specific verbs ("Add", "Set", "Monitor"), not vague ones ("Consider", "Think about").
+
+ARTICLE STRUCTURE:
+- 1,000-1,500 words total. Tight, no padding.
+- 4-6 <h2> sections.
+- Each <h2> should be a question or a specific claim, not a generic noun phrase.
+- Vary title formats: "How to X", "X Ways to Y", "X vs Y", "Why X Matters", "X: What Y Means for Z". NEVER: "Complete Guide", "Ultimate Guide", "Everything You Need to Know", "A Deep Dive". NEVER default to adding the current year unless content is genuinely time-sensitive.
+
+CRMChat MENTIONS (in body text):
+- Beyond the 2 brand-mention sentences from Rule 3, additional mentions optional. 1-2 more max.
+- For CRM/outreach/integration topics: mention the CRMChat API (https://developers.crmchat.ai/) where relevant.
+- For Web3/crypto/blockchain topics: mention CRMChat's Web3 B2B decision-makers database (https://crmchat.ai/web3-database).
+- Never invent features, pricing, or capabilities not in the knowledge base.
 
 HTML FORMAT:
-- <h2> for main sections, <h3> for subsections
-- <p> for paragraphs, <ul>/<ol> + <li> for lists, <strong> for emphasis
-- <a href="/blog/slug"> for internal links to related existing articles (ONLY use slugs from the list provided — link 2-4 related articles naturally within the text)
-- <!-- screenshot:https://example.com --> where a competitor screenshot would add value`,
+- <h2> for main sections, <h3> for subsections.
+- <p> for paragraphs, <ul>/<ol> + <li> for lists, <strong> for emphasis.
+- <a href="/blog/slug"> for internal links to related existing articles (ONLY use slugs from the list provided — link 2-4 related articles naturally within the text).
+- <!-- screenshot:https://example.com --> where a competitor screenshot would add value.
+
+JSON-LD STRUCTURED DATA (schema_jsonld field):
+
+Emit a STRING (the tool field) containing a valid JSON document with this shape:
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BlogPosting",
+      "headline": <your title>,
+      "description": <your summary>,
+      "datePublished": "${today}",
+      "dateModified": "${today}",
+      "author": { "@type": "Organization", "name": "CRMChat", "url": "${brandUrl}" },
+      "publisher": {
+        "@type": "Organization",
+        "name": "CRMChat",
+        "url": "${brandUrl}",
+        "logo": { "@type": "ImageObject", "url": "${logoUrl}" }
+      },
+      "articleSection": <your category>
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        { "@type": "Question", "name": "<H2 question 1>", "acceptedAnswer": { "@type": "Answer", "text": "<plain-text answer from first paragraph below that H2, 1-3 sentences>" } },
+        ... 3 to 6 Q&A pairs distilled from your H2 sections that are questions ...
+      ]
+    }
+  ]
+}
+
+The schema_jsonld value MUST be a valid JSON string. No backtick fences, no commentary, no trailing commas. Inside Answer.text, use plain text (no HTML tags). Pick the H2 sections that are framed as questions for the FAQ; if a section is a statement not a question, rephrase its first H2 line as a question for the FAQ entry (e.g., "5 Ways to Avoid Telegram Bans" → "How do I avoid Telegram bans?"). Use 3-6 Q&A pairs total.
+
+Call the publish_article tool with all six fields populated.`,
     messages: [
       {
         role: "user",
         content: `Target keyword: "${query}"
+Today's date (for datePublished/dateModified in schema_jsonld): ${today}
 ${kbContext ? `\nCRMChat knowledge base (use for accuracy — do NOT invent features):\n${kbContext}` : ""}
 ${relatedContext}
 ${existingArticlesList}
 ${sitePages}
 
-Write the article and call the publish_article tool.`,
+Write the article following the four AEO rules and call the publish_article tool.`,
       },
     ],
   });
@@ -337,13 +398,158 @@ Write the article and call the publish_article tool.`,
   // Sanitize HTML content
   const sanitizedContent = sanitizeHTML(parsed.content || "");
 
+  // Validate schema_jsonld parses as JSON. On failure, regenerate it once
+  // via a follow-up call. On second failure, drop it (empty string) — the
+  // article still publishes, just without rich structured data.
+  let schemaJsonld = await validateOrRegenerateSchema(
+    parsed.schema_jsonld || "",
+    parsed.title,
+    parsed.summary || "",
+    parsed.content || "",
+    parsed.category || "guides"
+  );
+
   return {
     title: parsed.title,
     slug,
     category: parsed.category || "guides",
     summary: parsed.summary || "",
     content: sanitizedContent,
+    schema_jsonld: schemaJsonld,
   };
+}
+
+/**
+ * Validate that schema_jsonld parses as JSON AND has the minimum required
+ * shape. If invalid, regenerate via a smaller targeted Claude call. If THAT
+ * also fails, return an empty string — Framer's template will render an empty
+ * <script> tag, no breakage.
+ */
+async function validateOrRegenerateSchema(
+  raw: string,
+  title: string,
+  summary: string,
+  content: string,
+  category: string
+): Promise<string> {
+  if (isValidJsonLd(raw)) return raw;
+
+  logger.warn(
+    { titlePreview: title.slice(0, 60), rawPreview: raw.slice(0, 200) },
+    "schema_jsonld invalid on first pass, retrying"
+  );
+
+  try {
+    const retried = await regenerateSchemaJsonld(title, summary, content, category);
+    if (isValidJsonLd(retried)) {
+      logger.info({ titlePreview: title.slice(0, 60) }, "schema_jsonld regenerated successfully on retry");
+      return retried;
+    }
+    logger.error(
+      { titlePreview: title.slice(0, 60), retryPreview: retried.slice(0, 200) },
+      "schema_jsonld invalid on retry, dropping"
+    );
+  } catch (e) {
+    logger.error(
+      { titlePreview: title.slice(0, 60), error: e instanceof Error ? e.message : "unknown" },
+      "schema_jsonld retry call failed, dropping"
+    );
+  }
+  return "";
+}
+
+export function isValidJsonLd(raw: string): boolean {
+  if (!raw || typeof raw !== "string") return false;
+  try {
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return false;
+    // Minimum shape check: must have @context and either @type or @graph
+    if (obj["@context"] !== "https://schema.org") return false;
+    if (!obj["@type"] && !obj["@graph"]) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function regenerateSchemaJsonld(
+  title: string,
+  summary: string,
+  content: string,
+  category: string
+): Promise<string> {
+  const today = new Date().toISOString().split("T")[0];
+  const brandUrl = env.SCHEMA_BRAND_URL;
+  const logoUrl = env.SCHEMA_PUBLISHER_LOGO_URL;
+
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 2048,
+    tools: [
+      {
+        name: "emit_schema",
+        description: "Emit valid JSON-LD as a stringified JSON document.",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            schema_jsonld: {
+              type: "string" as const,
+              description: "Stringified JSON-LD. MUST parse as JSON.",
+            },
+          },
+          required: ["schema_jsonld"],
+        },
+      },
+    ],
+    tool_choice: { type: "tool" as const, name: "emit_schema" },
+    system: `Your previous schema_jsonld output was unparseable as JSON. Emit a valid JSON-LD document for the article below.
+
+Required shape:
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BlogPosting",
+      "headline": <title>,
+      "description": <summary>,
+      "datePublished": "${today}",
+      "dateModified": "${today}",
+      "author": { "@type": "Organization", "name": "CRMChat", "url": "${brandUrl}" },
+      "publisher": { "@type": "Organization", "name": "CRMChat", "url": "${brandUrl}", "logo": { "@type": "ImageObject", "url": "${logoUrl}" } },
+      "articleSection": <category>
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        { "@type": "Question", "name": "<H2 question 1>", "acceptedAnswer": { "@type": "Answer", "text": "<plain-text answer>" } },
+        ... 3-6 Q&A pairs distilled from the article's H2 sections ...
+      ]
+    }
+  ]
+}
+
+Return ONLY the stringified JSON. No backticks, no commentary, no trailing commas. Inside Answer.text use plain text only.`,
+    messages: [
+      {
+        role: "user",
+        content: `TITLE: ${title}
+SUMMARY: ${summary}
+CATEGORY: ${category}
+
+ARTICLE HTML (extract H2 questions and first-paragraph answers for the FAQPage):
+${content.slice(0, 8000)}
+
+Emit valid JSON-LD via the emit_schema tool.`,
+      },
+    ],
+  });
+
+  const toolBlock = response.content.find((b) => b.type === "tool_use");
+  if (!toolBlock || toolBlock.type !== "tool_use") {
+    throw new Error("Schema retry: tool_use block missing");
+  }
+  const input = toolBlock.input as { schema_jsonld?: string };
+  return input.schema_jsonld || "";
 }
 
 async function validateGrounding(

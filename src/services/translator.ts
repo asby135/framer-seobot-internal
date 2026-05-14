@@ -48,6 +48,24 @@ interface TranslationResult {
   slug: string;
   summary: string;
   content: string;
+  schema_jsonld: string; // JSON-LD with localized headline/description/FAQ (may be empty on failure)
+}
+
+/**
+ * Minimum-shape validity check for translated schema_jsonld.
+ * Mirrors the helper in generator.ts; intentionally duplicated for minimal cross-file coupling.
+ */
+function isValidJsonLd(raw: string): boolean {
+  if (!raw || typeof raw !== "string") return false;
+  try {
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return false;
+    if (obj["@context"] !== "https://schema.org") return false;
+    if (!obj["@type"] && !obj["@graph"]) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Guard against concurrent translations of the same article
@@ -81,8 +99,10 @@ async function doTranslateArticle(
   const db = getDb();
 
   const article = db
-    .prepare("SELECT title, summary, content FROM articles WHERE id = ?")
-    .get(articleId) as { title: string; summary: string; content: string } | undefined;
+    .prepare("SELECT title, summary, content, schema_jsonld FROM articles WHERE id = ?")
+    .get(articleId) as
+    | { title: string; summary: string; content: string; schema_jsonld: string | null }
+    | undefined;
 
   if (!article) {
     throw new Error("Article not found");
@@ -109,15 +129,25 @@ async function doTranslateArticle(
     try {
       const result = await callTranslation(article, locale);
 
+      // Validate translated schema_jsonld; drop if invalid (Framer renders no <script>)
+      const validatedSchema = isValidJsonLd(result.schema_jsonld) ? result.schema_jsonld : "";
+      if (result.schema_jsonld && !validatedSchema) {
+        logger.warn(
+          { articleId, locale, preview: result.schema_jsonld.slice(0, 200) },
+          "Translated schema_jsonld invalid, dropping"
+        );
+      }
+
       db.prepare(
-        `INSERT INTO article_translations (id, article_id, locale, title, slug, summary, content)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO article_translations (id, article_id, locale, title, slug, summary, content, schema_jsonld)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(article_id, locale) DO UPDATE SET
            title = excluded.title,
            slug = excluded.slug,
            summary = excluded.summary,
-           content = excluded.content`
-      ).run(nanoid(), articleId, locale, result.title, result.slug, result.summary, result.content);
+           content = excluded.content,
+           schema_jsonld = excluded.schema_jsonld`
+      ).run(nanoid(), articleId, locale, result.title, result.slug, result.summary, result.content, validatedSchema);
 
       translated.push(locale);
       logger.info({ articleId, locale }, "Article translated");
@@ -134,7 +164,7 @@ async function doTranslateArticle(
 }
 
 async function callTranslation(
-  article: { title: string; summary: string; content: string },
+  article: { title: string; summary: string; content: string; schema_jsonld: string | null },
   locale: Locale
 ): Promise<TranslationResult> {
   const langName = LOCALE_NAMES[locale];
@@ -142,6 +172,14 @@ async function callTranslation(
   const glossaryLines = GLOSSARY
     .map((g) => `"${g.en}" → "${g[locale]}"`)
     .join("\n");
+
+  const hasSchema = !!article.schema_jsonld && article.schema_jsonld.length > 0;
+  const schemaBlock = hasSchema
+    ? `
+SCHEMA_JSONLD (English source — translate the headline, description, articleSection, and FAQPage Question/Answer text into ${langName}; preserve all other fields and structure EXACTLY):
+${article.schema_jsonld}
+`
+    : "";
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
@@ -166,12 +204,21 @@ Slug rules:
 - For French: use the French words directly (already Latin script). Example: "comment analyser les groupes telegram" → "comment-analyser-groupes-telegram"
 - Lowercase, hyphens only, no special characters, max 60 chars
 
+SCHEMA_JSONLD translation rules (when source is provided):
+- Output a JSON STRING (the schema_jsonld field) containing a JSON.stringify-ed JSON-LD document.
+- Translate ONLY these fields into ${langName}: BlogPosting.headline, BlogPosting.description, BlogPosting.articleSection, and every FAQPage mainEntity Question.name and Answer.text.
+- Preserve ALL other fields and structure exactly as in the source (URLs, @context, @type, datePublished, author, publisher, etc.).
+- The schema_jsonld value MUST be a valid JSON string parseable by JSON.parse. No trailing commas, no commentary, no fences.
+- Inside Answer.text use plain text only (no HTML).
+- If no SCHEMA_JSONLD is provided, return an empty string for the schema_jsonld field.
+
 Respond with valid JSON:
 {
   "title": "translated title",
   "slug": "transliterated-or-translated-slug",
   "summary": "translated summary/meta description",
-  "content": "translated HTML content"
+  "content": "translated HTML content",
+  "schema_jsonld": "stringified JSON-LD with localized fields (or empty string if no source provided)"
 }`,
     messages: [
       {
@@ -184,7 +231,7 @@ SUMMARY: ${article.summary}
 
 CONTENT:
 ${article.content}
-
+${schemaBlock}
 Respond with JSON only, no markdown fences.`,
       },
     ],
@@ -223,20 +270,24 @@ Respond with JSON only, no markdown fences.`,
       } catch { /* fall through */ }
     }
 
-    // Try to extract fields manually as a last resort
+    // Try to extract fields manually as a last resort.
+    // schema_jsonld is intentionally NOT recovered here — the recovery path
+    // is brittle and schema is optional; we'd rather drop it than corrupt it.
     try {
       const titleMatch = cleaned.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/);
       const slugMatch = cleaned.match(/"slug"\s*:\s*"((?:[^"\\]|\\.)*)"/);
       const summaryMatch = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-      const contentMatch = cleaned.match(/"content"\s*:\s*"([\s\S]*)"\s*\}?\s*$/);
+      const contentMatch = cleaned.match(/"content"\s*:\s*"([\s\S]*?)"\s*,\s*"schema_jsonld"/);
+      const contentFallbackMatch = contentMatch || cleaned.match(/"content"\s*:\s*"([\s\S]*)"\s*\}?\s*$/);
 
-      if (titleMatch && summaryMatch && contentMatch) {
-        logger.info({ locale }, "Recovered translation via field extraction");
+      if (titleMatch && summaryMatch && contentFallbackMatch) {
+        logger.info({ locale }, "Recovered translation via field extraction (schema_jsonld dropped)");
         return {
           title: titleMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
           slug: sanitizeSlug(slugMatch?.[1] || ""),
           summary: summaryMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
-          content: contentMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
+          content: contentFallbackMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
+          schema_jsonld: "",
         };
       }
     } catch { /* fall through */ }
