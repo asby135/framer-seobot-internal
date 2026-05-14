@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
+import { sanitizeJsonLd } from "../lib/jsonld.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -49,23 +50,6 @@ interface TranslationResult {
   summary: string;
   content: string;
   schema_jsonld: string; // JSON-LD with localized headline/description/FAQ (may be empty on failure)
-}
-
-/**
- * Minimum-shape validity check for translated schema_jsonld.
- * Mirrors the helper in generator.ts; intentionally duplicated for minimal cross-file coupling.
- */
-function isValidJsonLd(raw: string): boolean {
-  if (!raw || typeof raw !== "string") return false;
-  try {
-    const obj = JSON.parse(raw);
-    if (!obj || typeof obj !== "object") return false;
-    if (obj["@context"] !== "https://schema.org") return false;
-    if (!obj["@type"] && !obj["@graph"]) return false;
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 // Guard against concurrent translations of the same article
@@ -130,7 +114,9 @@ async function doTranslateArticle(
       const result = await callTranslation(article, locale);
 
       // Validate translated schema_jsonld; drop if invalid (Framer renders no <script>)
-      const validatedSchema = isValidJsonLd(result.schema_jsonld) ? result.schema_jsonld : "";
+      // sanitizeJsonLd returns an HTML-<script>-safe serialization, or null if
+      // the translated schema isn't valid JSON-LD. Persist the safe form only.
+      const validatedSchema = sanitizeJsonLd(result.schema_jsonld) ?? "";
       if (result.schema_jsonld && !validatedSchema) {
         logger.warn(
           { articleId, locale, preview: result.schema_jsonld.slice(0, 200) },

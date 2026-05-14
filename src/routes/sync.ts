@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { getDb } from "../db/index.js";
+import { sanitizeJsonLd } from "../lib/jsonld.js";
 
 const sync = new Hono();
 
@@ -77,11 +78,16 @@ sync.get("/collection", (c) => {
       titleByLocale[t.locale] = { action: "set", value: t.title };
       summaryByLocale[t.locale] = { action: "set", value: t.summary };
       contentByLocale[t.locale] = { action: "set", value: t.content };
-      // Only emit schema for this locale if it's non-empty; an empty string
-      // means the translator validated and dropped the localized schema.
-      // Framer's template will render no <script> tag for that locale.
+      // Defense-in-depth: re-sanitize at the egress point. Stored values
+      // should already be safe (generator + translator sanitize before
+      // writing), but Framer renders this verbatim via unsafeRaw inside a
+      // <script> tag — any unsafe row (legacy, manual edit) is dropped here.
+      // Only emit a per-locale entry when there's a valid, safe schema.
       if (t.schema_jsonld) {
-        schemaJsonldByLocale[t.locale] = { action: "set", value: t.schema_jsonld };
+        const safe = sanitizeJsonLd(t.schema_jsonld);
+        if (safe) {
+          schemaJsonldByLocale[t.locale] = { action: "set", value: safe };
+        }
       }
     }
 
@@ -95,7 +101,7 @@ sync.get("/collection", (c) => {
         content: { type: "formattedText", value: a.content || "", valueByLocale: contentByLocale },
         schema_jsonld: {
           type: "string",
-          value: a.schema_jsonld || "",
+          value: sanitizeJsonLd(a.schema_jsonld || "") || "",
           valueByLocale: schemaJsonldByLocale,
         },
         created: { type: "date", value: a.created_at },

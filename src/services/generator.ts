@@ -6,6 +6,7 @@ import { generateThumbnail, processScreenshots } from "./assets.js";
 import { queryToSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
+import { sanitizeJsonLd } from "../lib/jsonld.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -432,7 +433,11 @@ async function validateOrRegenerateSchema(
   content: string,
   category: string
 ): Promise<string> {
-  if (isValidJsonLd(raw)) return raw;
+  // sanitizeJsonLd returns an HTML-<script>-safe serialization, or null if
+  // the input isn't valid JSON-LD. The returned string is what we persist —
+  // never the raw LLM output (which could contain a </script> breakout).
+  const sanitized = sanitizeJsonLd(raw);
+  if (sanitized) return sanitized;
 
   logger.warn(
     { titlePreview: title.slice(0, 60), rawPreview: raw.slice(0, 200) },
@@ -441,9 +446,10 @@ async function validateOrRegenerateSchema(
 
   try {
     const retried = await regenerateSchemaJsonld(title, summary, content, category);
-    if (isValidJsonLd(retried)) {
+    const retriedSanitized = sanitizeJsonLd(retried);
+    if (retriedSanitized) {
       logger.info({ titlePreview: title.slice(0, 60) }, "schema_jsonld regenerated successfully on retry");
-      return retried;
+      return retriedSanitized;
     }
     logger.error(
       { titlePreview: title.slice(0, 60), retryPreview: retried.slice(0, 200) },
@@ -456,20 +462,6 @@ async function validateOrRegenerateSchema(
     );
   }
   return "";
-}
-
-export function isValidJsonLd(raw: string): boolean {
-  if (!raw || typeof raw !== "string") return false;
-  try {
-    const obj = JSON.parse(raw);
-    if (!obj || typeof obj !== "object") return false;
-    // Minimum shape check: must have @context and either @type or @graph
-    if (obj["@context"] !== "https://schema.org") return false;
-    if (!obj["@type"] && !obj["@graph"]) return false;
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function regenerateSchemaJsonld(
