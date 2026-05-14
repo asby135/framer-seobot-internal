@@ -129,4 +129,34 @@ describe("runResearch (Era source)", () => {
     const result = await runResearch();
     expect(result).toEqual({ discovered: 0, skipped: 0 });
   });
+
+  it("filters pure-competitor topics but keeps comparison, task, and generic ones", async () => {
+    fetchEraQueriesMock.mockResolvedValue([
+      // Bucket 1 — pure competitor, no CRMChat, no task angle → SKIP
+      makeEraQuery({ query: "nReach pricing details", opportunity_score: 80 }),
+      makeEraQuery({ query: "Entergram customer support reviews", opportunity_score: 75 }),
+      makeEraQuery({ query: "HubSpot vs Zoho", opportunity_score: 70 }),
+      // Bucket 2 — mentions CRMChat → KEEP
+      makeEraQuery({ query: "CRMChat vs nReach user reviews", opportunity_score: 85 }),
+      makeEraQuery({ query: "How to migrate data from Enreach to CRMChat", opportunity_score: 84 }),
+      // Bucket 3 — competitor + task/integration angle → KEEP
+      makeEraQuery({ query: "Vtiger CRM Telegram integration setup guide", opportunity_score: 83 }),
+      // Generic — names no competitor → KEEP
+      makeEraQuery({ query: "Best free Telegram CRM alternatives", opportunity_score: 82 }),
+    ]);
+
+    const result = await runResearch();
+    expect(result.discovered).toBe(4); // 2 bucket-2 + 1 bucket-3 + 1 generic
+    expect(result.skipped).toBe(3); // 3 bucket-1
+
+    const kept = (
+      getDb().prepare("SELECT query FROM keywords ORDER BY opportunity_score DESC").all() as Array<{ query: string }>
+    ).map((r) => r.query);
+    expect(kept).toEqual([
+      "CRMChat vs nReach user reviews",
+      "How to migrate data from Enreach to CRMChat",
+      "Vtiger CRM Telegram integration setup guide",
+      "Best free Telegram CRM alternatives",
+    ]);
+  });
 });

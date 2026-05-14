@@ -6,6 +6,62 @@ import { logger } from "../lib/logger.js";
 
 const ERA_SCORE_FILTER = 30; // Skip rows with opportunity_score below this threshold
 
+// Competitor brand names. A topic that names a competitor but does NOT mention
+// CRMChat is "pure competitor SEO" — UNLESS it also has a task/integration
+// angle (see TASK_SIGNALS), in which case it's a how-to topic where CRMChat is
+// a natural alternative and worth keeping. Add competitors here as they show
+// up in Era data.
+const COMPETITORS = [
+  "nreach",
+  "enreach",
+  "entergram",
+  "vtiger",
+  "hubspot",
+  "zoho",
+  "salesforce",
+];
+
+// Task/integration signals. If a competitor-named topic also contains one of
+// these, it's a how-to / pain-point topic (e.g. "Vtiger Telegram integration
+// setup guide") where CRMChat's Telegram-native nature is a genuine reframe —
+// keep it. NOTE: "telegram" and "bot" are intentionally excluded — nearly every
+// query in this dataset contains them, so they're useless as a distinguishing
+// signal.
+const TASK_SIGNALS = [
+  "integration",
+  "integrate",
+  "setup",
+  "set up",
+  "connect",
+  "sync",
+  "automate",
+  "automation",
+  "how to",
+  "guide",
+  "tutorial",
+  "api",
+  "webhook",
+];
+
+/**
+ * A "pure competitor" topic names a competitor, does not mention CRMChat, and
+ * has no task/integration angle. Writing these is SEO work for the competitor's
+ * brand with no realistic CRMChat hook — skip them.
+ *
+ * Kept (returns false):
+ *  - anything mentioning "crmchat" (comparison / migration / brand topic)
+ *  - competitor topics with a task signal ("Vtiger Telegram integration guide")
+ *  - generic / category topics that name no competitor at all
+ */
+function isPureCompetitorTopic(query: string): boolean {
+  const q = query.toLowerCase();
+  if (q.includes("crmchat")) return false; // comparison / migration / brand — keep
+  const namesCompetitor = COMPETITORS.some((c) => q.includes(c));
+  if (!namesCompetitor) return false; // generic / category — keep
+  const hasTaskAngle = TASK_SIGNALS.some((s) => q.includes(s));
+  return !hasTaskAngle; // competitor named, no task angle, no CRMChat — skip
+}
+
 /**
  * Run keyword research: pull Era (OhMyGEO) AEO queries, filter to gap keywords,
  * and store in the keywords table.
@@ -45,6 +101,8 @@ export async function runResearch(): Promise<{
   // 4. Filter and stage rows for bulk insert
   let discovered = 0;
   let skipped = 0;
+  let competitorFiltered = 0;
+  const competitorFilteredSamples: string[] = [];
 
   // Era doesn't expose impressions/clicks/CTR/position — those columns stay NULL.
   // We use opportunity_score (already 0-100 normalized) directly from Era.
@@ -85,6 +143,16 @@ export async function runResearch(): Promise<{
       continue;
     }
 
+    // Skip pure-competitor topics (competitor named, no CRMChat, no task angle)
+    if (isPureCompetitorTopic(q.query)) {
+      skipped++;
+      competitorFiltered++;
+      if (competitorFilteredSamples.length < 20) {
+        competitorFilteredSamples.push(q.query);
+      }
+      continue;
+    }
+
     // Stage the row AND record its keys so a case-insensitive duplicate
     // or slug collision later in the SAME batch is also skipped.
     existingQueries.add(queryKey);
@@ -103,7 +171,16 @@ export async function runResearch(): Promise<{
   }
 
   logSync("research", discovered, "success");
-  logger.info({ discovered, skipped, threshold: ERA_SCORE_FILTER }, "Research complete");
+  logger.info(
+    {
+      discovered,
+      skipped,
+      competitorFiltered,
+      competitorFilteredSamples,
+      threshold: ERA_SCORE_FILTER,
+    },
+    "Research complete"
+  );
 
   return { discovered, skipped };
 }
