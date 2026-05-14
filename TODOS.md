@@ -1,6 +1,14 @@
 # TODOS
 
-Deferred work tracked from /plan-ceo-review (2026-05-08) and /plan-eng-review (2026-05-11) on the Era AI content pivot.
+Deferred work tracked from /plan-ceo-review (2026-05-08), /plan-eng-review (2026-05-11), and /review (2026-05-14) on the Era AI content pivot.
+
+## P0 — Blocks the feature working end-to-end
+
+### Plugin: schema_jsonld field reconciliation in SyncHandler
+**What:** The backend now declares `schema_jsonld` in `/api/schema` FIELDS and emits it in `/api/sync/collection`. But `plugin/src/components/SyncHandler.tsx` only calls `collection.setFields()` on the FIRST sync (`existingFields.length === 0`). Existing plugin users already have a populated collection, so the new `schema_jsonld` field will never be added to their Framer CMS, and `addItems` will carry a fieldData key with no matching field — silently dropped or erroring.
+**Why:** Without this, the JSON-LD never reaches Framer for any existing user. The whole schema feature is dead-on-arrival for them.
+**Context:** Add field-reconciliation logic in SyncHandler.tsx — detect schema fields missing from the existing collection and add them via `setFields` additively (without disturbing existing field IDs / variable references). This is a coordinated change: backend schema.ts (done), plugin SyncHandler.tsx (this), and possibly a manual Framer CMS field addition for users who can't get the reconciliation. ~30 min CC. Flagged by the API-contract specialist during /review.
+**Depends on:** Backend `/api/schema` change (done in this review's commit).
 
 ## P1 — Next iteration (after Era pivot ships)
 
@@ -11,10 +19,16 @@ Deferred work tracked from /plan-ceo-review (2026-05-08) and /plan-eng-review (2
 **Depends on:** Era AI pivot shipped.
 
 ### Russian-language keyword sourcing
-**What:** If Era AI's API turned out to be English-only (revealed during the era.ts spike), pick a separate source for /ru/ content keywords.
+**What:** Pick a separate keyword source for /ru/ content. Era's API has NO locale parameter (confirmed during the era.ts spike) — it returns whatever queries the LLMs generated, effectively English-only.
 **Why:** /ru/ traffic is the dominant audience based on GSC data. English-only sourcing under-serves them.
-**Context:** Candidates: Yandex Wordstat API, manual research, or alternative AEO tool with Russian support. Highest-leverage follow-up because Russian is the actual converting audience.
-**Depends on:** Era spike outcome (only do this if Era is en-only).
+**Context:** Candidates: Yandex Wordstat API, manual research, or alternative AEO tool with Russian support. Highest-leverage follow-up because Russian is the actual converting audience. Confirmed live (not conditional) — the spike showed Era is locale-agnostic with no filtering controls.
+**Depends on:** Nothing — ready to start.
+
+### Backfill tests for translator.ts and the generator schema-retry path
+**What:** (a) `translator.ts` has NO test file — the per-locale schema_jsonld translation + validate-and-drop paths are untested. (b) `generator.ts`'s `validateOrRegenerateSchema` / `regenerateSchemaJsonld` have zero coverage — only the pure `sanitizeJsonLd` predicate (now in `src/lib/jsonld.test.ts`) is tested.
+**Why:** Both are LLM-output-handling paths with retry/fallback logic. The retry-succeeds, retry-still-invalid-drops, and retry-throws-drops branches are exactly where silent failures hide.
+**Context:** Add `translator.test.ts` (mock the Anthropic client: valid translated schema persisted, invalid dropped to '', no-source produces empty schemaBlock, manual-recovery regex extracts content correctly). Add `generator.test.ts` for `validateOrRegenerateSchema` (valid-first-pass, invalid-then-valid, invalid-twice, retry-throws). ~40 min CC. Flagged by the testing specialist during /review; deferred by explicit choice to keep this review's commit focused.
+**Depends on:** Nothing — ready to start.
 
 ## P2 — Diagnostic resilience
 
@@ -36,19 +50,11 @@ Deferred work tracked from /plan-ceo-review (2026-05-08) and /plan-eng-review (2
 **Context:** Add to CI as part of generator test suite. Use schema.org's official validator or `structured-data-testing-tool` npm package.
 **Depends on:** Generator schema test from this PR landing first.
 
-## P2 — Post-PR cleanup (discovered during implementation)
-
-### Remove orphaned GSC scoring infrastructure
-**What:** With Era pass-through, `scoring.ts` (GSC scoring formula) and the `/api/research/rescore` endpoint are functionally dead. Delete `src/services/scoring.ts`, `src/services/scoring.test.ts`, the `/rescore` route in `src/routes/research.ts`, the `rescoreKeywords()` method in `plugin/src/api/client.ts`, and the rescore button call in `plugin/src/App.tsx:56`.
-**Why:** Dead code rots. Currently if a user clicks rescore in the plugin, it overwrites valid Era scores with 0 (NULL impressions/ctr/position → score=0). Active footgun.
-**Context:** Left in place during the Era pivot PR because it touched the plugin UI and was out of declared scope. Self-contained cleanup, ~15 min CC.
-**Depends on:** Era pivot landing first.
-
-### Fix or delete pre-existing scoring.test.ts failures
-**What:** `src/services/scoring.test.ts` has 6 failing tests (verified against pre-Era-pivot HEAD). The test expects `positionWeight(1)` to return 0.1 but the implementation returns 0.05. The scoring formula was updated at some point but the test wasn't.
-**Why:** Failing tests in CI mask real regressions.
-**Context:** Either delete scoring.test.ts as part of the orphaned-infrastructure cleanup above, OR update the test expectations to match the current implementation. ~5 min either way.
-**Depends on:** Decision on whether scoring.ts is kept or deleted.
+### Era opportunity_score is batch-relative, and sov=null counts as max opportunity
+**What:** `era.ts` normalizes `count` via min-max within each fetched batch — so a batch of all-low-count queries still produces 90+ scores, and a single-element batch always scores 100. Separately, `sov === null` is treated as `sovScore = 100` (maximum opportunity), but Era returning null likely means "not yet measured," not "0% share of voice." This systematically promotes unmeasured queries to the top.
+**Why:** The `ERA_SCORE_FILTER = 30` threshold does little when scores are batch-relative. New/unmeasured queries jump the queue.
+**Context:** Flagged by the adversarial reviewer during /review. Deliberately deferred — the CEO plan said scoring would be tuned after the first real run produces data. Revisit alongside the 30-day Era retro: look at the actual score distribution and decide whether to (a) use absolute count thresholds, (b) treat sov=null as a neutral/low score instead of max, or (c) keep batch-relative but document it.
+**Depends on:** First real Era research run + 30-day retro data.
 
 ## P3 — Cleanup and automation
 
