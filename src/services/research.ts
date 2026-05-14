@@ -1,13 +1,17 @@
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
-import { fetchGSCQueries } from "./gsc.js";
-import { calculateOpportunityScore } from "./scoring.js";
+import { fetchEraQueries } from "./era.js";
 import { queryToSlug } from "../lib/utils.js";
 import { logger } from "../lib/logger.js";
 
+const ERA_SCORE_FILTER = 30; // Skip rows with opportunity_score below this threshold
+
 /**
- * Run keyword research: pull GSC data, filter to gap keywords,
- * score them, and store in the keywords table.
+ * Run keyword research: pull Era (OhMyGEO) AEO queries, filter to gap keywords,
+ * and store in the keywords table.
+ *
+ * Era already normalizes opportunity_score to 0-100 (see era.ts), so we
+ * pass-through its score rather than recomputing with calculateOpportunityScore.
  */
 export async function runResearch(): Promise<{
   discovered: number;
@@ -15,11 +19,11 @@ export async function runResearch(): Promise<{
 }> {
   const db = getDb();
 
-  // 1. Fetch GSC queries (last 90 days)
-  const queries = await fetchGSCQueries(90);
+  // 1. Fetch Era search queries (AI-provider-generated keywords)
+  const queries = await fetchEraQueries();
 
   if (queries.length === 0) {
-    logger.info("No GSC queries returned. Is the site verified in GSC?");
+    logger.info("No Era queries returned. Is ERA_AI_BRAND_ID set correctly?");
     logSync("research", 0, "empty");
     return { discovered: 0, skipped: 0 };
   }
@@ -38,48 +42,26 @@ export async function runResearch(): Promise<{
     ).map((r) => r.query.toLowerCase())
   );
 
-  // 4. Filter and score
+  // 4. Filter and stage rows for bulk insert
   let discovered = 0;
   let skipped = 0;
 
+  // Era doesn't expose impressions/clicks/CTR/position — those columns stay NULL.
+  // We use opportunity_score (already 0-100 normalized) directly from Era.
   const insertStmt = db.prepare(
-    `INSERT INTO keywords (id, query, source, impressions, clicks, ctr, position, opportunity_score, status)
-     VALUES (?, ?, 'gsc', ?, ?, ?, ?, ?, 'pending')`
+    `INSERT INTO keywords (id, query, source, opportunity_score, status)
+     VALUES (?, ?, 'era', ?, 'pending')`
   );
 
   const insertMany = db.transaction(
-    (
-      items: Array<{
-        query: string;
-        impressions: number;
-        clicks: number;
-        ctr: number;
-        position: number;
-        score: number;
-      }>
-    ) => {
+    (items: Array<{ query: string; score: number }>) => {
       for (const item of items) {
-        insertStmt.run(
-          nanoid(),
-          item.query,
-          item.impressions,
-          item.clicks,
-          item.ctr,
-          item.position,
-          item.score
-        );
+        insertStmt.run(nanoid(), item.query, item.score);
       }
     }
   );
 
-  const toInsert: Array<{
-    query: string;
-    impressions: number;
-    clicks: number;
-    ctr: number;
-    position: number;
-    score: number;
-  }> = [];
+  const toInsert: Array<{ query: string; score: number }> = [];
 
   for (const q of queries) {
     // Skip if we already have this keyword
@@ -95,25 +77,15 @@ export async function runResearch(): Promise<{
       continue;
     }
 
-    const score = calculateOpportunityScore({
-      impressions: q.impressions,
-      ctr: q.ctr,
-      position: q.position,
-    });
-
-    // Skip very low-score keywords (noise filter)
-    if (score < 1) {
+    // Skip low-opportunity queries (noise filter)
+    if (q.opportunity_score < ERA_SCORE_FILTER) {
       skipped++;
       continue;
     }
 
     toInsert.push({
       query: q.query,
-      impressions: q.impressions,
-      clicks: q.clicks,
-      ctr: q.ctr,
-      position: q.position,
-      score,
+      score: q.opportunity_score,
     });
 
     discovered++;
@@ -124,7 +96,7 @@ export async function runResearch(): Promise<{
   }
 
   logSync("research", discovered, "success");
-  logger.info({ discovered, skipped }, "Research complete");
+  logger.info({ discovered, skipped, threshold: ERA_SCORE_FILTER }, "Research complete");
 
   return { discovered, skipped };
 }
@@ -135,4 +107,3 @@ function logSync(action: string, count: number, status: string) {
     "INSERT INTO sync_log (id, action, items_count, status) VALUES (?, ?, ?, ?)"
   ).run(nanoid(), action, count, status);
 }
-
