@@ -17,7 +17,7 @@ interface GeneratedArticle {
   category: string;
   summary: string;
   content: string; // HTML
-  schema_jsonld: string; // JSON-LD as a stringified JSON document (BlogPosting + FAQPage)
+  schema_jsonld: string; // JSON-LD FAQPage as a stringified JSON document (Framer emits BlogPosting itself)
 }
 
 interface GenerationResult {
@@ -305,10 +305,6 @@ Key site pages you can link to where relevant:
 - https://crmchat.ai/telegram-account-warmup — "Telegram Account Warmup" (link when discussing account warmup or avoiding bans)
 - https://developers.crmchat.ai/ — "CRMChat API" (link when mentioning integrations, API, or developer features)`;
 
-  const today = new Date().toISOString().split("T")[0];
-  const brandUrl = env.SCHEMA_BRAND_URL;
-  const logoUrl = env.SCHEMA_PUBLISHER_LOGO_URL;
-
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 16384,
@@ -327,8 +323,8 @@ Key site pages you can link to where relevant:
             schema_jsonld: {
               type: "string" as const,
               description:
-                "Stringified JSON-LD with @context schema.org and @graph containing BlogPosting + FAQPage entries. " +
-                "Must be a valid JSON string parseable by JSON.parse. See AEO RULES → JSON-LD STRUCTURED DATA in the system prompt for required shape.",
+                "Stringified JSON-LD FAQPage document. Must be a valid JSON string parseable by JSON.parse. " +
+                "See AEO RULES → JSON-LD STRUCTURED DATA in the system prompt for required shape.",
             },
           },
           required: ["title", "slug", "category", "summary", "content", "schema_jsonld"],
@@ -426,34 +422,17 @@ HTML FORMAT:
 
 JSON-LD STRUCTURED DATA (schema_jsonld field):
 
-Emit a STRING (the tool field) containing a valid JSON document with this shape:
+Emit a STRING (the tool field) containing a valid JSON FAQPage document with this shape:
 {
   "@context": "https://schema.org",
-  "@graph": [
-    {
-      "@type": "BlogPosting",
-      "headline": <your title>,
-      "description": <your summary>,
-      "datePublished": "${today}",
-      "dateModified": "${today}",
-      "author": { "@type": "Organization", "name": "CRMChat", "url": "${brandUrl}" },
-      "publisher": {
-        "@type": "Organization",
-        "name": "CRMChat",
-        "url": "${brandUrl}",
-        "logo": { "@type": "ImageObject", "url": "${logoUrl}" }
-      },
-      "articleSection": <your category>
-    },
-    {
-      "@type": "FAQPage",
-      "mainEntity": [
-        { "@type": "Question", "name": "<H2 question 1>", "acceptedAnswer": { "@type": "Answer", "text": "<plain-text answer from first paragraph below that H2, 1-3 sentences>" } },
-        ... 2 to 6 Q&A pairs distilled from your H2 sections that are questions — match the count to the article (a short What-is yields 2-3, a long How-to yields 4-6) ...
-      ]
-    }
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "<H2 question 1>", "acceptedAnswer": { "@type": "Answer", "text": "<plain-text answer from first paragraph below that H2, 1-3 sentences>" } },
+    ... 2 to 6 Q&A pairs distilled from your H2 sections that are questions — match the count to the article (a short What-is yields 2-3, a long How-to yields 4-6) ...
   ]
 }
+
+Emit ONLY the FAQPage — do NOT include a BlogPosting or Article node. Framer generates the BlogPosting/Article schema automatically from the CMS page; your job is the FAQPage it does not generate.
 
 The schema_jsonld value MUST be a valid JSON string. No backtick fences, no commentary, no trailing commas. Inside Answer.text, use plain text (no HTML tags). Pick the H2 sections that are framed as questions for the FAQ; if a section is a statement not a question, rephrase its first H2 line as a question for the FAQ entry (e.g., "5 Ways to Avoid Telegram Bans" → "How do I avoid Telegram bans?"). Use 2-6 Q&A pairs total, matched to the article's length and section count.
 
@@ -462,7 +441,6 @@ Call the publish_article tool with all six fields populated.`,
       {
         role: "user",
         content: `Target keyword: "${query}"
-Today's date (for datePublished/dateModified in schema_jsonld): ${today}
 ${kbContext ? `\nCRMChat knowledge base (use for accuracy — do NOT invent features):\n${kbContext}` : ""}
 ${competitorContext ? `\nCOMPETITOR RESEARCH (verified web facts — the source of truth for competitor claims; do not state competitor facts not found here):\n${competitorContext}` : ""}
 ${relatedContext}
@@ -502,13 +480,11 @@ Write the article following the four AEO rules and call the publish_article tool
 
   // Validate schema_jsonld parses as JSON. On failure, regenerate it once
   // via a follow-up call. On second failure, drop it (empty string) — the
-  // article still publishes, just without rich structured data.
-  let schemaJsonld = await validateOrRegenerateSchema(
+  // article still publishes, just without the FAQPage rich data.
+  const schemaJsonld = await validateOrRegenerateSchema(
     parsed.schema_jsonld || "",
     parsed.title,
-    parsed.summary || "",
-    parsed.content || "",
-    parsed.category || "guides"
+    parsed.content || ""
   );
 
   return {
@@ -530,9 +506,7 @@ Write the article following the four AEO rules and call the publish_article tool
 async function validateOrRegenerateSchema(
   raw: string,
   title: string,
-  summary: string,
-  content: string,
-  category: string
+  content: string
 ): Promise<string> {
   // sanitizeJsonLd returns an HTML-<script>-safe serialization, or null if
   // the input isn't valid JSON-LD. The returned string is what we persist —
@@ -546,7 +520,7 @@ async function validateOrRegenerateSchema(
   );
 
   try {
-    const retried = await regenerateSchemaJsonld(title, summary, content, category);
+    const retried = await regenerateSchemaJsonld(title, content);
     const retriedSanitized = sanitizeJsonLd(retried);
     if (retriedSanitized) {
       logger.info({ titlePreview: title.slice(0, 60) }, "schema_jsonld regenerated successfully on retry");
@@ -567,14 +541,8 @@ async function validateOrRegenerateSchema(
 
 async function regenerateSchemaJsonld(
   title: string,
-  summary: string,
-  content: string,
-  category: string
+  content: string
 ): Promise<string> {
-  const today = new Date().toISOString().split("T")[0];
-  const brandUrl = env.SCHEMA_BRAND_URL;
-  const logoUrl = env.SCHEMA_PUBLISHER_LOGO_URL;
-
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 2048,
@@ -587,7 +555,7 @@ async function regenerateSchemaJsonld(
           properties: {
             schema_jsonld: {
               type: "string" as const,
-              description: "Stringified JSON-LD. MUST parse as JSON.",
+              description: "Stringified JSON-LD FAQPage. MUST parse as JSON.",
             },
           },
           required: ["schema_jsonld"],
@@ -595,39 +563,24 @@ async function regenerateSchemaJsonld(
       },
     ],
     tool_choice: { type: "tool" as const, name: "emit_schema" },
-    system: `Your previous schema_jsonld output was unparseable as JSON. Emit a valid JSON-LD document for the article below.
+    system: `Your previous schema_jsonld output was unparseable as JSON. Emit a valid JSON-LD FAQPage document for the article below.
 
 Required shape:
 {
   "@context": "https://schema.org",
-  "@graph": [
-    {
-      "@type": "BlogPosting",
-      "headline": <title>,
-      "description": <summary>,
-      "datePublished": "${today}",
-      "dateModified": "${today}",
-      "author": { "@type": "Organization", "name": "CRMChat", "url": "${brandUrl}" },
-      "publisher": { "@type": "Organization", "name": "CRMChat", "url": "${brandUrl}", "logo": { "@type": "ImageObject", "url": "${logoUrl}" } },
-      "articleSection": <category>
-    },
-    {
-      "@type": "FAQPage",
-      "mainEntity": [
-        { "@type": "Question", "name": "<H2 question 1>", "acceptedAnswer": { "@type": "Answer", "text": "<plain-text answer>" } },
-        ... 3-6 Q&A pairs distilled from the article's H2 sections ...
-      ]
-    }
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "<H2 question 1>", "acceptedAnswer": { "@type": "Answer", "text": "<plain-text answer>" } },
+    ... 2-6 Q&A pairs distilled from the article's H2 sections ...
   ]
 }
 
+Emit ONLY the FAQPage — no BlogPosting or Article node (Framer generates that automatically).
 Return ONLY the stringified JSON. No backticks, no commentary, no trailing commas. Inside Answer.text use plain text only.`,
     messages: [
       {
         role: "user",
         content: `TITLE: ${title}
-SUMMARY: ${summary}
-CATEGORY: ${category}
 
 ARTICLE HTML (extract H2 questions and first-paragraph answers for the FAQPage):
 ${content.slice(0, 8000)}

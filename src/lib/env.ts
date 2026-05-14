@@ -13,13 +13,7 @@ export const env = {
   // Claude
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || "",
 
-  // Schema.org (JSON-LD) brand metadata
-  SCHEMA_BRAND_URL: process.env.SCHEMA_BRAND_URL || "https://crmchat.ai",
-  SCHEMA_PUBLISHER_LOGO_URL:
-    process.env.SCHEMA_PUBLISHER_LOGO_URL ||
-    "https://framerusercontent.com/images/GLsZOhBlEAVH07o36KjRUmVG4Ws.jpg",
-
-  // DALL-E
+  // OpenAI (gpt-image-2 thumbnails)
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
 
   // Cloudflare R2
