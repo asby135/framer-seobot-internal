@@ -20,7 +20,22 @@ const r2 = new S3Client({
 });
 
 /**
- * Generate a DALL-E thumbnail and upload to R2.
+ * Distinct editorial illustration styles. One is picked at random per article
+ * so a batch of thumbnails doesn't look like one obviously-AI-generated set.
+ * Each is self-contained: art style + palette + composition. The base prompt
+ * keeps the hard constraints (single metaphor, no text, no icon collage).
+ */
+const THUMBNAIL_STYLES = [
+  "Flat vector illustration. Muted palette of soft blues and warm grays with one subtle accent color. A single centered object, generous whitespace around it.",
+  "Soft geometric shapes with gentle gradients. Warm earth tones — terracotta, sand, cream. Asymmetric composition, the subject off to one side.",
+  "Thin-stroke line-art illustration. Near-monochrome with a single bold accent color. Lots of negative space, like a New Yorker spot illustration.",
+  "Layered paper-cut style with subtle drop shadows for depth. Pastel palette — dusty pink, pale blue, soft yellow. One simple central shape.",
+  "Minimal isometric illustration. Cool palette — teal, slate, off-white. A single object sitting on a plain flat background, no scene clutter.",
+  "Risograph-style print look — slightly grainy texture, a limited two-color palette, one bold simple shape. Retro-editorial, lots of breathing room.",
+];
+
+/**
+ * Generate a thumbnail with gpt-image-2 and upload to R2.
  * Returns the public URL, or null on failure (partial failure model).
  */
 export async function generateThumbnail(
@@ -29,23 +44,29 @@ export async function generateThumbnail(
   keyword: string
 ): Promise<string | null> {
   try {
+    const style =
+      THUMBNAIL_STYLES[Math.floor(Math.random() * THUMBNAIL_STYLES.length)];
+
     const response = await openai.images.generate({
-      model: "dall-e-3",
-      prompt: `Minimal, editorial-style blog header illustration for an article about "${keyword}". Style: flat vector art with a muted, sophisticated color palette (soft blues, warm grays, subtle accents). Show one simple, clear visual metaphor related to the topic — not a collage of icons. Think: a single object or scene, plenty of whitespace, like an illustration from a premium tech magazine. Absolutely NO text, NO words, NO letters, NO logos, NO busy compositions, NO floating icons, NO generic tech collages. Clean and understated.`,
+      model: "gpt-image-2",
+      prompt: `Editorial blog-header illustration for an article about "${keyword}". Show ONE simple, clear visual metaphor for the topic — a single object or minimal scene, never a collage. ${style} Absolutely NO text, NO words, NO letters, NO numbers, NO logos, NO floating icons, NO busy compositions. Like an illustration from a premium print magazine — restrained and intentional.`,
       n: 1,
-      size: "1792x1024", // Closest to 1200x630 aspect ratio
-      quality: "standard",
+      size: "1536x1024", // landscape, crops cleanly to a blog header
+      quality: "high",
     });
 
-    const imageUrl = response.data?.[0]?.url;
-    if (!imageUrl) {
-      logger.error({ articleId }, "DALL-E returned no image URL");
+    // gpt-image-2 returns base64 by default; fall back to a URL if present.
+    const data = response.data?.[0];
+    let imageBuffer: Buffer;
+    if (data?.b64_json) {
+      imageBuffer = Buffer.from(data.b64_json, "base64");
+    } else if (data?.url) {
+      const imageResponse = await fetch(data.url);
+      imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+    } else {
+      logger.error({ articleId }, "gpt-image-2 returned no image data");
       return null;
     }
-
-    // Download the image
-    const imageResponse = await fetch(imageUrl);
-    const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
 
     // Upload to R2
     const key = `thumbnails/${articleId}-${nanoid(6)}.png`;
