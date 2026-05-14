@@ -22,19 +22,33 @@ research.post("/", async (c) => {
 });
 
 // Clear stale keywords by source — e.g. legacy GSC rows after the Era pivot.
-// Only deletes 'pending' rows; 'approved'/'generated' rows may have article
-// history (articles.keyword_id FK), and 'custom' rows are user-added.
+//   ?source=gsc                   → deletes pending GSC keywords (default)
+//   ?source=gsc&status=approved   → deletes approved-but-not-generated GSC keywords
+// Only 'pending' and 'approved' are allowed. 'generated' rows are referenced by
+// articles.keyword_id; 'rejected' rows are already inert. 'approved' rows have
+// no article yet (status flips to 'generated' when an article is created), so
+// deleting them is safe.
 research.delete("/keywords", (c) => {
   const db = getDb();
   const source = c.req.query("source");
   if (!source) {
     return c.json({ error: "source query param required, e.g. ?source=gsc" }, 400);
   }
+  const status = c.req.query("status") || "pending";
+  if (status !== "pending" && status !== "approved") {
+    return c.json(
+      { error: "status must be 'pending' or 'approved' (default 'pending')" },
+      400
+    );
+  }
   const result = db
-    .prepare("DELETE FROM keywords WHERE source = ? AND status = 'pending'")
-    .run(source);
-  logger.info({ source, deleted: result.changes }, "Cleared pending keywords by source");
-  return c.json({ status: "complete", source, deleted: result.changes });
+    .prepare("DELETE FROM keywords WHERE source = ? AND status = ?")
+    .run(source, status);
+  logger.info(
+    { source, status, deleted: result.changes },
+    "Cleared keywords by source + status"
+  );
+  return c.json({ status: "complete", source, statusFilter: status, deleted: result.changes });
 });
 
 export { research };
