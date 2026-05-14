@@ -53,10 +53,11 @@ export function App() {
   async function handleRefresh() {
     setRefreshing(true);
     try {
-      await api.rescoreKeywords();
+      // Re-mount the topic list to re-fetch from the backend.
+      // (Previously also called rescoreKeywords(); that endpoint recomputed
+      // GSC-era scores from impressions/CTR/position — fields Era never
+      // populates — so it would zero out valid Era opportunity scores.)
       setRefreshKey((k) => k + 1);
-    } catch (e) {
-      framer.notify(e instanceof Error ? e.message : "Re-score failed", { variant: "error" });
     } finally {
       setRefreshing(false);
     }

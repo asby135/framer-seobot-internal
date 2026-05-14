@@ -125,13 +125,6 @@ class ApiClient {
     );
   }
 
-  async rescoreKeywords() {
-    return this.request<{ status: string; rescored: number }>(
-      "/api/research/rescore",
-      { method: "POST" }
-    );
-  }
-
   // Topics
   async getTopics(status: string = "pending", page: number = 1, excludeWithArticles: boolean = false) {
     const qs = `status=${status}&page=${page}${excludeWithArticles ? "&exclude_with_articles=1" : ""}`;
