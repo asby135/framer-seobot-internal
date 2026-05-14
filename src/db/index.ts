@@ -32,9 +32,21 @@ export function initDb(): Database.Database {
   const schema = readFileSync(resolve(__dirname, "schema.sql"), "utf-8");
   db.exec(schema);
 
-  // Migrations — add columns that may not exist in older DBs
+  // Migrations — add columns that may not exist in older DBs.
+  // Each ALTER is wrapped in its own try/catch so a single existing column
+  // doesn't block subsequent migrations.
   try {
     db.exec("ALTER TABLE article_translations ADD COLUMN slug TEXT");
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec("ALTER TABLE articles ADD COLUMN schema_jsonld TEXT");
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec("ALTER TABLE article_translations ADD COLUMN schema_jsonld TEXT");
   } catch {
     // Column already exists
   }

@@ -1,8 +1,9 @@
--- Keywords discovered from GSC (+ Keyword Planner in v2)
+-- Keywords discovered from Era (OhMyGEO) AEO keyword source.
+-- Source field retains 'gsc' for legacy rows; new rows are 'era'.
 CREATE TABLE IF NOT EXISTS keywords (
   id TEXT PRIMARY KEY,
   query TEXT NOT NULL,
-  source TEXT NOT NULL DEFAULT 'gsc', -- 'gsc' or 'keyword_planner'
+  source TEXT NOT NULL DEFAULT 'era', -- 'era' (current), 'gsc' (legacy)
   impressions INTEGER,
   clicks INTEGER,
   ctr REAL,
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS articles (
   category TEXT,
   summary TEXT,
   content TEXT, -- HTML body
+  schema_jsonld TEXT, -- JSON-LD BlogPosting+FAQPage schema (English)
   status TEXT NOT NULL DEFAULT 'draft', -- draft, review, published, archived, generation_failed
   flags TEXT, -- JSON for partial-failure metadata, e.g. {"thumbnail_missing": true}
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -68,6 +70,7 @@ CREATE TABLE IF NOT EXISTS article_translations (
   slug TEXT,
   summary TEXT,
   content TEXT,
+  schema_jsonld TEXT, -- JSON-LD per locale (translated headline/description/FAQ)
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(article_id, locale)
 );

@@ -5,12 +5,19 @@ export const env = {
   CORS_ORIGIN: process.env.CORS_ORIGIN || "*",
 
   // API keys (set via POST /api/setup, stored in DB)
-  // GSC
-  GSC_SERVICE_ACCOUNT_KEY: process.env.GSC_SERVICE_ACCOUNT_KEY || "",
-  GSC_SITE_URL: process.env.GSC_SITE_URL || "",
+
+  // Era / OhMyGEO — AEO keyword source (replaces GSC)
+  ERA_AI_API_KEY: process.env.ERA_AI_API_KEY || "",
+  ERA_AI_BRAND_ID: process.env.ERA_AI_BRAND_ID || "",
 
   // Claude
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || "",
+
+  // Schema.org (JSON-LD) brand metadata
+  SCHEMA_BRAND_URL: process.env.SCHEMA_BRAND_URL || "https://crmchat.ai",
+  SCHEMA_PUBLISHER_LOGO_URL:
+    process.env.SCHEMA_PUBLISHER_LOGO_URL ||
+    "https://framerusercontent.com/images/GLsZOhBlEAVH07o36KjRUmVG4Ws.jpg",
 
   // DALL-E
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
