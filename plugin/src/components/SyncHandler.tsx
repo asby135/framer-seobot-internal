@@ -102,17 +102,29 @@ export async function SyncHandler() {
       }
     }
 
-    // Only set fields if collection has no fields yet (first sync)
-    // Calling setFields on every sync can break Framer variable references
+    // Reconcile collection fields with the backend schema.
+    //  - First sync (no fields yet): set the full schema.
+    //  - Later syncs: if the backend declares a NEW field the collection is
+    //    missing (e.g. schema_jsonld added in the Era pivot), append it.
+    //    Existing field objects are passed back verbatim — same IDs — so
+    //    canvas variable bindings (which reference field IDs) survive.
+    //  - No drift: skip setFields entirely to avoid churning bindings.
+    // We never remove or rename fields here.
     const existingFields = await collection.getFields();
+    const backendFields = schemaRes.fields.map((f) => ({
+      id: f.id,
+      name: f.name,
+      type: f.type as "string" | "image" | "date" | "formattedText",
+    }));
+
     if (existingFields.length === 0) {
-      await collection.setFields(
-        schemaRes.fields.map((f) => ({
-          id: f.id,
-          name: f.name,
-          type: f.type as "string" | "image" | "date" | "formattedText",
-        }))
-      );
+      await collection.setFields(backendFields);
+    } else {
+      const existingIds = new Set(existingFields.map((f) => f.id));
+      const missingFields = backendFields.filter((f) => !existingIds.has(f.id));
+      if (missingFields.length > 0) {
+        await collection.setFields([...existingFields, ...missingFields]);
+      }
     }
 
     // Get current items for reconciliation

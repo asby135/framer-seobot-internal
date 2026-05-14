@@ -2,14 +2,6 @@
 
 Deferred work tracked from /plan-ceo-review (2026-05-08), /plan-eng-review (2026-05-11), and /review (2026-05-14) on the Era AI content pivot.
 
-## P0 — Blocks the feature working end-to-end
-
-### Plugin: schema_jsonld field reconciliation in SyncHandler
-**What:** The backend now declares `schema_jsonld` in `/api/schema` FIELDS and emits it in `/api/sync/collection`. But `plugin/src/components/SyncHandler.tsx` only calls `collection.setFields()` on the FIRST sync (`existingFields.length === 0`). Existing plugin users already have a populated collection, so the new `schema_jsonld` field will never be added to their Framer CMS, and `addItems` will carry a fieldData key with no matching field — silently dropped or erroring.
-**Why:** Without this, the JSON-LD never reaches Framer for any existing user. The whole schema feature is dead-on-arrival for them.
-**Context:** Add field-reconciliation logic in SyncHandler.tsx — detect schema fields missing from the existing collection and add them via `setFields` additively (without disturbing existing field IDs / variable references). This is a coordinated change: backend schema.ts (done), plugin SyncHandler.tsx (this), and possibly a manual Framer CMS field addition for users who can't get the reconciliation. ~30 min CC. Flagged by the API-contract specialist during /review.
-**Depends on:** Backend `/api/schema` change (done in this review's commit).
-
 ## P1 — Next iteration (after Era pivot ships)
 
 ### 30-day Era-experiment retro
