@@ -293,7 +293,9 @@ async function callClaude(
 
   const existingArticlesList =
     existingArticles.length > 0
-      ? `\nExisting blog articles you can link to using <a href="/blog/slug">:
+      ? `\nExisting blog articles — use these for TWO purposes:
+  (a) Internal linking: insert 2-4 <a href="/blog/slug"> links inside the body to relevant titles below.
+  (b) Title shape variety: scan these titles and follow TITLE CRAFT rule 5 — do NOT repeat the same opening word, hook, or shape.
 ${existingArticles.map((a) => `- /blog/${a.slug} — "${a.title}"`).join("\n")}`
       : "";
 
@@ -315,7 +317,7 @@ Key site pages you can link to where relevant:
         input_schema: {
           type: "object" as const,
           properties: {
-            title: { type: "string" as const, description: "Article title (include target keyword naturally)" },
+            title: { type: "string" as const, description: "Article title. Reframe the keyword into a reader-friendly headline — do NOT just copy the keyword phrase. See TITLE CRAFT in the system prompt for the full rules." },
             slug: { type: "string" as const, description: "URL-friendly slug" },
             category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
             summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
@@ -399,7 +401,40 @@ The target keyword is the basis. Don't change the topic — but FIRST classify t
 
 All five types still follow the FOUR WINNER-PATTERN RULES above — but scale them to the type. A 400-word What-is has one citable answer and one short list, not 4-6 sections. Each <h2> should be a question or a specific claim, never a generic noun phrase.
 
-TITLE FORMATS: Vary across articles — "How to X", "X Ways to Y", "X vs Y", "Why X Matters", "X: What Y Means for Z". NEVER: "Complete Guide", "Ultimate Guide", "Everything You Need to Know", "A Deep Dive". NEVER default to adding the current year unless content is genuinely time-sensitive.
+TITLE CRAFT:
+
+The title is the only thing most people will read. Treat it as copywriting, not as a label for the article.
+
+1. THE KEYWORD IS A SEED, NOT THE TITLE.
+   - The target keyword must appear (Google still ranks on it), but reframe it into a headline a human would click. Rearrange, drop filler, add a hook word, lead with the reader's pain or the surprising payoff.
+   - BAD (keyword copy-paste): "Vtiger CRM Telegram Integration: Step-by-Step Setup Guide"
+   - BETTER (reframe with payoff): "Connect Vtiger to Telegram Without Breaking Your Pipeline"
+   - BAD: "Telegram Lead Management Tool for iGaming Affiliates: How to Run Outreach"
+   - BETTER: "The Telegram Outreach Playbook iGaming Affiliates Are Quietly Using"
+
+2. LEAD WITH PAIN, PAYOFF, OR A SURPRISING CLAIM — not the keyword phrase.
+   - Promise something specific the reader gets. Or name the problem they're stuck on. Or stake a contrarian claim they want to check.
+
+3. SHAPE VARIETY. Don't default to the same template every time. Alternate across:
+   - Colon-subtitle: "X: How Y Changes Z"
+   - Question: "Is X Worth It for Y?"
+   - Declarative claim: "X Kills Y's ROI"
+   - Numbered listicle: "7 Ways to Y"
+   - Bare phrase: "Telegram, but for sales"
+   - How-to is fine, but don't lead with "How to" reflexively when another shape fits better.
+
+4. BANNED TICS — these are AI-content tells:
+   - Words: "Actually", "Really", "No-Fluff", "No-Agency", "Complete Guide", "Ultimate", "Everything You Need", "A Deep Dive", "What You Need to Know", "The Truth About".
+   - Patterns: parenthetical subtitles like "(Step-by-Step)" or "(And Where Each Falls Short)" — used sparingly is fine, used every article is a tell.
+   - Year suffixes ("in 2026") unless the content is genuinely time-sensitive.
+   - Two clauses welded with "How to" twice ("How to X: How Y").
+
+5. CHECK THE EXISTING-ARTICLES LIST IN THE USER MESSAGE.
+   - Scan the recent titles. Your title must NOT:
+     - Use the same opening word as a recent title.
+     - Use the same hook word ("actually", "real", "without") as a recent title.
+     - Use the same colon-subtitle shape if two recent titles already use it.
+   - When in doubt, pick a different shape than the last 3 titles.
 
 CRMChat MENTIONS (in body text):
 - Beyond the 2 brand-mention sentences from Rule 3, additional mentions optional. 1-2 more max.
