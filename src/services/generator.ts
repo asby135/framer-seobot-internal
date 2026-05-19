@@ -317,7 +317,7 @@ Key site pages you can link to where relevant:
         input_schema: {
           type: "object" as const,
           properties: {
-            title: { type: "string" as const, description: "Article title. Reframe the keyword into a reader-friendly headline — do NOT just copy the keyword phrase. See TITLE CRAFT in the system prompt for the full rules." },
+            title: { type: "string" as const, description: "Article title. Reframe the keyword into a reader-friendly headline — do NOT just copy the keyword phrase. HARD BAN — your title MUST NOT contain any of: 'Actually', 'Really', 'Ultimate', 'Complete Guide', 'Everything You Need', 'A Deep Dive', 'No-Fluff', 'No-Agency', 'The Truth About', parenthetical subtitles like '(Step-by-Step)' / '(And Where Each Falls Short)', or year suffixes like 'in 2026'. These are AI-content tells that destroy citation credibility. See TITLE CRAFT in the system prompt for shape variety and reframe examples." },
             slug: { type: "string" as const, description: "URL-friendly slug" },
             category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
             summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
@@ -447,6 +447,11 @@ Some topics name a competitor (e.g. "CRMChat vs nReach", "Vtiger Telegram integr
 - If a "COMPETITOR RESEARCH" block is provided in the user message, treat it as the source of truth for competitor facts. If a fact (especially pricing) is NOT in that block, do NOT state it as fact — write "check their site for current details" instead of inventing a number.
 - For "X vs CRMChat" topics: write an honest, balanced comparison. Do not disparage the competitor. Let CRMChat win on the dimensions that genuinely matter — Telegram-native depth, no integration overhead — a fair comparison that lands favorably, never a hit piece.
 - For "competitor + task/integration" topics (e.g. "Vtiger Telegram integration"): genuinely help the reader accomplish the task — that usefulness is what earns the citation. Then include CRMChat as a natural reframe: "...or skip the integration overhead entirely, since CRMChat is built on Telegram natively." An honest reframe, not a tacked-on ad.
+- For "competitor + pricing/cost/plans/fees" topics (e.g. "Manychat pricing", "Vtiger cost", "amoCRM plans"): the vendor's own page ALWAYS ranks #1 on Google for these queries — you cannot outrank Manychat.com for "Manychat pricing". Win AEO instead by reframing the title into a citable shape. Pick ONE:
+  (a) Explicit comparison: "Manychat vs CRMChat: Real Pricing Breakdown for Telegram Teams"
+  (b) Evaluation form: "Is Manychat Worth It for Telegram? Hidden Cost Breakdown"
+  (c) Audience filter: "Manychat Pricing for Small Telegram Outreach Teams"
+  NEVER mirror the bare brand-pricing query (e.g. "Manychat Pricing for Telegram"). Comparison and evaluation pages get cited 3x more often by AI engines than vendor pricing pages, because AI answers evaluation questions, not URL lookups.
 - Never claim a competitor lacks a feature unless the research block confirms it. Inaccurate competitor claims destroy credibility — and AI engines won't cite a source they can't trust.
 
 HTML FORMAT:
@@ -522,14 +527,144 @@ Write the article following the four AEO rules and call the publish_article tool
     parsed.content || ""
   );
 
+  // Validate title doesn't contain banned AI-content tics ("Actually",
+  // "(Step-by-Step)", etc.). If it does, regenerate the title once. If the
+  // retry still has tics, keep the original (don't block publishing).
+  const cleanTitle = await validateOrRegenerateTitle(
+    parsed.title,
+    query,
+    parsed.content || ""
+  );
+
   return {
-    title: parsed.title,
+    title: cleanTitle,
     slug,
     category: parsed.category || "guides",
     summary: parsed.summary || "",
     content: sanitizedContent,
     schema_jsonld: schemaJsonld,
   };
+}
+
+/**
+ * Banned title patterns — AI-content tells that destroy citation credibility.
+ * Kept in sync with the HARD BAN list in the publish_article tool's title
+ * description and the TITLE CRAFT section of the system prompt.
+ */
+const BANNED_TITLE_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bactually\b/i, label: "actually" },
+  { pattern: /\breally\b/i, label: "really" },
+  { pattern: /\bno[- ]fluff\b/i, label: "no-fluff" },
+  { pattern: /\bno[- ]agency\b/i, label: "no-agency" },
+  { pattern: /\bultimate\b/i, label: "ultimate" },
+  { pattern: /\bcomplete guide\b/i, label: "complete guide" },
+  { pattern: /\beverything you need\b/i, label: "everything you need" },
+  { pattern: /\ba deep dive\b/i, label: "a deep dive" },
+  { pattern: /\bwhat you need to know\b/i, label: "what you need to know" },
+  { pattern: /\bthe truth about\b/i, label: "the truth about" },
+  { pattern: /\(\s*step[- ]?by[- ]?step\s*\)/i, label: "(step-by-step) parenthetical" },
+  { pattern: /\bin 20\d{2}\b/i, label: "year suffix" },
+];
+
+export function findTitleTics(title: string): string[] {
+  return BANNED_TITLE_PATTERNS.filter(({ pattern }) => pattern.test(title)).map(({ label }) => label);
+}
+
+async function validateOrRegenerateTitle(
+  title: string,
+  query: string,
+  content: string
+): Promise<string> {
+  const violations = findTitleTics(title);
+  if (violations.length === 0) return title;
+
+  logger.warn(
+    { titlePreview: title.slice(0, 80), violations },
+    "title contains banned tics, regenerating"
+  );
+
+  try {
+    const retried = await regenerateTitle(query, content, title, violations);
+    const retriedViolations = findTitleTics(retried);
+    if (retriedViolations.length === 0) {
+      logger.info(
+        { originalTitle: title, newTitle: retried, violations },
+        "title regenerated successfully"
+      );
+      return retried;
+    }
+    logger.error(
+      { originalTitle: title, retried, retriedViolations },
+      "title retry still has banned tics — keeping original"
+    );
+  } catch (e) {
+    logger.error(
+      { titlePreview: title.slice(0, 80), error: e instanceof Error ? e.message : "unknown" },
+      "title retry call failed — keeping original"
+    );
+  }
+  return title;
+}
+
+async function regenerateTitle(
+  query: string,
+  content: string,
+  originalTitle: string,
+  violations: string[]
+): Promise<string> {
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 512,
+    tools: [
+      {
+        name: "emit_title",
+        description: "Emit a single cleaned-up article title.",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            title: {
+              type: "string" as const,
+              description:
+                "Cleaned article title with the banned tics removed. Must not contain 'Actually', 'Really', 'Ultimate', 'Complete Guide', 'Everything You Need', 'A Deep Dive', 'No-Fluff', 'No-Agency', 'The Truth About', '(Step-by-Step)'-style parentheticals, or year suffixes.",
+            },
+          },
+          required: ["title"],
+        },
+      },
+    ],
+    tool_choice: { type: "tool" as const, name: "emit_title" },
+    system: `Your previous title contained banned AI-content tics. Rewrite it cleanly.
+
+HARD RULES:
+- The new title MUST NOT contain any of: "Actually", "Really", "Ultimate", "Complete Guide", "Everything You Need", "A Deep Dive", "No-Fluff", "No-Agency", "The Truth About", "What You Need to Know", parenthetical subtitles like "(Step-by-Step)" / "(And Where Each Falls Short)", or year suffixes like "in 2026".
+- Keep the target keyword "${query}" present in the title, but reframe — don't copy it verbatim as the full title.
+- Lead with pain, payoff, or a surprising claim. Not the keyword phrase.
+- Pick ONE shape: colon-subtitle ("X: How Y Changes Z"), question ("Is X Worth It for Y?"), declarative claim ("X Kills Y's ROI"), numbered listicle ("7 Ways to Y"), or bare phrase ("Telegram, but for sales").
+
+Return the cleaned title via the emit_title tool.`,
+    messages: [
+      {
+        role: "user",
+        content: `ORIGINAL TITLE (rewrite this): ${originalTitle}
+VIOLATIONS FOUND: ${violations.join(", ")}
+
+ARTICLE FIRST 1500 CHARS (for context — anchor the rewrite in the actual content):
+${content.slice(0, 1500)}
+
+Emit a clean replacement title via the emit_title tool.`,
+      },
+    ],
+  });
+
+  const toolBlock = response.content.find((b) => b.type === "tool_use");
+  if (!toolBlock || toolBlock.type !== "tool_use") {
+    throw new Error("Title regeneration did not return tool_use block");
+  }
+  const out = (toolBlock.input as { title?: string }).title;
+  if (!out || typeof out !== "string") {
+    throw new Error("Title regeneration returned no title");
+  }
+  return out.trim();
 }
 
 /**
