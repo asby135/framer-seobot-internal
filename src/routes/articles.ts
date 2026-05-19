@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
-import { enqueueGeneration, getQueueStatus } from "../services/queue.js";
+import {
+  enqueueGeneration,
+  enqueueTranslation,
+  getQueueStatus,
+  getTranslationQueueStatus,
+} from "../services/queue.js";
 import { translateArticle } from "../services/translator.js";
 import { logger } from "../lib/logger.js";
 
@@ -248,29 +253,75 @@ articles.post("/import", async (c) => {
   return c.json({ status: "complete", imported });
 });
 
-// Translate an article into all configured locales
-// Runs in background to avoid Railway request timeout on long articles
+// Translate an article into all configured locales.
+// Enqueues onto the translation queue (concurrency=1) so stacking multiple
+// translations stays bounded on Anthropic in-flight calls.
 articles.post("/:id/translate", async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json<{ force?: boolean }>().catch(() => ({ force: false }));
 
-  // Verify article exists before starting background work
   const db = getDb();
   const article = db.prepare("SELECT id FROM articles WHERE id = ?").get(id);
   if (!article) {
     return c.json({ error: "Article not found" }, 404);
   }
 
-  // Fire and forget — translation runs in background
-  translateArticle(id, body.force ?? false)
-    .then((result) => {
-      logger.info({ articleId: id, ...result }, "Translation completed");
-    })
-    .catch((e) => {
-      logger.error({ articleId: id, error: e instanceof Error ? e.message : "unknown" }, "Translation failed");
-    });
+  enqueueTranslation({ articleId: id, force: body.force ?? false });
+  logger.info({ articleId: id }, "Translation enqueued");
 
-  return c.json({ status: "translating", message: "Translation started in background" });
+  return c.json(
+    {
+      status: "queued",
+      article_id: id,
+      queue: getTranslationQueueStatus(),
+    },
+    202
+  );
+});
+
+// Bulk-enqueue multiple article translations. Atomic single-request enqueue.
+articles.post("/translate-batch", async (c) => {
+  const body = await c.req
+    .json<{ article_ids?: string[]; force?: boolean }>()
+    .catch(() => ({ article_ids: undefined, force: false }));
+
+  if (!body.article_ids || !Array.isArray(body.article_ids) || body.article_ids.length === 0) {
+    return c.json({ error: "article_ids array required" }, 400);
+  }
+
+  // Dedup + cap to 20
+  const uniqueIds = [...new Set(body.article_ids)].slice(0, 20);
+
+  const db = getDb();
+  const placeholders = uniqueIds.map(() => "?").join(",");
+  const found = db
+    .prepare(`SELECT id, title FROM articles WHERE id IN (${placeholders})`)
+    .all(...uniqueIds) as Array<{ id: string; title: string }>;
+
+  if (found.length === 0) {
+    return c.json({ error: "No matching articles found" }, 404);
+  }
+
+  const force = body.force ?? false;
+  for (const a of found) {
+    enqueueTranslation({ articleId: a.id, force });
+  }
+
+  logger.info({ enqueued: found.length, force }, "Batch translation enqueued");
+
+  return c.json(
+    {
+      status: "queued",
+      enqueued: found.map((a) => ({ article_id: a.id, title: a.title })),
+      queue: getTranslationQueueStatus(),
+    },
+    202
+  );
+});
+
+// Translation queue status — parallel to /api/generate/status
+articles.get("/translate-status", (c) => {
+  return c.json({ queue: getTranslationQueueStatus() });
 });
 
 // Translate all published articles (runs in background)

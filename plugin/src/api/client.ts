@@ -175,13 +175,25 @@ class ApiClient {
   }
 
   async translateArticle(id: string, force: boolean = false) {
-    return this.request<{ status: string; message: string }>(
-      `/api/articles/${id}/translate`,
-      {
-        method: "POST",
-        body: JSON.stringify({ force }),
-      }
-    );
+    return this.request<{
+      status: string;
+      article_id: string;
+      queue: { pending: number; active: number; lastResult?: unknown };
+    }>(`/api/articles/${id}/translate`, {
+      method: "POST",
+      body: JSON.stringify({ force }),
+    });
+  }
+
+  async translateBatch(articleIds: string[], force: boolean = false) {
+    return this.request<{
+      status: string;
+      enqueued: Array<{ article_id: string; title: string }>;
+      queue: { pending: number; active: number; lastResult?: unknown };
+    }>("/api/articles/translate-batch", {
+      method: "POST",
+      body: JSON.stringify({ article_ids: articleIds, force }),
+    });
   }
 
   async translateAllArticles(force: boolean = false) {
@@ -192,6 +204,12 @@ class ApiClient {
         body: JSON.stringify({ force }),
       }
     );
+  }
+
+  async getTranslationStatus() {
+    return this.request<{
+      queue: { pending: number; active: number; lastResult?: unknown };
+    }>("/api/articles/translate-status");
   }
 
   async updateArticle(id: string, fields: { title?: string; summary?: string; content?: string }) {
@@ -221,6 +239,18 @@ class ApiClient {
     }>("/api/generate", {
       method: "POST",
       body: keywordId ? JSON.stringify({ keyword_id: keywordId }) : undefined,
+    });
+  }
+
+  async generateBatch(keywordIds: string[]) {
+    return this.request<{
+      status: string;
+      enqueued: Array<{ keyword_id: string; query: string }>;
+      skipped: Array<{ keyword_id: string; query: string; reason: string }>;
+      remaining: number;
+    }>("/api/generate/batch", {
+      method: "POST",
+      body: JSON.stringify({ keyword_ids: keywordIds }),
     });
   }
 

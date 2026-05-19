@@ -12,6 +12,8 @@ export function GeneratePanel() {
   const [result, setResult] = useState<{ id: string; status: string; message: string } | null>(
     activeGeneration ? { id: activeGeneration.topicId, status: "success", message: `"${activeGeneration.query}" is being generated...` } : null
   );
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [queueDepth, setQueueDepth] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -31,6 +33,7 @@ export function GeneratePanel() {
       try {
         const status = await api.getGenerationStatus();
         setRemaining(status.remaining);
+        setQueueDepth(status.queue.pending + status.queue.active);
 
         // Check if generation finished
         if (status.queue.pending === 0 && status.queue.active === 0) {
@@ -44,6 +47,7 @@ export function GeneratePanel() {
           }
           activeGeneration = null;
           setGeneratingId(null);
+          setQueueDepth(0);
           stopPolling();
           loadData(); // Refresh the list
         }
@@ -69,6 +73,7 @@ export function GeneratePanel() {
       ]);
       setTopics(topicsRes.topics);
       setRemaining(statusRes.remaining);
+      setQueueDepth(statusRes.queue.pending + statusRes.queue.active);
 
       // Detect if generation is running (e.g. started before plugin opened)
       if (statusRes.queue.active > 0 || statusRes.queue.pending > 0) {
@@ -83,6 +88,45 @@ export function GeneratePanel() {
       // ignore
     } finally {
       setLoading(false);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleGenerateBatch() {
+    if (selected.size === 0) return;
+    const ids = Array.from(selected);
+    setResult(null);
+    try {
+      const res = await api.generateBatch(ids);
+      const queued = res.enqueued.length;
+      const skipped = res.skipped.length;
+      activeGeneration = { topicId: "", query: `${queued} article${queued === 1 ? "" : "s"}` };
+      setGeneratingId("");
+      setResult({
+        id: "",
+        status: "success",
+        message: `${queued} article${queued === 1 ? "" : "s"} queued${skipped > 0 ? ` · ${skipped} skipped (rate limit)` : ""}. Check Articles tab as they complete.`,
+      });
+      setRemaining(res.remaining);
+      // Remove enqueued ones from the list
+      const enqueuedIds = new Set(res.enqueued.map((e) => e.keyword_id));
+      setTopics((prev) => prev.filter((t) => !enqueuedIds.has(t.id)));
+      setSelected(new Set());
+      startPolling();
+    } catch (e) {
+      if (e instanceof ApiError) {
+        setResult({ id: "", status: "error", message: e.message });
+      } else {
+        setResult({ id: "", status: "error", message: "Failed to start batch generation." });
+      }
     }
   }
 
@@ -127,6 +171,7 @@ export function GeneratePanel() {
       <div style={styles.header}>
         <span style={styles.muted}>
           {remaining !== null ? `${remaining} generations remaining this hour` : ""}
+          {queueDepth > 0 ? ` · ${queueDepth} in queue` : ""}
         </span>
       </div>
 
@@ -147,29 +192,62 @@ export function GeneratePanel() {
           <p style={styles.muted}>Approve topics in the Topics tab or add custom keywords, then come back here to generate articles.</p>
         </div>
       ) : (
-        <div style={styles.list}>
-          {[...topics].sort((a, b) => (a.source === "custom" ? -1 : 0) - (b.source === "custom" ? -1 : 0)).map((t) => (
-            <div key={t.id} style={styles.row}>
-              <div style={styles.rowContent}>
-                <div style={styles.query}>{t.query}</div>
-                <div style={styles.meta}>
-                  {t.source === "custom" && <span style={styles.customBadge}>CUSTOM</span>}
-                  {t.opportunity_score?.toFixed(0)} pts · {t.impressions?.toLocaleString()} impressions
+        <>
+          <div style={styles.list}>
+            {[...topics].sort((a, b) => (a.source === "custom" ? -1 : 0) - (b.source === "custom" ? -1 : 0)).map((t) => {
+              const isSelected = selected.has(t.id);
+              return (
+                <div
+                  key={t.id}
+                  onClick={() => toggleSelect(t.id)}
+                  style={{
+                    ...styles.row,
+                    ...(isSelected ? styles.rowSelected : {}),
+                  }}
+                >
+                  <div style={styles.checkbox}>{isSelected ? "☑" : "☐"}</div>
+                  <div style={styles.rowContent}>
+                    <div style={styles.query}>{t.query}</div>
+                    <div style={styles.meta}>
+                      {t.source === "custom" && <span style={styles.customBadge}>CUSTOM</span>}
+                      {t.opportunity_score?.toFixed(0)} pts · {t.impressions?.toLocaleString()} impressions
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleGenerate(t.id, t.query);
+                    }}
+                    disabled={isGenerating || remaining === 0}
+                    style={{
+                      ...styles.generateButton,
+                      ...(isGenerating || remaining === 0 ? styles.disabled : {}),
+                    }}
+                  >
+                    Generate
+                  </button>
                 </div>
-              </div>
+              );
+            })}
+          </div>
+          {selected.size > 0 && (
+            <div style={styles.footer}>
               <button
-                onClick={() => handleGenerate(t.id, t.query)}
-                disabled={isGenerating || remaining === 0}
+                onClick={handleGenerateBatch}
+                disabled={remaining === 0}
                 style={{
-                  ...styles.generateButton,
-                  ...(isGenerating || remaining === 0 ? styles.disabled : {}),
+                  ...styles.batchButton,
+                  ...(remaining === 0 ? styles.disabled : {}),
                 }}
               >
-                Generate
+                ✓ Generate {selected.size} selected
+                {remaining !== null && selected.size > remaining
+                  ? ` (only ${remaining} fit in quota)`
+                  : ""}
               </button>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -185,9 +263,13 @@ const styles: Record<string, React.CSSProperties> = {
   bannerText: { color: "#ccc", fontSize: 12, margin: 0, textAlign: "center" as const },
   spinner: { display: "inline-block", animation: "spin 1s linear infinite" },
   list: { flex: 1, overflow: "auto", minHeight: 0 },
-  row: { display: "flex", alignItems: "flex-start", padding: "10px 16px", borderBottom: "1px solid #2a2a2a", gap: 8 },
+  row: { display: "flex", alignItems: "flex-start", padding: "10px 16px", borderBottom: "1px solid #2a2a2a", gap: 8, cursor: "pointer" },
+  rowSelected: { background: "#2a2a2a" },
+  checkbox: { color: "#888", fontSize: 14, marginTop: 1, flexShrink: 0 },
   rowContent: { flex: 1, minWidth: 0 },
   query: { color: "#e0e0e0", fontWeight: 500, lineHeight: 1.35, overflowWrap: "anywhere" as const },
+  footer: { flexShrink: 0, borderTop: "1px solid #333", background: "#1a1a1a", padding: "10px 16px" },
+  batchButton: { width: "100%", padding: "10px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 },
   meta: { color: "#888", fontSize: 12, marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
   customBadge: { background: "#3a3a1a", color: "#fa0", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   generateButton: { padding: "6px 14px", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, flexShrink: 0 },
