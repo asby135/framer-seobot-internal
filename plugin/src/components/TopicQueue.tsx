@@ -77,7 +77,7 @@ export function TopicQueue() {
   }
 
   if (loading) {
-    return <div style={styles.center}><p style={styles.muted}>Loading topics...</p></div>;
+    return <div style={styles.center}><p style={styles.muted}>Loading topics…</p></div>;
   }
 
   if (error) {
@@ -93,7 +93,7 @@ export function TopicQueue() {
     return (
       <div style={styles.empty}>
         <p style={styles.emptyTitle}>No topics yet</p>
-        <p style={styles.muted}>Run research to discover keywords from Google Search Console.</p>
+        <p style={styles.muted}>Run research to discover keywords from Era AI.</p>
         <button onClick={() => setShowCustom(true)} style={styles.actionButton}>+ Add Custom Topic</button>
         {showCustom && (
           <div style={styles.customRow}>

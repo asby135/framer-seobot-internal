@@ -66,7 +66,7 @@ export function App() {
   if (loading) {
     return (
       <div style={styles.center}>
-        <p style={styles.textSecondary}>Loading...</p>
+        <p style={styles.textSecondary}>Loading…</p>
       </div>
     );
   }

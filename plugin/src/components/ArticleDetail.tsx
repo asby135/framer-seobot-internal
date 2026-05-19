@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { api, ApiError, type Article, type Asset } from "../api/client";
 import { isTranslating as checkTranslating, startTranslating, stopTranslating, subscribe } from "../lib/translation-state";
+import { humanStatus } from "../lib/format";
 
 interface Props {
   articleId: string;
@@ -152,7 +153,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   }
 
   if (loading) {
-    return <div style={styles.center}><p style={styles.muted}>Loading...</p></div>;
+    return <div style={styles.center}><p style={styles.muted}>Loading…</p></div>;
   }
 
   if (error || !article) {
@@ -185,7 +186,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
 
       <div style={styles.statusRow}>
         <span>Status: </span>
-        <span style={styles.statusValue}>{article.status}</span>
+        <span style={styles.statusValue}>{humanStatus(article.status)}</span>
       </div>
 
       {/* Thumbnail preview */}
@@ -259,7 +260,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
             disabled={saving}
             style={{ ...styles.saveButton, ...(saving ? styles.disabled : {}) }}
           >
-            {saving ? "Saving..." : "Save Changes"}
+            {saving ? "Saving…" : "Save Changes"}
           </button>
           <button onClick={cancelEditing} disabled={saving} style={styles.cancelButton}>
             Cancel
@@ -281,7 +282,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
               <textarea
                 value={editInstructions}
                 onChange={(e) => setEditInstructions(e.target.value)}
-                placeholder="e.g. Fix the grounding flags above, remove the claim about 800M users, add more detail about CRMChat's pipeline feature..."
+                placeholder="e.g. Fix the grounding flags above, remove the claim about 800M users, add more detail about CRMChat's pipeline feature…"
                 style={styles.editTextarea}
                 rows={4}
               />
@@ -293,7 +294,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
                 disabled={regenerating}
                 style={{ ...(confirmRegenerate ? styles.confirmButton : styles.regenerateButton), ...(regenerating ? styles.disabled : {}) }}
               >
-                {regenerating ? "Regenerating..." : confirmRegenerate ? "Confirm — Delete & Regenerate" : "Regenerate Article"}
+                {regenerating ? "Regenerating…" : confirmRegenerate ? "Confirm — Delete & Regenerate" : "Regenerate Article"}
               </button>
             </div>
           )}
@@ -312,7 +313,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
               disabled={translating}
               style={{ ...styles.forceTranslateButton, ...(translating ? styles.disabled : {}) }}
             >
-              {translating ? "Re-translating..." : "Force Re-translate"}
+              {translating ? "Re-translating…" : "Force Re-translate"}
             </button>
           </>
         ) : (
@@ -321,7 +322,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
             disabled={translating}
             style={{ ...styles.translateButton, ...(translating ? styles.disabled : {}) }}
           >
-            {translating ? "Translating (RU, UA, FR)..." : "Translate to RU / UA / FR"}
+            {translating ? "Translating (RU, UA, FR)…" : "Translate to RU / UA / FR"}
           </button>
         )}
         {translateResult && (
@@ -337,7 +338,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
             disabled={publishing}
             style={{ ...styles.publishButton, ...(publishing ? styles.disabled : {}) }}
           >
-            {publishing ? "Publishing..." : "Publish"}
+            {publishing ? "Publishing…" : "Publish"}
           </button>
         )}
         <button
@@ -345,7 +346,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
           disabled={deleting}
           style={{ ...styles.deleteButton, ...(deleting ? styles.disabled : {}) }}
         >
-          {deleting ? "Deleting..." : "Delete"}
+          {deleting ? "Deleting…" : "Delete"}
         </button>
       </div>
     </div>

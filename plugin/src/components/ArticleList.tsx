@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { api, ApiError, type Article } from "../api/client";
 import { ArticleDetail } from "./ArticleDetail";
 import { isTranslating, subscribe, startTranslating, stopTranslating } from "../lib/translation-state";
+import { humanStatus } from "../lib/format";
 
 export function ArticleList() {
   const [articles, setArticles] = useState<Article[]>([]);
@@ -9,6 +10,7 @@ export function ArticleList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [genQueueDepth, setGenQueueDepth] = useState(0);
   const [translateQueueDepth, setTranslateQueueDepth] = useState(0);
   const [batchSelected, setBatchSelected] = useState<Set<string>>(new Set());
   const [translateMessage, setTranslateMessage] = useState("");
@@ -44,7 +46,9 @@ export function ArticleList() {
   async function checkGenerationStatus() {
     try {
       const status = await api.getGenerationStatus();
-      if (status.queue.active > 0 || status.queue.pending > 0) {
+      const depth = status.queue.pending + status.queue.active;
+      setGenQueueDepth(depth);
+      if (depth > 0) {
         setGenerating(true);
         startPolling();
       }
@@ -58,7 +62,9 @@ export function ArticleList() {
     pollRef.current = setInterval(async () => {
       try {
         const status = await api.getGenerationStatus();
-        if (status.queue.pending === 0 && status.queue.active === 0) {
+        const depth = status.queue.pending + status.queue.active;
+        setGenQueueDepth(depth);
+        if (depth === 0) {
           setGenerating(false);
           stopPolling();
           loadArticles(); // Refresh to show the new article
@@ -158,7 +164,7 @@ export function ArticleList() {
   }
 
   if (loading) {
-    return <div style={styles.center}><p style={styles.muted}>Loading articles...</p></div>;
+    return <div style={styles.center}><p style={styles.muted}>Loading articles…</p></div>;
   }
 
   if (error) {
@@ -176,7 +182,11 @@ export function ArticleList() {
       {generating && (
         <div style={styles.generatingBanner}>
           <span style={styles.spinnerInline}>↻</span>
-          <span>Article is being generated...</span>
+          <span>
+            {genQueueDepth > 1
+              ? `Generating ${genQueueDepth} articles…`
+              : "Generating article…"}
+          </span>
         </div>
       )}
 
@@ -184,7 +194,7 @@ export function ArticleList() {
       {translateQueueDepth > 0 && (
         <div style={styles.translatingBanner}>
           <span style={styles.spinnerInline}>↻</span>
-          <span>Translating {translateQueueDepth} article{translateQueueDepth === 1 ? "" : "s"}...</span>
+          <span>Translating {translateQueueDepth} article{translateQueueDepth === 1 ? "" : "s"}…</span>
         </div>
       )}
 
@@ -238,10 +248,12 @@ export function ArticleList() {
                         ...styles.statusPill,
                         ...(statusColors[a.status] || {}),
                       }}>
-                        {a.status}
+                        {humanStatus(a.status)}
                       </span>
                       {translatingThis && (
-                        <span style={styles.translatingPill}>↻ translating</span>
+                        <span style={styles.translatingPill}>
+                          <span style={styles.pillSpinner}>↻</span> translating
+                        </span>
                       )}
                       {Boolean(flags.thumbnail_missing) && (
                         <span style={styles.flag}>No thumbnail</span>
@@ -303,7 +315,8 @@ const styles: Record<string, React.CSSProperties> = {
   title: { color: "#e0e0e0", fontWeight: 500, lineHeight: 1.35, overflowWrap: "anywhere" },
   meta: { display: "flex", alignItems: "center", gap: 8, marginTop: 4 },
   statusPill: { fontSize: 11, padding: "1px 8px", borderRadius: 4, fontWeight: 500 },
-  translatingPill: { fontSize: 11, padding: "1px 8px", borderRadius: 4, fontWeight: 500, background: "#1a3a5a", color: "#8bf", animation: "spin 2s linear infinite" },
+  translatingPill: { fontSize: 11, padding: "1px 8px", borderRadius: 4, fontWeight: 500, background: "#1a3a5a", color: "#8bf", display: "inline-flex", alignItems: "center", gap: 4 },
+  pillSpinner: { display: "inline-block", animation: "spin 1s linear infinite" },
   flag: { fontSize: 11, color: "#888" },
   chevron: { color: "#555", fontSize: 18, flexShrink: 0, cursor: "pointer" },
 };

@@ -160,7 +160,7 @@ export function GeneratePanel() {
   }
 
   if (loading) {
-    return <div style={styles.center}><p style={styles.muted}>Loading...</p></div>;
+    return <div style={styles.center}><p style={styles.muted}>Loading…</p></div>;
   }
 
   const isGenerating = generatingId !== null;

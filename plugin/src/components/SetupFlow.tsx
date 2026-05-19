@@ -79,7 +79,7 @@ export function SetupFlow({ onComplete }: Props) {
           ...(connecting ? styles.buttonDisabled : {}),
         }}
       >
-        {connecting ? "Connecting..." : "Connect"}
+        {connecting ? "Connecting…" : "Connect"}
       </button>
     </div>
   );
