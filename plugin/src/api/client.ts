@@ -125,6 +125,19 @@ class ApiClient {
     );
   }
 
+  async seedTopics(audience: string, count: number = 10) {
+    return this.request<{
+      status: string;
+      audience: string;
+      seeded: number;
+      skipped: number;
+      topics: Array<{ query: string }>;
+    }>("/api/research/seed", {
+      method: "POST",
+      body: JSON.stringify({ audience, count }),
+    });
+  }
+
   // Topics
   async getTopics(status: string = "pending", page: number = 1, excludeWithArticles: boolean = false) {
     const qs = `status=${status}&page=${page}${excludeWithArticles ? "&exclude_with_articles=1" : ""}`;

@@ -8,6 +8,10 @@ export function TopicQueue() {
   const [error, setError] = useState("");
   const [customQuery, setCustomQuery] = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const [showSeed, setShowSeed] = useState(false);
+  const [seedAudience, setSeedAudience] = useState("");
+  const [seeding, setSeeding] = useState(false);
+  const [seedMessage, setSeedMessage] = useState("");
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
@@ -74,6 +78,25 @@ export function TopicQueue() {
       setError(e instanceof ApiError ? e.message : "Failed to add topic");
     }
     loadTopics();
+  }
+
+  async function handleSeed() {
+    if (!seedAudience.trim() || seeding) return;
+    setSeeding(true);
+    setSeedMessage("");
+    try {
+      const res = await api.seedTopics(seedAudience.trim(), 10);
+      setSeedMessage(
+        `Seeded ${res.seeded} topic${res.seeded === 1 ? "" : "s"}${res.skipped > 0 ? ` · ${res.skipped} skipped (dupes/competitor)` : ""}.`
+      );
+      setSeedAudience("");
+      setPage(1);
+      loadTopics();
+    } catch (e) {
+      setSeedMessage(e instanceof ApiError ? e.message : "Seeding failed");
+    } finally {
+      setSeeding(false);
+    }
   }
 
   if (loading) {
@@ -185,10 +208,16 @@ export function TopicQueue() {
             ✗ Reject
           </button>
           <button
-            onClick={() => setShowCustom(!showCustom)}
+            onClick={() => { setShowCustom(!showCustom); setShowSeed(false); }}
             style={styles.customButton}
           >
             + Custom
+          </button>
+          <button
+            onClick={() => { setShowSeed(!showSeed); setShowCustom(false); setSeedMessage(""); }}
+            style={styles.customButton}
+          >
+            ✦ Seed
           </button>
         </div>
 
@@ -197,12 +226,37 @@ export function TopicQueue() {
             <input
               value={customQuery}
               onChange={(e) => setCustomQuery(e.target.value)}
-              placeholder="Enter a keyword..."
+              placeholder="Enter a keyword…"
               style={styles.customInput}
               onKeyDown={(e) => e.key === "Enter" && handleCustomSubmit()}
               autoFocus
             />
             <button onClick={handleCustomSubmit} style={styles.smallButton}>Add</button>
+          </div>
+        )}
+
+        {showSeed && (
+          <div style={styles.seedPanel}>
+            <p style={styles.seedHint}>
+              Describe a target audience — the agent reads your knowledge base and seeds 10 article topics for them.
+            </p>
+            <textarea
+              value={seedAudience}
+              onChange={(e) => setSeedAudience(e.target.value)}
+              placeholder="e.g. OnlyFans agencies managing chatters across multiple model accounts on Telegram"
+              style={styles.seedInput}
+              rows={3}
+              disabled={seeding}
+              autoFocus
+            />
+            <button
+              onClick={handleSeed}
+              disabled={seeding || !seedAudience.trim()}
+              style={{ ...styles.seedButton, ...(seeding || !seedAudience.trim() ? styles.disabled : {}) }}
+            >
+              {seeding ? "Seeding…" : "✦ Seed 10 topics"}
+            </button>
+            {seedMessage && <p style={styles.seedResult}>{seedMessage}</p>}
           </div>
         )}
       </div>
@@ -238,4 +292,9 @@ const styles: Record<string, React.CSSProperties> = {
   customRow: { display: "flex", gap: 8, padding: "8px 16px" },
   customInput: { flex: 1, background: "#2a2a2a", border: "1px solid #444", borderRadius: 6, padding: "6px 10px", color: "#fff", fontSize: 13, outline: "none" },
   smallButton: { padding: "6px 12px", background: "#444", color: "#e0e0e0", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 },
+  seedPanel: { display: "flex", flexDirection: "column" as const, gap: 8, padding: "8px 16px 12px" },
+  seedHint: { color: "#888", fontSize: 12, margin: 0, lineHeight: 1.4 },
+  seedInput: { background: "#2a2a2a", border: "1px solid #444", borderRadius: 6, padding: "8px 10px", color: "#fff", fontSize: 13, outline: "none", resize: "vertical" as const, fontFamily: "inherit", lineHeight: 1.4 },
+  seedButton: { padding: "8px 0", background: "#3a2a5a", color: "#b9f", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  seedResult: { color: "#8bf", fontSize: 12, margin: 0, textAlign: "center" as const },
 };

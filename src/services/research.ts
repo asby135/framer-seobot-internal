@@ -39,7 +39,7 @@ const TASK_SIGNALS = [
  *  - competitor topics with a task signal ("Vtiger Telegram integration guide")
  *  - generic / category topics that name no competitor at all
  */
-function isPureCompetitorTopic(query: string): boolean {
+export function isPureCompetitorTopic(query: string): boolean {
   const q = query.toLowerCase();
   if (q.includes("crmchat")) return false; // comparison / migration / brand — keep
   if (!namesCompetitor(query)) return false; // generic / category — keep

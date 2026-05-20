@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { runResearch } from "../services/research.js";
+import { seedTopics } from "../services/seeder.js";
 import { getDb } from "../db/index.js";
 import { logger } from "../lib/logger.js";
 
@@ -17,6 +18,38 @@ research.post("/", async (c) => {
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
     logger.error({ error: message }, "Research failed");
+    return c.json({ error: message }, 500);
+  }
+});
+
+// Seed pending topics for a target audience, grounded in the knowledge base.
+// Generates topic IDEAS from an audience persona + KB (no external source),
+// inserts them as pending with source='seeded' for normal review/generation.
+research.post("/seed", async (c) => {
+  const body = await c.req
+    .json<{ audience?: string; count?: number }>()
+    .catch(() => ({ audience: undefined, count: undefined }));
+
+  const audience = body.audience?.trim();
+  if (!audience) {
+    return c.json(
+      { error: 'audience is required, e.g. { audience: "OnlyFans agencies managing chatters on Telegram" }' },
+      400
+    );
+  }
+
+  try {
+    const result = await seedTopics(audience, body.count ?? 10);
+    return c.json({
+      status: "complete",
+      audience: result.audience,
+      seeded: result.seeded.length,
+      skipped: result.skipped,
+      topics: result.seeded,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    logger.error({ error: message, audience }, "Topic seeding failed");
     return c.json({ error: message }, 500);
   }
 });
