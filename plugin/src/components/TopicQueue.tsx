@@ -177,7 +177,9 @@ export function TopicQueue() {
             <div style={styles.rowContent}>
               <div style={styles.query}>{t.query}</div>
               <div style={styles.meta}>
-                {t.opportunity_score?.toFixed(0)} pts · {t.impressions?.toLocaleString()} impressions
+                {t.source === "seeded" && <span style={styles.seedBadge}>SEEDED</span>}
+                {t.source === "custom" && <span style={styles.customBadge}>CUSTOM</span>}
+                {t.opportunity_score?.toFixed(0)} pts
               </div>
             </div>
           </div>
@@ -277,7 +279,9 @@ const styles: Record<string, React.CSSProperties> = {
   checkbox: { color: "#888", fontSize: 14, marginTop: 1, flexShrink: 0 },
   rowContent: { flex: 1, minWidth: 0 },
   query: { color: "#e0e0e0", fontWeight: 500, lineHeight: 1.35, overflowWrap: "anywhere" },
-  meta: { color: "#888", fontSize: 12, marginTop: 2 },
+  meta: { color: "#888", fontSize: 12, marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
+  seedBadge: { background: "#3a2a5a", color: "#b9f", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
+  customBadge: { background: "#3a3a1a", color: "#fa0", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   actions: { display: "flex", gap: 8, padding: "12px 16px" },
   approveButton: { flex: 1, padding: "8px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },
   rejectButton: { flex: 1, padding: "8px 0", background: "#5a2a2a", color: "#f88", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },

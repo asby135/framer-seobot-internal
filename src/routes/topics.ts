@@ -23,7 +23,10 @@ topics.get("/", (c) => {
               k.search_volume, k.opportunity_score, k.status, k.created_at
        FROM keywords k
        ${whereClause}
-       ORDER BY CASE WHEN k.source = 'custom' THEN 0 ELSE 1 END, k.opportunity_score DESC
+       ORDER BY
+         CASE WHEN k.source IN ('custom', 'seeded') THEN 0 ELSE 1 END,
+         CASE WHEN k.source IN ('custom', 'seeded') THEN k.created_at END DESC,
+         k.opportunity_score DESC
        LIMIT ? OFFSET ?`
     )
     .all(status, limit, offset);
