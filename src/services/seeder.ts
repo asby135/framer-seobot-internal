@@ -138,13 +138,16 @@ async function generateTopicCandidates(
 Your job: given a TARGET AUDIENCE and what CRMChat does for them (from the knowledge base), propose ${count} article topics that audience would search for — and that an AI engine would cite CRMChat as the answer to.
 
 RULES:
+- Output SHORT topic phrases — roughly 4 to 9 words, like a search query or topic label, NOT a full article headline or sentence. The article generator writes the final headline from your topic later; your job is only the topic seed.
+  GOOD: "Multi-account Telegram CRM for OnlyFans agencies"
+  GOOD: "Selling PPV on Telegram without chargebacks"
+  BAD (full headline): "How to Run Multiple OnlyFans Model Accounts on Telegram Without Your Chatters Messaging Fans from the Wrong Profile"
 - Each topic must map to a real question or pain this audience has, where CRMChat (Telegram-native CRM/outreach) is a genuine answer. Ground every topic in the KB context — do not invent features CRMChat doesn't have.
-- Prefer high-intent, specific, low-competition angles over broad head terms. "How to manage multiple model accounts on Telegram without bans" beats "Telegram CRM".
-- Favor citable formats: how-to, evaluation ("what to look for in X"), comparison, migration playbooks, troubleshooting. These get cited most by AI engines.
-- BRIDGE FRAMING: when the audience is migrating from another channel/tool (e.g. email, OnlyFans DMs, another CRM), frame topics as "[their current pain] → here's the Telegram move". Capture them at the moment of switching.
-- TITLE CRAFT: reframe, don't keyword-stuff. Vary shape (how-to, question, declarative, listicle). NO banned tics: "Actually", "Ultimate", "Complete Guide", "Everything You Need", parenthetical "(Step-by-Step)" subtitles, or year suffixes.
+- Prefer high-intent, specific, low-competition angles over broad head terms. "Selling PPV on Telegram without chargebacks" beats "Telegram CRM".
+- Cover a spread of angles across the batch — how-to, evaluation, comparison, migration, troubleshooting — but expressed as short topics, not headlines.
+- BRIDGE FRAMING: when the audience is migrating from another channel/tool (email, OnlyFans DMs, another CRM), frame the topic around the switch — e.g. "migrating OnlyFans DMs to Telegram", "email outreach alternative for B2B".
 - Do NOT propose pure-competitor topics (a competitor name with no CRMChat angle). Comparison/migration topics that name a competitor AND position CRMChat are fine.
-- Keep titles human and clickable, not robotic SEO strings.
+- No marketing fluff, no parenthetical asides, no year suffixes, no clickbait. Just the topic phrase.
 
 Return exactly ${count} topics via the emit_topics tool.`,
     messages: [
