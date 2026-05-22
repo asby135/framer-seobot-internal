@@ -48,7 +48,27 @@ export async function seedTopics(
     return { seeded: [], skipped: 0, audience };
   }
 
-  // 3. Dedup against existing keywords + slugs, drop pure-competitor topics
+  const { seeded, skipped } = insertSeededTopics(candidates);
+  logger.info(
+    { audience, requested: n, seeded: seeded.length, skipped },
+    "Audience topic seeding complete"
+  );
+  return { seeded, skipped, audience };
+}
+
+/**
+ * Insert a known list of topic phrases as pending 'seeded' keywords. Shared by
+ * the audience generator (above) and the direct-import path (e.g. topics adapted
+ * from an external blog). Dedups against existing keywords/slugs and drops
+ * pure-competitor topics. Seeded topics get a neutral default score (they have
+ * no Era opportunity signal); the Topics queue floats source='seeded' to the top.
+ */
+export function insertSeededTopics(
+  candidates: string[]
+): { seeded: Array<{ query: string }>; skipped: number } {
+  const db = getDb();
+  const SEEDED_SCORE = 50;
+
   const existingQueries = new Set(
     (db.prepare("SELECT query FROM keywords").all() as { query: string }[]).map(
       (r) => r.query.toLowerCase()
@@ -64,7 +84,7 @@ export async function seedTopics(
   let skipped = 0;
 
   for (const raw of candidates) {
-    const query = raw.trim();
+    const query = (raw ?? "").trim();
     if (!query) continue;
     const key = query.toLowerCase();
     const slug = queryToSlug(query);
@@ -83,9 +103,6 @@ export async function seedTopics(
     toInsert.push(query);
   }
 
-  // 4. Insert. Seeded topics get a neutral default score so they sort alongside
-  //    Era topics in the pending queue (they have no Era opportunity signal).
-  const SEEDED_SCORE = 50;
   const insertStmt = db.prepare(
     `INSERT INTO keywords (id, query, source, opportunity_score, status)
      VALUES (?, ?, 'seeded', ?, 'pending')`
@@ -95,16 +112,7 @@ export async function seedTopics(
   });
   if (toInsert.length > 0) insertMany(toInsert);
 
-  logger.info(
-    { audience, requested: n, seeded: toInsert.length, skipped },
-    "Audience topic seeding complete"
-  );
-
-  return {
-    seeded: toInsert.map((query) => ({ query })),
-    skipped,
-    audience,
-  };
+  return { seeded: toInsert.map((query) => ({ query })), skipped };
 }
 
 async function generateTopicCandidates(

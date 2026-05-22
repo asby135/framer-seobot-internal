@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { runResearch } from "../services/research.js";
-import { seedTopics } from "../services/seeder.js";
+import { seedTopics, insertSeededTopics } from "../services/seeder.js";
 import { getDb } from "../db/index.js";
 import { logger } from "../lib/logger.js";
 
@@ -27,13 +27,37 @@ research.post("/", async (c) => {
 // inserts them as pending with source='seeded' for normal review/generation.
 research.post("/seed", async (c) => {
   const body = await c.req
-    .json<{ audience?: string; count?: number }>()
-    .catch(() => ({ audience: undefined, count: undefined }));
+    .json<{ audience?: string; count?: number; topics?: string[] }>()
+    .catch(() => ({ audience: undefined, count: undefined, topics: undefined }));
 
+  // Direct-import path: a known list of topic phrases (e.g. externally adapted
+  // from another blog). Inserts as-is, skipping Claude generation.
+  if (Array.isArray(body.topics) && body.topics.length > 0) {
+    try {
+      const result = insertSeededTopics(body.topics.slice(0, 100));
+      logger.info(
+        { provided: body.topics.length, seeded: result.seeded.length, skipped: result.skipped },
+        "Direct topic import complete"
+      );
+      return c.json({
+        status: "complete",
+        source: "import",
+        seeded: result.seeded.length,
+        skipped: result.skipped,
+        topics: result.seeded,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Unknown error";
+      logger.error({ error: message }, "Topic import failed");
+      return c.json({ error: message }, 500);
+    }
+  }
+
+  // Generation path: derive topics from an audience persona + KB.
   const audience = body.audience?.trim();
   if (!audience) {
     return c.json(
-      { error: 'audience is required, e.g. { audience: "OnlyFans agencies managing chatters on Telegram" }' },
+      { error: 'provide either { topics: string[] } to import, or { audience: "..." } to generate' },
       400
     );
   }
