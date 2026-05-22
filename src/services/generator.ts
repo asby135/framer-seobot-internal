@@ -353,6 +353,7 @@ These are non-negotiable structural requirements derived from empirical analysis
    - BANNED openers: "In today's...", "In this article we will discuss...", "If you're looking for...", "Looking for...?"
    - GOOD: "Your Telegram account just got banned. You have no idea why."
    - GOOD: "You spent two hours building a Telegram outreach sequence. The first 20 messages got you reported."
+   - The pain must be the reader's REAL underlying business problem (cost, time, risk, lost revenue, scale), grounded in the knowledge base — NOT a scenario that a CRMChat feature already prevents. Never frame one of CRMChat's own capabilities as the headline pain; a capability is the solution, not the problem. (e.g. if CRMChat prevents a mistake, the mistake is not the reader's central pain — the business reason they're here is.)
 
 2. FIRST H2 ANSWERS A SPECIFIC QUESTION WITH A CITABLE NUMBER OR CLAIM:
    - The first <h2> should be a question that maps to the target keyword.
