@@ -48,9 +48,9 @@ export async function seedTopics(
     return { seeded: [], skipped: 0, audience };
   }
 
-  const { seeded, skipped } = insertSeededTopics(candidates);
+  const { seeded, skipped, revived } = insertSeededTopics(candidates);
   logger.info(
-    { audience, requested: n, seeded: seeded.length, skipped },
+    { audience, requested: n, seeded: seeded.length, revived, skipped },
     "Audience topic seeding complete"
   );
   return { seeded, skipped, audience };
@@ -59,21 +59,34 @@ export async function seedTopics(
 /**
  * Insert a known list of topic phrases as pending 'seeded' keywords. Shared by
  * the audience generator (above) and the direct-import path (e.g. topics adapted
- * from an external blog). Dedups against existing keywords/slugs and drops
- * pure-competitor topics. Seeded topics get a neutral default score (they have
+ * from an external blog). Seeded topics get a neutral default score (they have
  * no Era opportunity signal); the Topics queue floats source='seeded' to the top.
+ *
+ * Dedup behavior:
+ *  - A query already present as pending/approved/generated → skip (genuinely active).
+ *  - A query present only as a REJECTED row → revive it (status back to pending). A
+ *    re-import of something you rejected means you want it back; reviving avoids
+ *    leaving it stuck (the DELETE endpoint can't clear rejected rows) and avoids
+ *    inserting a duplicate query row.
+ *  - A query matching an existing article slug → skip (already written).
+ *  - Otherwise → insert new.
  */
 export function insertSeededTopics(
   candidates: string[]
-): { seeded: Array<{ query: string }>; skipped: number } {
+): { seeded: Array<{ query: string }>; skipped: number; revived: number } {
   const db = getDb();
   const SEEDED_SCORE = 50;
 
-  const existingQueries = new Set(
-    (db.prepare("SELECT query FROM keywords").all() as { query: string }[]).map(
-      (r) => r.query.toLowerCase()
-    )
-  );
+  // Map query -> {id, status}. If a query has multiple rows, prefer a non-rejected
+  // one so we never revive when an active row already exists.
+  const byQuery = new Map<string, { id: string; status: string }>();
+  for (const row of db
+    .prepare("SELECT id, query, status FROM keywords")
+    .all() as Array<{ id: string; query: string; status: string }>) {
+    const key = row.query.toLowerCase();
+    const prev = byQuery.get(key);
+    if (!prev || prev.status === "rejected") byQuery.set(key, { id: row.id, status: row.status });
+  }
   const existingSlugs = new Set(
     (db.prepare("SELECT slug FROM articles").all() as { slug: string }[]).map(
       (r) => r.slug
@@ -81,6 +94,9 @@ export function insertSeededTopics(
   );
 
   const toInsert: string[] = [];
+  const toRevive: string[] = []; // keyword ids
+  const seededQueries: string[] = [];
+  const seenInBatch = new Set<string>();
   let skipped = 0;
 
   for (const raw of candidates) {
@@ -89,30 +105,47 @@ export function insertSeededTopics(
     const key = query.toLowerCase();
     const slug = queryToSlug(query);
 
-    if (existingQueries.has(key) || existingSlugs.has(slug)) {
-      skipped++;
-      continue;
-    }
-    if (isPureCompetitorTopic(query)) {
+    if (seenInBatch.has(key)) { skipped++; continue; }
+    seenInBatch.add(key);
+
+    if (isPureCompetitorTopic(query) || existingSlugs.has(slug)) {
       skipped++;
       continue;
     }
 
-    existingQueries.add(key);
-    existingSlugs.add(slug);
+    const existing = byQuery.get(key);
+    if (existing) {
+      if (existing.status === "rejected") {
+        toRevive.push(existing.id);
+        seededQueries.push(query);
+      } else {
+        skipped++; // pending / approved / generated — genuinely active
+      }
+      continue;
+    }
+
     toInsert.push(query);
+    seededQueries.push(query);
   }
 
   const insertStmt = db.prepare(
     `INSERT INTO keywords (id, query, source, opportunity_score, status)
      VALUES (?, ?, 'seeded', ?, 'pending')`
   );
+  const reviveStmt = db.prepare(
+    `UPDATE keywords SET status = 'pending', source = 'seeded', opportunity_score = ?, updated_at = datetime('now') WHERE id = ?`
+  );
   const insertMany = db.transaction((items: string[]) => {
     for (const q of items) insertStmt.run(nanoid(), q, SEEDED_SCORE);
+    for (const id of toRevive) reviveStmt.run(SEEDED_SCORE, id);
   });
-  if (toInsert.length > 0) insertMany(toInsert);
+  if (toInsert.length > 0 || toRevive.length > 0) insertMany(toInsert);
 
-  return { seeded: toInsert.map((query) => ({ query })), skipped };
+  return {
+    seeded: seededQueries.map((query) => ({ query })),
+    skipped,
+    revived: toRevive.length,
+  };
 }
 
 async function generateTopicCandidates(

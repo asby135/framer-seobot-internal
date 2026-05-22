@@ -36,13 +36,14 @@ research.post("/seed", async (c) => {
     try {
       const result = insertSeededTopics(body.topics.slice(0, 100));
       logger.info(
-        { provided: body.topics.length, seeded: result.seeded.length, skipped: result.skipped },
+        { provided: body.topics.length, seeded: result.seeded.length, revived: result.revived, skipped: result.skipped },
         "Direct topic import complete"
       );
       return c.json({
         status: "complete",
         source: "import",
         seeded: result.seeded.length,
+        revived: result.revived,
         skipped: result.skipped,
         topics: result.seeded,
       });
