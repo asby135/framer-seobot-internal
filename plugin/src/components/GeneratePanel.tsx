@@ -4,6 +4,15 @@ import { api, ApiError, type Topic } from "../api/client";
 // Module-level state: tracks which topic is generating across tab switches
 let activeGeneration: { topicId: string; query: string } | null = null;
 
+// Sort priority in the approved list: custom first, then seeded, then Era —
+// so manually-added and audience/blog-seeded topics don't get lost among
+// the bulk Era topics.
+function sourceRank(source: string): number {
+  if (source === "custom") return 0;
+  if (source === "seeded") return 1;
+  return 2;
+}
+
 export function GeneratePanel() {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
@@ -194,7 +203,7 @@ export function GeneratePanel() {
       ) : (
         <>
           <div style={styles.list}>
-            {[...topics].sort((a, b) => (a.source === "custom" ? -1 : 0) - (b.source === "custom" ? -1 : 0)).map((t) => {
+            {[...topics].sort((a, b) => sourceRank(a.source) - sourceRank(b.source)).map((t) => {
               const isSelected = selected.has(t.id);
               return (
                 <div
@@ -209,8 +218,9 @@ export function GeneratePanel() {
                   <div style={styles.rowContent}>
                     <div style={styles.query}>{t.query}</div>
                     <div style={styles.meta}>
+                      {t.source === "seeded" && <span style={styles.seedBadge}>SEEDED</span>}
                       {t.source === "custom" && <span style={styles.customBadge}>CUSTOM</span>}
-                      {t.opportunity_score?.toFixed(0)} pts · {t.impressions?.toLocaleString()} impressions
+                      {t.opportunity_score?.toFixed(0)} pts
                     </div>
                   </div>
                   <button
@@ -272,6 +282,7 @@ const styles: Record<string, React.CSSProperties> = {
   batchButton: { width: "100%", padding: "10px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 },
   meta: { color: "#888", fontSize: 12, marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
   customBadge: { background: "#3a3a1a", color: "#fa0", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
+  seedBadge: { background: "#3a2a5a", color: "#b9f", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   generateButton: { padding: "6px 14px", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, flexShrink: 0 },
   disabled: { opacity: 0.4, cursor: "not-allowed" },
   empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", padding: 32, gap: 8 },
