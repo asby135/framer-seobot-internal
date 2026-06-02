@@ -322,7 +322,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
             disabled={translating}
             style={{ ...styles.translateButton, ...(translating ? styles.disabled : {}) }}
           >
-            {translating ? "Translating (RU, UA, FR)…" : "Translate to RU / UA / FR"}
+            {translating ? "Translating to Russian…" : "Translate to Russian"}
           </button>
         )}
         {translateResult && (

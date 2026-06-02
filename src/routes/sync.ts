@@ -112,7 +112,7 @@ sync.get("/collection", (c) => {
     };
   });
 
-  return c.json({ items, locales: ["ru", "ua", "fr"] });
+  return c.json({ items, locales: ["ru"] });
 });
 
 export { sync };

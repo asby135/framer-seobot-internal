@@ -7,41 +7,42 @@ import { sanitizeJsonLd } from "../lib/jsonld.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
-const LOCALES = ["ru", "ua", "fr"] as const;
+// Russian-only. UA and FR were dropped (Framer pages moved to draft — they
+// weren't driving traffic). Existing UA/FR rows in article_translations are
+// left in place but no longer generated or emitted in /api/sync.
+const LOCALES = ["ru"] as const;
 type Locale = (typeof LOCALES)[number];
 
 const LOCALE_NAMES: Record<Locale, string> = {
   ru: "Russian",
-  ua: "Ukrainian",
-  fr: "French",
 };
 
 // Terms that must be translated consistently across all articles
-const GLOSSARY: Array<{ en: string; ru: string; ua: string; fr: string }> = [
-  { en: "Account warmup", ru: "Прогрев аккаунтов", ua: "Прогрів акаунтів", fr: "Warm-up de compte" },
-  { en: "Automation", ru: "Автоматизация", ua: "Автоматизація", fr: "Automatisation" },
-  { en: "Bot", ru: "Бот", ua: "Бот", fr: "Bot" },
-  { en: "Broadcast", ru: "Рассылка", ua: "Розсилка", fr: "Diffusion" },
-  { en: "Contact", ru: "Контакт", ua: "Контакт", fr: "Contact" },
-  { en: "CRM", ru: "CRM", ua: "CRM", fr: "CRM" },
-  { en: "CRMChat", ru: "CRMChat", ua: "CRMChat", fr: "CRMChat" },
-  { en: "Dashboard", ru: "Дашборд", ua: "Дашборд", fr: "Tableau de bord" },
-  { en: "Deal", ru: "Сделка", ua: "Угода", fr: "Deal" },
-  { en: "Funnel", ru: "Воронка", ua: "Воронка", fr: "Tunnel" },
-  { en: "Lead", ru: "Лид", ua: "Лід", fr: "Lead" },
-  { en: "Mini App", ru: "Мини-приложение", ua: "Міні-застосунок", fr: "Mini App" },
-  { en: "Onboarding", ru: "Онбординг", ua: "Онбординг", fr: "Onboarding" },
-  { en: "Outreach", ru: "Аутрич", ua: "Аутріч", fr: "Prospection" },
-  { en: "Parsing", ru: "Парсинг", ua: "Парсинг", fr: "Parsing" },
-  { en: "Pipeline", ru: "Пайплайн", ua: "Пайплайн", fr: "Pipeline" },
-  { en: "Sequence", ru: "Последовательность", ua: "Послідовність", fr: "Séquence" },
-  { en: "Tag", ru: "Тег", ua: "Тег", fr: "Tag" },
-  { en: "Telegram Ads", ru: "Telegram Ads", ua: "Telegram Ads", fr: "Telegram Ads" },
-  { en: "Template", ru: "Шаблон", ua: "Шаблон", fr: "Modèle" },
-  { en: "Warmup", ru: "Прогрев", ua: "Прогрів", fr: "Warm-up" },
-  { en: "Workspace", ru: "Рабочее пространство", ua: "Робочий простір", fr: "Espace de travail" },
-  { en: "Spintax", ru: "Спинтакс", ua: "Спінтакс", fr: "Spintax" },
-  { en: "lead generation", ru: "лидогенерация", ua: "лідогенерація", fr: "génération de leads" },
+const GLOSSARY: Array<{ en: string; ru: string }> = [
+  { en: "Account warmup", ru: "Прогрев аккаунтов" },
+  { en: "Automation", ru: "Автоматизация" },
+  { en: "Bot", ru: "Бот" },
+  { en: "Broadcast", ru: "Рассылка" },
+  { en: "Contact", ru: "Контакт" },
+  { en: "CRM", ru: "CRM" },
+  { en: "CRMChat", ru: "CRMChat" },
+  { en: "Dashboard", ru: "Дашборд" },
+  { en: "Deal", ru: "Сделка" },
+  { en: "Funnel", ru: "Воронка" },
+  { en: "Lead", ru: "Лид" },
+  { en: "Mini App", ru: "Мини-приложение" },
+  { en: "Onboarding", ru: "Онбординг" },
+  { en: "Outreach", ru: "Аутрич" },
+  { en: "Parsing", ru: "Парсинг" },
+  { en: "Pipeline", ru: "Пайплайн" },
+  { en: "Sequence", ru: "Последовательность" },
+  { en: "Tag", ru: "Тег" },
+  { en: "Telegram Ads", ru: "Telegram Ads" },
+  { en: "Template", ru: "Шаблон" },
+  { en: "Warmup", ru: "Прогрев" },
+  { en: "Workspace", ru: "Рабочее пространство" },
+  { en: "Spintax", ru: "Спинтакс" },
+  { en: "lead generation", ru: "лидогенерация" },
 ];
 
 interface TranslationResult {
@@ -186,8 +187,7 @@ ${glossaryLines}
 
 Slug rules:
 - Generate a URL-friendly slug for the translated title
-- For Russian and Ukrainian: use transliteration (Cyrillic → Latin letters). Example: "как парсить телеграм группы" → "kak-parsit-telegram-gruppy"
-- For French: use the French words directly (already Latin script). Example: "comment analyser les groupes telegram" → "comment-analyser-groupes-telegram"
+- Use transliteration (Cyrillic → Latin letters). Example: "как парсить телеграм группы" → "kak-parsit-telegram-gruppy"
 - Lowercase, hyphens only, no special characters, max 60 chars
 
 SCHEMA_JSONLD translation rules (when source is provided):

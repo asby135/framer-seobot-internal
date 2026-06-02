@@ -1,11 +1,11 @@
 import { framer } from "framer-plugin";
 import { api, type CMSItem } from "../api/client";
 
-// Map our internal locale codes to Framer locale codes
+// Map our internal locale codes to Framer locale codes.
+// UA and FR were dropped — see translator.ts. The aliases stay defined so that
+// any stragglers in the API response still find their Framer slot if needed.
 const LOCALE_CODE_MAP: Record<string, string[]> = {
   ru: ["ru", "ru-RU"],
-  ua: ["uk", "uk-UA", "ua"],
-  fr: ["fr", "fr-FR"],
 };
 
 function findFramerLocaleId(

@@ -342,7 +342,7 @@ VOICE & TONE:
 - Short sentences. Short paragraphs (2-3 sentences max). People scan, not read
 - Be opinionated — take a stance, share what actually works vs. what doesn't
 - Use real examples and specific numbers when possible, not vague claims
-- Light humor is fine but keep it universal — no cultural jokes, puns, or idioms that break when translated to Russian, Ukrainian, or French
+- Light humor is fine but keep it universal — no cultural jokes, puns, or idioms that break when translated to Russian
 
 AEO/GEO RULES (THE FOUR WINNER-PATTERN RULES):
 

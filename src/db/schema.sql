@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 CREATE TABLE IF NOT EXISTS article_translations (
   id TEXT PRIMARY KEY,
   article_id TEXT NOT NULL REFERENCES articles(id),
-  locale TEXT NOT NULL, -- 'ru', 'ua', 'fr'
+  locale TEXT NOT NULL, -- 'ru' (UA/FR dropped; legacy rows may still exist)
   title TEXT NOT NULL,
   slug TEXT,
   summary TEXT,
