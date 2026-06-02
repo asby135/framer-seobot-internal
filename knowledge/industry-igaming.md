@@ -1,18 +1,72 @@
-# Telegram CRM for iGaming Providers | CRMChat
+# Telegram CRM for iGaming Affiliates – Scale FTDs | CRMChat
 
 > Source: https://crmchat.ai/industries/igaming
 
-Telegram CRM for iGaming Providers | CRMChat
+Telegram CRM for iGaming Affiliates – Scale FTDs | CRMChat
 
-Find, Reach & Close iGaming Operators on Telegram
+Telegram CRM for iGaming affiliates
 
-Combine iGaming community research, automated Telegram outreach, and client management. Built for companies serving the iGaming industry.
+Scale casino and betting FTDs. Drive traffic from Meta to Telegram, automate DM outreach, and manage client pipeline.
 
-Trusted by iGaming Providers Worldwide
+Trusted by iGaming Companies Worldwide
 
-From boutique agencies to enterprise traffic networks, iGaming service providers use CRMChat to accelerate their client acquisition and close deals by tapping into iGaming TG communities.
+Your Growth Engine on Telegram
+
+All-in-one Sales Platform. Optimized for Telegram.
+
+From boutique to enterprise traffic networks, iGaming providers use CRMChat to improve their client acquisition on Telegram
+
+Premium
+
+CRMChat Features
+
+From lead research to deal closure — all in a single dashboard
+
+Find
+
+Reach
+
+Close
 
 Extract active members from iGaming communities, affiliate marketing groups, or platform comparison channels
+
+800+
+
+Telegram Groups Parsed
+
+10K+
+
+Messages Sent Daily
+
+100+
+
+Deals Closed Daily
+
+150K+
+
+CRM Deals Created
+
+Everything you need to turn Telegram traffic into deposits
+
+CRM Lead auto-creation
+
+Turn every inbound Telegram message into a CRM lead, auto-assigned to an owner and tagged by deposit status
+
+Team and Chatters Collaboration
+
+Give chatters scoped roles to keep accounts safe, share deal notes and timed reminders, and work leads on the go from a Telegram Mini-App
+
+Deal Owner TG notifications
+
+iGaming runs on impulse, so deal owners get real-time Telegram alerts the second a lead replies — for the fastest possible first response
+
+Outreach Automation
+
+Nurture your CRM leads into deposits with automated outreach — follow-up and re-engagement sequences, sent at scale or triggered via API
+
+Telegram Channel Sync
+
+Driving traffic to a Telegram group or channel? Auto-sync new subscribers into your CRM and trigger a welcome DM sequence that turns followers into deposits
 
 Case Study
 
@@ -28,17 +82,25 @@ Loved by iGaming Devs
 
 Streamline client acquisition
 
-iGaming Customers
+CRMChat for iGaming B2B
 
 iGaming Software & Platform Providers
 
 "We closed 5 white-label deals in Q1 by finding operators frustrated with legacy platforms in Telegram communities"
 
+Research
+
 Parse casino operator forums discussing "slow platform performance" → identify startup founders planning launches in specific jurisdictions
+
+Outreach
+
+CRM Tracking
 
 Trusted by Ad Networks Globally
 
 More advertiser sign-ups and increase in traffic volume
+
+Start with 7-day Free Trial
 
 Traffic Sources & Ad Networks
 
@@ -60,6 +122,34 @@ Scale Your iGaming Business with CRMChat
 
 Everything you need to systematically find, engage, and convert media buying prospects directly within Telegram's ecosystem
 
+View Outreach Features
+
+Performance Tracking
+
+Monitor campaign analytics with detailed metrics like open rate, response rate
+
+Multi-Account Scaling
+
+Distribute outreach volume while maintaining compliance and account health monitoring
+
+Response Management
+
+All replies sync to one inbox. Switch accounts seamlessly while maintaining consistent prospect identity.
+
+Find look-alike audiences, convert phone numbers in TG usernames, parse Telegram groups
+
+Add leads in seconds
+
+Sync folders, forward a TG message to CRMChat, scan QR-corde, or add manually
+
+Reminders & Notes
+
+Set follow-up reminders in one click, and the bot will remind you
+
 Ready to Scale your iGaming Business?
 
 Join other iGaming Providers Already Winning with CRMChat
+
+Explore an entirely fresh approach to business development on Telegram
+
+Chrome TG Scraper
