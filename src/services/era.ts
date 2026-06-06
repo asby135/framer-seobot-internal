@@ -31,13 +31,21 @@ import { logger } from "../lib/logger.js";
  *     updated_at: ISO date
  *   }
  *
- * Score formula (normalized to 0-100):
- *   - countScore  = (count / maxCount) * 100      // popularity within batch
- *   - sovScore    = 100 - (sov ?? 0)              // inverted SoV (low SoV = high opportunity)
- *   - opportunity = (countScore * 0.5) + (sovScore * 0.5)
+ * Score formula:
+ *   - opportunity_score = item.count (raw mention count from Era)
  *
- * High score = "many people ask this AND we're rarely cited" = best target.
- * Low score = "few people ask this AND we already dominate" = skip.
+ * Era's API itself sorts by count DESC (see fetchEraQueries below), and Era's
+ * dashboard displays queries in the same order. Storing the raw count as
+ * opportunity_score and sorting opportunity_score DESC keeps our queue in
+ * exactly Era's native order — no custom rating layer on top.
+ *
+ * The previous composite (countScore * 0.5 + (100 - sov) * 0.5) was an
+ * "opportunity = high count + low visibility" framing. Useful in theory, but
+ * the practical UX is that Era's user already trusts Era's ranking and wants
+ * to see the same order in our tool. Removed.
+ *
+ * sov is still captured on the EraQuery object (not used for scoring) — kept
+ * for potential future analytics / display.
  *
  * Locale: the API has NO locale parameter. Queries are returned as the LLMs
  * generated them (effectively English). Russian-audience sourcing needs a
@@ -88,7 +96,7 @@ export interface EraQuery {
   count: number;
   sov: number | null;
   category: string | null; // first segment of cluster_path
-  opportunity_score: number; // 0-100, normalized
+  opportunity_score: number; // raw Era mention count — preserves Era's native ordering
   raw: SearchQueryItem;
 }
 
@@ -146,8 +154,9 @@ export async function listBrands(): Promise<BrandListItem[]> {
 /**
  * Fetch search queries (AI-generated keywords) for the configured brand.
  *
- * Returns up to 1000 queries sorted by observation count (highest first).
- * Scores are normalized to 0-100 within the returned batch.
+ * Returns up to 500 queries sorted by observation count (highest first) — the
+ * Era API's own native ordering. opportunity_score is the raw count, so when
+ * the queue sorts opportunity_score DESC it reproduces Era's order exactly.
  */
 export async function fetchEraQueries(): Promise<EraQuery[]> {
   const brandId = env.ERA_AI_BRAND_ID;
@@ -167,19 +176,7 @@ export async function fetchEraQueries(): Promise<EraQuery[]> {
     return [];
   }
 
-  // Min-max normalize count to 0-100 within this batch.
-  // reduce (not Math.max spread) to avoid call-stack limits if the API
-  // ever returns a batch larger than expected.
-  const maxCount = Math.max(
-    data.items.reduce((m, i) => (i.count > m ? i.count : m), 0),
-    1
-  );
-
   const queries: EraQuery[] = data.items.map((item) => {
-    const countScore = (item.count / maxCount) * 100;
-    const sovScore = 100 - (item.sov ?? 0);
-    const opportunity_score = countScore * 0.5 + sovScore * 0.5;
-
     // Use LEAF of cluster_path (most specific) — e.g. "CRMChat Pricing"
     // is more useful than the root "Telegram CRM and Outreach"
     const clusterPath = item.cluster_path ?? [];
@@ -191,13 +188,13 @@ export async function fetchEraQueries(): Promise<EraQuery[]> {
       count: item.count,
       sov: item.sov,
       category,
-      opportunity_score: Math.round(opportunity_score * 100) / 100, // 2 decimals
+      opportunity_score: item.count, // raw count → preserves Era's native order
       raw: item,
     };
   });
 
   logger.info(
-    { count: queries.length, totalAvailable: data.total, maxCount },
+    { count: queries.length, totalAvailable: data.total },
     "Era search queries fetched"
   );
 

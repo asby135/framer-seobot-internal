@@ -68,15 +68,15 @@ describe("listBrands", () => {
 });
 
 describe("fetchEraQueries", () => {
-  it("normalizes count + sov into opportunity_score (0-100)", async () => {
+  it("uses raw Era count as opportunity_score (preserves Era's native order)", async () => {
     mockFetch(() =>
       jsonResponse({
         items: [
           {
             id: "q1",
             query: "CRMChat pricing",
-            count: 100, // will be maxCount → countScore=100
-            sov: 10, // sovScore = 90
+            count: 100,
+            sov: 10, // sov is captured but no longer affects score
             cluster_path: ["Telegram CRM", "CRMChat Pricing"],
             providers: ["perplexity"],
             competitors: 5,
@@ -86,8 +86,8 @@ describe("fetchEraQueries", () => {
           {
             id: "q2",
             query: "Best Telegram CRM",
-            count: 50, // countScore = 50
-            sov: 20, // sovScore = 80
+            count: 50,
+            sov: 20,
             cluster_path: ["Telegram CRM"],
             providers: ["perplexity"],
             competitors: 8,
@@ -106,17 +106,18 @@ describe("fetchEraQueries", () => {
     const queries = await fetchEraQueries();
     expect(queries).toHaveLength(2);
 
-    // q1: count=100 (max), sov=10 → (100*0.5) + (90*0.5) = 95
+    // opportunity_score is now just the raw count — sort opportunity_score DESC
+    // reproduces Era's native ordering exactly.
     expect(queries[0].query).toBe("CRMChat pricing");
-    expect(queries[0].opportunity_score).toBe(95);
+    expect(queries[0].opportunity_score).toBe(100);
     expect(queries[0].category).toBe("CRMChat Pricing"); // leaf of cluster_path
+    expect(queries[0].sov).toBe(10); // still captured on the object
 
-    // q2: count=50/100=50, sov=20 → (50*0.5) + (80*0.5) = 65
-    expect(queries[1].opportunity_score).toBe(65);
+    expect(queries[1].opportunity_score).toBe(50);
     expect(queries[1].category).toBe("Telegram CRM");
   });
 
-  it("treats sov=null as 0 (maximum opportunity)", async () => {
+  it("ignores sov when computing opportunity_score (sov=null is harmless)", async () => {
     mockFetch(() =>
       jsonResponse({
         items: [
@@ -141,8 +142,9 @@ describe("fetchEraQueries", () => {
     );
 
     const queries = await fetchEraQueries();
-    // sov=null → sovScore=100. count=10/10=100 → countScore=100. (100+100)/2=100.
-    expect(queries[0].opportunity_score).toBe(100);
+    // score == raw count regardless of sov.
+    expect(queries[0].opportunity_score).toBe(10);
+    expect(queries[0].sov).toBeNull();
     expect(queries[0].category).toBeNull(); // empty cluster_path
   });
 

@@ -5,7 +5,11 @@ import { namesCompetitor } from "../lib/competitors.js";
 import { queryToSlug } from "../lib/utils.js";
 import { logger } from "../lib/logger.js";
 
-const ERA_SCORE_FILTER = 30; // Skip rows with opportunity_score below this threshold
+// Skip Era queries with raw mention count below this threshold. opportunity_score
+// is now the raw Era count (see era.ts), so this drops low-volume queries — rough
+// "fewer than ~30 mentions in AI conversations" cutoff. Tune freely; lower keeps
+// more long-tail topics, higher focuses on Era's top tier.
+const ERA_SCORE_FILTER = 30;
 
 // Task/integration signals. If a competitor-named topic also contains one of
 // these, it's a how-to / pain-point topic (e.g. "Vtiger Telegram integration
