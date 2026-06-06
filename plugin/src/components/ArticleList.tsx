@@ -14,6 +14,8 @@ export function ArticleList() {
   const [translateQueueDepth, setTranslateQueueDepth] = useState(0);
   const [batchSelected, setBatchSelected] = useState<Set<string>>(new Set());
   const [translateMessage, setTranslateMessage] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [, forceUpdate] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const translatePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -129,6 +131,39 @@ export function ArticleList() {
       else next.add(id);
       return next;
     });
+  }
+
+  async function handleDeleteBatch() {
+    if (batchSelected.size === 0) return;
+    if (!confirmDelete) {
+      // First click — arm the confirm. Auto-disarm after 4s.
+      setConfirmDelete(true);
+      if (deleteResetRef.current) clearTimeout(deleteResetRef.current);
+      deleteResetRef.current = setTimeout(() => setConfirmDelete(false), 4000);
+      return;
+    }
+    // Second click within the window — execute.
+    if (deleteResetRef.current) {
+      clearTimeout(deleteResetRef.current);
+      deleteResetRef.current = null;
+    }
+    setConfirmDelete(false);
+    const ids = Array.from(batchSelected);
+    const n = ids.length;
+    setTranslateMessage("");
+    try {
+      for (const id of ids) {
+        await api.deleteArticle(id);
+      }
+      setBatchSelected(new Set());
+      setTranslateMessage(`Deleted ${n} article${n === 1 ? "" : "s"}.`);
+      loadArticles();
+    } catch (e) {
+      setTranslateMessage(
+        e instanceof ApiError ? e.message : "Failed to delete some articles."
+      );
+      loadArticles(); // reload anyway — some may have deleted before the failure
+    }
   }
 
   async function handleTranslateBatch() {
@@ -272,9 +307,17 @@ export function ArticleList() {
           </div>
           {batchSelected.size > 0 && (
             <div style={styles.footer}>
-              <button onClick={handleTranslateBatch} style={styles.batchButton}>
-                ↻ Translate {batchSelected.size} selected
-              </button>
+              <div style={styles.footerRow}>
+                <button onClick={handleTranslateBatch} style={styles.batchButton}>
+                  ↻ Translate {batchSelected.size}
+                </button>
+                <button
+                  onClick={handleDeleteBatch}
+                  style={confirmDelete ? styles.deleteConfirmButton : styles.deleteButton}
+                >
+                  {confirmDelete ? `Confirm — delete ${batchSelected.size}?` : `🗑 Delete ${batchSelected.size}`}
+                </button>
+              </div>
             </div>
           )}
         </>
@@ -308,7 +351,10 @@ const styles: Record<string, React.CSSProperties> = {
   rowSelected: { background: "#2a2a2a" },
   checkbox: { color: "#888", fontSize: 14, marginTop: 1, flexShrink: 0, cursor: "pointer", padding: 2 },
   footer: { flexShrink: 0, borderTop: "1px solid #333", background: "#1a1a1a", padding: "10px 16px" },
-  batchButton: { width: "100%", padding: "10px 0", background: "#1a3a5a", color: "#8bf", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  footerRow: { display: "flex", gap: 8 },
+  batchButton: { flex: 1, padding: "10px 0", background: "#1a3a5a", color: "#8bf", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  deleteButton: { padding: "10px 14px", background: "#3a2020", color: "#f88", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, flexShrink: 0 },
+  deleteConfirmButton: { padding: "10px 14px", background: "#7a2a2a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, flexShrink: 0 },
   rowContent: { flex: 1, minWidth: 0, cursor: "pointer" },
   titleRow: { display: "flex", alignItems: "flex-start", gap: 6 },
   flagIcon: { color: "#fa0", fontSize: 12, flexShrink: 0, marginTop: 3 },

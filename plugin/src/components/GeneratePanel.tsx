@@ -109,6 +109,30 @@ export function GeneratePanel() {
     });
   }
 
+  async function handleRejectBatch() {
+    if (selected.size === 0) return;
+    const ids = Array.from(selected);
+    const n = ids.length;
+    try {
+      for (const id of ids) {
+        await api.rejectTopic(id);
+      }
+      setTopics((prev) => prev.filter((t) => !selected.has(t.id)));
+      setSelected(new Set());
+      setResult({
+        id: "",
+        status: "success",
+        message: `Rejected ${n} topic${n === 1 ? "" : "s"}.`,
+      });
+    } catch (e) {
+      setResult({
+        id: "",
+        status: "error",
+        message: e instanceof ApiError ? e.message : "Failed to reject topics.",
+      });
+    }
+  }
+
   async function handleGenerateBatch() {
     if (selected.size === 0) return;
     const ids = Array.from(selected);
@@ -242,19 +266,24 @@ export function GeneratePanel() {
           </div>
           {selected.size > 0 && (
             <div style={styles.footer}>
-              <button
-                onClick={handleGenerateBatch}
-                disabled={remaining === 0}
-                style={{
-                  ...styles.batchButton,
-                  ...(remaining === 0 ? styles.disabled : {}),
-                }}
-              >
-                ✓ Generate {selected.size} selected
-                {remaining !== null && selected.size > remaining
-                  ? ` (only ${remaining} fit in quota)`
-                  : ""}
-              </button>
+              <div style={styles.footerRow}>
+                <button
+                  onClick={handleGenerateBatch}
+                  disabled={remaining === 0}
+                  style={{
+                    ...styles.batchButton,
+                    ...(remaining === 0 ? styles.disabled : {}),
+                  }}
+                >
+                  ✓ Generate {selected.size}
+                  {remaining !== null && selected.size > remaining
+                    ? ` (only ${remaining} fit)`
+                    : ""}
+                </button>
+                <button onClick={handleRejectBatch} style={styles.rejectButton}>
+                  ✗ Reject {selected.size}
+                </button>
+              </div>
             </div>
           )}
         </>
@@ -279,7 +308,9 @@ const styles: Record<string, React.CSSProperties> = {
   rowContent: { flex: 1, minWidth: 0 },
   query: { color: "#e0e0e0", fontWeight: 500, lineHeight: 1.35, overflowWrap: "anywhere" as const },
   footer: { flexShrink: 0, borderTop: "1px solid #333", background: "#1a1a1a", padding: "10px 16px" },
-  batchButton: { width: "100%", padding: "10px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  footerRow: { display: "flex", gap: 8 },
+  batchButton: { flex: 1, padding: "10px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  rejectButton: { padding: "10px 14px", background: "#5a2a2a", color: "#f88", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, flexShrink: 0 },
   meta: { color: "#888", fontSize: 12, marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
   customBadge: { background: "#3a3a1a", color: "#fa0", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   seedBadge: { background: "#3a2a5a", color: "#b9f", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
