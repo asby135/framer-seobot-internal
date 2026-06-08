@@ -25,7 +25,7 @@ articles.get("/", (c) => {
                 created_at, updated_at, published_at
          FROM articles WHERE status = ? ORDER BY updated_at DESC`
       )
-      .all(status);
+      .all(status) as Array<Record<string, unknown> & { id: string }>;
   } else {
     rows = db
       .prepare(
@@ -33,10 +33,32 @@ articles.get("/", (c) => {
                 created_at, updated_at, published_at
          FROM articles ORDER BY updated_at DESC`
       )
-      .all();
+      .all() as Array<Record<string, unknown> & { id: string }>;
   }
 
-  return c.json({ articles: rows });
+  // Attach translatedLocales per article — one IN-query covers the whole list
+  // so we don't issue N queries for N articles.
+  const ids = rows.map((r) => r.id);
+  const localesByArticle = new Map<string, string[]>();
+  if (ids.length > 0) {
+    const placeholders = ids.map(() => "?").join(",");
+    const localeRows = db
+      .prepare(
+        `SELECT article_id, locale FROM article_translations WHERE article_id IN (${placeholders})`
+      )
+      .all(...ids) as Array<{ article_id: string; locale: string }>;
+    for (const r of localeRows) {
+      const existing = localesByArticle.get(r.article_id) ?? [];
+      existing.push(r.locale);
+      localesByArticle.set(r.article_id, existing);
+    }
+  }
+  const enriched = rows.map((r) => ({
+    ...r,
+    translatedLocales: localesByArticle.get(r.id) ?? [],
+  }));
+
+  return c.json({ articles: enriched });
 });
 
 // Get full article with assets

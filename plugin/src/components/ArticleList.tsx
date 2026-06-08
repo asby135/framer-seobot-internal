@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api, ApiError, type Article } from "../api/client";
 import { ArticleDetail } from "./ArticleDetail";
-import { isTranslating, subscribe, startTranslating, stopTranslating } from "../lib/translation-state";
 import { humanStatus } from "../lib/format";
 
 export function ArticleList() {
@@ -16,20 +15,14 @@ export function ArticleList() {
   const [translateMessage, setTranslateMessage] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [, forceUpdate] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const translatePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const batchTranslatingIdsRef = useRef<Set<string>>(new Set());
-
-  // Re-render when translation state changes
-  const triggerUpdate = useCallback(() => forceUpdate((n) => n + 1), []);
 
   useEffect(() => {
     loadArticles();
     checkGenerationStatus();
     checkTranslationStatus();
-    const unsub = subscribe(triggerUpdate);
-    return () => { stopPolling(); stopTranslatePolling(); unsub(); };
+    return () => { stopPolling(); stopTranslatePolling(); };
   }, []);
 
   async function loadArticles() {
@@ -103,11 +96,8 @@ export function ArticleList() {
         const depth = status.queue.pending + status.queue.active;
         setTranslateQueueDepth(depth);
         if (depth === 0) {
-          // Clear all batch-translating badges and refresh
-          for (const id of batchTranslatingIdsRef.current) {
-            stopTranslating(id);
-          }
-          batchTranslatingIdsRef.current.clear();
+          // Queue drained — refresh the list so freshly-translated articles
+          // pick up their new translatedLocales badge.
           stopTranslatePolling();
           loadArticles();
         }
@@ -204,11 +194,6 @@ export function ArticleList() {
     try {
       const res = await api.translateBatch(ids, false);
       const queued = res.enqueued.length;
-      // Mark all enqueued articles as translating until the queue drains
-      for (const e of res.enqueued) {
-        startTranslating(e.article_id);
-        batchTranslatingIdsRef.current.add(e.article_id);
-      }
       setTranslateMessage(`${queued} translation${queued === 1 ? "" : "s"} queued.`);
       setBatchSelected(new Set());
       startTranslatePolling();
@@ -281,8 +266,8 @@ export function ArticleList() {
               let flags: Record<string, unknown> = {};
               try { flags = a.flags ? JSON.parse(a.flags) : {}; } catch { /* malformed flags */ }
               const hasFlags = Object.keys(flags).length > 0;
-              const translatingThis = isTranslating(a.id);
               const isBatchSelected = batchSelected.has(a.id);
+              const translatedLocales = a.translatedLocales ?? [];
 
               return (
                 <div
@@ -316,9 +301,9 @@ export function ArticleList() {
                       }}>
                         {humanStatus(a.status)}
                       </span>
-                      {translatingThis && (
-                        <span style={styles.translatingPill}>
-                          <span style={styles.pillSpinner}>↻</span> translating
+                      {translatedLocales.length > 0 && (
+                        <span style={styles.translatedBadge}>
+                          {translatedLocales.map((l) => l.toUpperCase()).join(" ")}
                         </span>
                       )}
                       {Boolean(flags.thumbnail_missing) && (
@@ -396,8 +381,7 @@ const styles: Record<string, React.CSSProperties> = {
   title: { color: "#e0e0e0", fontWeight: 500, lineHeight: 1.35, overflowWrap: "anywhere" },
   meta: { display: "flex", alignItems: "center", gap: 8, marginTop: 4 },
   statusPill: { fontSize: 11, padding: "1px 8px", borderRadius: 4, fontWeight: 500 },
-  translatingPill: { fontSize: 11, padding: "1px 8px", borderRadius: 4, fontWeight: 500, background: "#1a3a5a", color: "#8bf", display: "inline-flex", alignItems: "center", gap: 4 },
-  pillSpinner: { display: "inline-block", animation: "spin 1s linear infinite" },
+  translatedBadge: { fontSize: 10, padding: "1px 6px", borderRadius: 3, fontWeight: 600, background: "#2a4a2a", color: "#8f8", letterSpacing: "0.5px" },
   flag: { fontSize: 11, color: "#888" },
   chevron: { color: "#555", fontSize: 18, flexShrink: 0, cursor: "pointer" },
 };
