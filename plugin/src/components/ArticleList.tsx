@@ -133,6 +133,37 @@ export function ArticleList() {
     });
   }
 
+  async function handlePublishBatch() {
+    if (batchSelected.size === 0) return;
+    // Only draft/review articles are publishable. Pre-filter so we don't
+    // bother the backend with already-published or generation_failed rows.
+    const publishable = articles.filter(
+      (a) => batchSelected.has(a.id) && (a.status === "draft" || a.status === "review")
+    );
+    if (publishable.length === 0) {
+      setTranslateMessage("No selected articles are in draft / review.");
+      return;
+    }
+    setTranslateMessage("");
+    let ok = 0;
+    let failed = 0;
+    for (const a of publishable) {
+      try {
+        await api.publishArticle(a.id);
+        ok++;
+      } catch {
+        failed++;
+      }
+    }
+    setBatchSelected(new Set());
+    setTranslateMessage(
+      failed > 0
+        ? `Published ${ok}, ${failed} failed.`
+        : `Published ${ok} article${ok === 1 ? "" : "s"}.`
+    );
+    loadArticles();
+  }
+
   async function handleDeleteBatch() {
     if (batchSelected.size === 0) return;
     if (!confirmDelete) {
@@ -308,6 +339,9 @@ export function ArticleList() {
           {batchSelected.size > 0 && (
             <div style={styles.footer}>
               <div style={styles.footerRow}>
+                <button onClick={handlePublishBatch} style={styles.publishButton}>
+                  ✓ Publish {batchSelected.size}
+                </button>
                 <button onClick={handleTranslateBatch} style={styles.batchButton}>
                   ↻ Translate {batchSelected.size}
                 </button>
@@ -352,6 +386,7 @@ const styles: Record<string, React.CSSProperties> = {
   checkbox: { color: "#888", fontSize: 14, marginTop: 1, flexShrink: 0, cursor: "pointer", padding: 2 },
   footer: { flexShrink: 0, borderTop: "1px solid #333", background: "#1a1a1a", padding: "10px 16px" },
   footerRow: { display: "flex", gap: 8 },
+  publishButton: { flex: 1, padding: "10px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 },
   batchButton: { flex: 1, padding: "10px 0", background: "#1a3a5a", color: "#8bf", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 },
   deleteButton: { padding: "10px 14px", background: "#3a2020", color: "#f88", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, flexShrink: 0 },
   deleteConfirmButton: { padding: "10px 14px", background: "#7a2a2a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, flexShrink: 0 },
