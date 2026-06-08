@@ -66,16 +66,16 @@ describe("runResearch (Era source)", () => {
     expect(rows[1]).toEqual({ query: "Best Telegram CRM", source: "era", opportunity_score: 60 });
   });
 
-  it("filters out queries with opportunity_score < 30", async () => {
+  it("filters out queries with opportunity_score below the threshold (currently 5)", async () => {
     fetchEraQueriesMock.mockResolvedValue([
       makeEraQuery({ query: "high score", opportunity_score: 80 }),
-      makeEraQuery({ query: "right at threshold", opportunity_score: 30 }),
-      makeEraQuery({ query: "below threshold", opportunity_score: 29.99 }),
-      makeEraQuery({ query: "way below", opportunity_score: 5 }),
+      makeEraQuery({ query: "right at threshold", opportunity_score: 5 }),
+      makeEraQuery({ query: "below threshold", opportunity_score: 4.99 }),
+      makeEraQuery({ query: "way below", opportunity_score: 1 }),
     ]);
 
     const result = await runResearch();
-    expect(result.discovered).toBe(2); // 80 and 30 pass; 29.99 and 5 fail
+    expect(result.discovered).toBe(2); // 80 and 5 pass; 4.99 and 1 fail
     expect(result.skipped).toBe(2);
 
     const queries = getDb()
