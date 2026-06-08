@@ -56,19 +56,22 @@ topics.post("/:id/approve", (c) => {
   return c.json({ success: true });
 });
 
-// Reject a topic
+// Reject a topic. Accepts pending OR approved — the Generate tab calls this
+// to send an already-approved topic back to rejected (the user changed their
+// mind). Generated topics are excluded (they have an article — delete the
+// article instead).
 topics.post("/:id/reject", (c) => {
   const db = getDb();
   const { id } = c.req.param();
 
   const result = db
     .prepare(
-      "UPDATE keywords SET status = 'rejected', updated_at = datetime('now') WHERE id = ? AND status = 'pending'"
+      "UPDATE keywords SET status = 'rejected', updated_at = datetime('now') WHERE id = ? AND status IN ('pending', 'approved')"
     )
     .run(id);
 
   if (result.changes === 0) {
-    return c.json({ error: "Topic not found or not in pending status" }, 404);
+    return c.json({ error: "Topic not found or not rejectable (already generated or rejected)" }, 404);
   }
 
   return c.json({ success: true });
