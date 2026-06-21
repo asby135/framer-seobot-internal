@@ -68,6 +68,24 @@ Daily Limits & Compliance
 
 Smart sending limits protect your accounts while ensuring Telegram compliance and maximizing reach.
 
+How Telegram Outreach Works
+
+Scale with unlimited Telegram accounts
+
+Purchase accounts from us or add yours. Each account gets its own custom proxy to reduce limitations. Buy from us or connect your own — scale without limits.
+
+Customize and schedule messages
+
+Personalize your messages with customized fields like {First Name} or {Company} and set up a timezone schedule. Define a sending window (e.g. Mon–Fri, 09:00–18:00) in your chosen timezone so messages go out personalized at scale and at the right local time for each prospect.
+
+Replies from all accounts in one place
+
+All the prospects that reply to your outreach are auto-sent to a unified inbox, where you can continue the conversation. Every reply from every account lands in one place, so you keep the conversation going without switching dashboards.
+
+Smart report tracking & rescheduling
+
+When an account is reported or temporarily blocked, the system automatically pauses sending to cool it down. CRMChat tracks each account's health (active → reported → paused → resume) and auto-pauses risky accounts, resuming sending once the account has cooled down.
+
 “CRMChat has transformed our Telegram B2B outreach workflow”
 
 Co-Founder, Lead Sniper
