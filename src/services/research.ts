@@ -52,16 +52,24 @@ export function isPureCompetitorTopic(query: string): boolean {
 }
 
 /**
- * Run keyword research: pull Era (OhMyGEO) AEO queries, filter to gap keywords,
- * and store in the keywords table.
+ * Run keyword research: pull Era (OhMyGEO) AEO queries, filter, and store in
+ * the keywords table.
  *
  * Era already normalizes opportunity_score to 0-100 (see era.ts), so we
  * pass-through its score rather than recomputing with calculateOpportunityScore.
+ *
+ * Gap mode ({ gap: true }): on top of the normal filters, keep ONLY queries
+ * where competitors are mentioned in AI answers (competitors > 0) but CRMChat
+ * is not (sov is 0 or null). These are the "rivals show up, we don't" topics.
+ * Stored with source='era-gap' so the queue can surface them distinctly.
  */
-export async function runResearch(): Promise<{
+export async function runResearch(opts: { gap?: boolean } = {}): Promise<{
   discovered: number;
   skipped: number;
+  mode: "era" | "era-gap";
 }> {
+  const gap = opts.gap === true;
+  const source = gap ? "era-gap" : "era";
   const db = getDb();
 
   // 1. Fetch Era search queries (AI-provider-generated keywords)
@@ -70,7 +78,7 @@ export async function runResearch(): Promise<{
   if (queries.length === 0) {
     logger.info("No Era queries returned. Is ERA_AI_BRAND_ID set correctly?");
     logSync("research", 0, "empty");
-    return { discovered: 0, skipped: 0 };
+    return { discovered: 0, skipped: 0, mode: source };
   }
 
   // 2. Get existing article slugs to filter gap keywords
@@ -91,19 +99,21 @@ export async function runResearch(): Promise<{
   let discovered = 0;
   let skipped = 0;
   let competitorFiltered = 0;
+  let nonGapFiltered = 0;
   const competitorFilteredSamples: string[] = [];
 
   // Era doesn't expose impressions/clicks/CTR/position — those columns stay NULL.
   // We use opportunity_score (already 0-100 normalized) directly from Era.
+  // source is 'era' (normal) or 'era-gap' (competitor-gap mode).
   const insertStmt = db.prepare(
     `INSERT INTO keywords (id, query, source, opportunity_score, status)
-     VALUES (?, ?, 'era', ?, 'pending')`
+     VALUES (?, ?, ?, ?, 'pending')`
   );
 
   const insertMany = db.transaction(
     (items: Array<{ query: string; score: number }>) => {
       for (const item of items) {
-        insertStmt.run(nanoid(), item.query, item.score);
+        insertStmt.run(nanoid(), item.query, source, item.score);
       }
     }
   );
@@ -130,6 +140,18 @@ export async function runResearch(): Promise<{
     if (q.opportunity_score < ERA_SCORE_FILTER) {
       skipped++;
       continue;
+    }
+
+    // Gap mode: keep ONLY queries where competitors appear (competitors > 0)
+    // and CRMChat does not (sov 0 or null) — the "they're cited, we're not" set.
+    if (gap) {
+      const competitors = q.competitors ?? 0;
+      const ourSov = q.sov ?? 0;
+      if (!(competitors > 0 && ourSov === 0)) {
+        skipped++;
+        nonGapFiltered++;
+        continue;
+      }
     }
 
     // Skip pure-competitor topics (competitor named, no CRMChat, no task angle)
@@ -162,16 +184,18 @@ export async function runResearch(): Promise<{
   logSync("research", discovered, "success");
   logger.info(
     {
+      mode: source,
       discovered,
       skipped,
       competitorFiltered,
+      nonGapFiltered: gap ? nonGapFiltered : undefined,
       competitorFilteredSamples,
       threshold: ERA_SCORE_FILTER,
     },
     "Research complete"
   );
 
-  return { discovered, skipped };
+  return { discovered, skipped, mode: source };
 }
 
 function logSync(action: string, count: number, status: string) {

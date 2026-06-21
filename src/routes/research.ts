@@ -6,12 +6,18 @@ import { logger } from "../lib/logger.js";
 
 const research = new Hono();
 
-// Trigger keyword research refresh (pulls from Era / OhMyGEO)
+// Trigger keyword research refresh (pulls from Era / OhMyGEO).
+// Body { gap: true } runs competitor-gap mode: only queries where competitors
+// are mentioned in AI answers and CRMChat is not (source='era-gap').
 research.post("/", async (c) => {
   try {
-    const result = await runResearch();
+    const body = await c.req
+      .json<{ gap?: boolean }>()
+      .catch(() => ({ gap: false }));
+    const result = await runResearch({ gap: body.gap === true });
     return c.json({
       status: "complete",
+      mode: result.mode,
       discovered: result.discovered,
       skipped: result.skipped,
     });

@@ -52,20 +52,24 @@ export function App() {
     setIsSetup(true);
   }
 
-  async function handleRefresh() {
+  async function handleRefresh(gap: boolean = false) {
     setRefreshing(true);
     setRefreshMessage("");
     setRefreshError(false);
     try {
       // Pull fresh keywords from Era (POST /api/research). This is what
       // actually fetches new queries when Era's AI-model coverage expands.
+      // gap=true pulls only competitor-gap topics (rivals cited, we're not).
       // Then re-mount the topic list so the new pending rows appear.
-      const res = await api.runResearch();
+      const res = await api.runResearch(gap);
       setRefreshKey((k) => k + 1);
+      const label = gap ? "competitor-gap topic" : "topic from Era";
       setRefreshMessage(
         res.discovered === 0
-          ? "No new topics from Era"
-          : `Discovered ${res.discovered} new topic${res.discovered === 1 ? "" : "s"} from Era`
+          ? gap
+            ? "No new competitor-gap topics"
+            : "No new topics from Era"
+          : `Discovered ${res.discovered} new ${label}${res.discovered === 1 ? "" : "s"}`
       );
     } catch (e) {
       setRefreshError(true);
@@ -104,7 +108,7 @@ export function App() {
         <span style={styles.headerTitle}>CRMChat SEO Engine</span>
         <div style={{ display: "flex", gap: 4 }}>
           <button
-            onClick={handleRefresh}
+            onClick={() => handleRefresh(false)}
             disabled={refreshing}
             style={{
               ...styles.gearButton,
@@ -114,6 +118,17 @@ export function App() {
             title={refreshing ? "Pulling new topics from Era…" : "Pull new topics from Era"}
           >
             ↻
+          </button>
+          <button
+            onClick={() => handleRefresh(true)}
+            disabled={refreshing}
+            style={{
+              ...styles.gearButton,
+              opacity: refreshing ? 0.4 : 1,
+            }}
+            title="Find competitor-gap topics (rivals cited in AI answers, CRMChat not)"
+          >
+            ◎
           </button>
           <button
             onClick={() => setShowSettings(true)}

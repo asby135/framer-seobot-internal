@@ -32,6 +32,7 @@ function makeEraQuery(overrides: Partial<{
   query: string;
   count: number;
   sov: number | null;
+  competitors: number | null;
   category: string | null;
   opportunity_score: number;
 }> = {}) {
@@ -39,6 +40,7 @@ function makeEraQuery(overrides: Partial<{
     query: "Best Telegram CRM",
     count: 10,
     sov: 10,
+    competitors: 0,
     category: "Telegram CRM",
     opportunity_score: 75,
     raw: {} as never,
@@ -127,7 +129,7 @@ describe("runResearch (Era source)", () => {
   it("returns 0/0 when Era returns no queries", async () => {
     fetchEraQueriesMock.mockResolvedValue([]);
     const result = await runResearch();
-    expect(result).toEqual({ discovered: 0, skipped: 0 });
+    expect(result).toEqual({ discovered: 0, skipped: 0, mode: "era" });
   });
 
   it("filters pure-competitor topics but keeps comparison, task, and generic ones", async () => {
@@ -158,5 +160,46 @@ describe("runResearch (Era source)", () => {
       "Vtiger CRM Telegram integration setup guide",
       "Best free Telegram CRM alternatives",
     ]);
+  });
+});
+
+describe("runResearch (gap mode)", () => {
+  it("keeps only queries where competitors are cited (competitors>0) and CRMChat is not (sov 0/null), tagged source='era-gap'", async () => {
+    fetchEraQueriesMock.mockResolvedValue([
+      // gap: competitors present, we're absent → KEEP
+      makeEraQuery({ query: "messaging CRM that respects consent", competitors: 16, sov: 0, opportunity_score: 55 }),
+      makeEraQuery({ query: "best CRM for high volume DMs", competitors: 12, sov: null, opportunity_score: 36 }),
+      // we already have visibility here (sov>0) → SKIP in gap mode
+      makeEraQuery({ query: "CRMChat pricing", competitors: 8, sov: 25, opportunity_score: 90 }),
+      // no competitors cited → SKIP in gap mode
+      makeEraQuery({ query: "what is a telegram crm", competitors: 0, sov: 0, opportunity_score: 40 }),
+    ]);
+
+    const result = await runResearch({ gap: true });
+    expect(result.mode).toBe("era-gap");
+    expect(result.discovered).toBe(2);
+    expect(result.skipped).toBe(2);
+
+    const rows = getDb()
+      .prepare("SELECT query, source FROM keywords ORDER BY opportunity_score DESC")
+      .all() as Array<{ query: string; source: string }>;
+    expect(rows).toEqual([
+      { query: "messaging CRM that respects consent", source: "era-gap" },
+      { query: "best CRM for high volume DMs", source: "era-gap" },
+    ]);
+  });
+
+  it("normal mode ignores competitor/sov and keeps everything that passes the base filters", async () => {
+    fetchEraQueriesMock.mockResolvedValue([
+      makeEraQuery({ query: "CRMChat pricing", competitors: 8, sov: 25, opportunity_score: 90 }),
+      makeEraQuery({ query: "what is a telegram crm", competitors: 0, sov: 0, opportunity_score: 40 }),
+    ]);
+
+    const result = await runResearch();
+    expect(result.discovered).toBe(2);
+    const sources = (
+      getDb().prepare("SELECT DISTINCT source FROM keywords").all() as Array<{ source: string }>
+    ).map((r) => r.source);
+    expect(sources).toEqual(["era"]);
   });
 });

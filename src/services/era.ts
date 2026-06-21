@@ -95,6 +95,7 @@ export interface EraQuery {
   query: string;
   count: number;
   sov: number | null;
+  competitors: number | null; // avg # of competitors mentioned in AI answers for this query
   category: string | null; // first segment of cluster_path
   opportunity_score: number; // raw Era mention count — preserves Era's native ordering
   raw: SearchQueryItem;
@@ -187,6 +188,7 @@ export async function fetchEraQueries(): Promise<EraQuery[]> {
       query: item.query,
       count: item.count,
       sov: item.sov,
+      competitors: item.competitors,
       category,
       opportunity_score: item.count, // raw count → preserves Era's native order
       raw: item,

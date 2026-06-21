@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS keywords (
   id TEXT PRIMARY KEY,
   query TEXT NOT NULL,
-  source TEXT NOT NULL DEFAULT 'era', -- 'era' (current), 'gsc' (legacy)
+  source TEXT NOT NULL DEFAULT 'era', -- 'era', 'era-gap' (competitor-gap mode), 'seeded', 'custom', 'gsc' (legacy)
   impressions INTEGER,
   clicks INTEGER,
   ctr REAL,
