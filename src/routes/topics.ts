@@ -24,8 +24,12 @@ topics.get("/", (c) => {
        FROM keywords k
        ${whereClause}
        ORDER BY
-         CASE WHEN k.source IN ('custom', 'seeded') THEN 0 ELSE 1 END,
-         CASE WHEN k.source IN ('custom', 'seeded') THEN k.created_at END DESC,
+         CASE
+           WHEN k.source = 'era-gap' THEN 0
+           WHEN k.source IN ('custom', 'seeded') THEN 1
+           ELSE 2
+         END,
+         CASE WHEN k.source IN ('era-gap', 'custom', 'seeded') THEN k.created_at END DESC,
          k.opportunity_score DESC
        LIMIT ? OFFSET ?`
     )

@@ -179,7 +179,14 @@ export function TopicQueue() {
               <div style={styles.meta}>
                 {t.source === "seeded" && <span style={styles.seedBadge}>SEEDED</span>}
                 {t.source === "custom" && <span style={styles.customBadge}>CUSTOM</span>}
-                {t.source === "era-gap" && <span style={styles.gapBadge}>GAP</span>}
+                {t.source === "era-gap" && (
+                  <span
+                    style={styles.gapBadge}
+                    title="Competitor gap: rivals are cited in AI answers for this query, CRMChat is not"
+                  >
+                    ◎ GAP
+                  </span>
+                )}
                 {t.opportunity_score?.toFixed(0)} pts
               </div>
             </div>

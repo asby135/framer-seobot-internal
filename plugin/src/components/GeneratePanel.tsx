@@ -4,13 +4,14 @@ import { api, ApiError, type Topic } from "../api/client";
 // Module-level state: tracks which topic is generating across tab switches
 let activeGeneration: { topicId: string; query: string } | null = null;
 
-// Sort priority in the approved list: custom first, then seeded, then Era —
-// so manually-added and audience/blog-seeded topics don't get lost among
-// the bulk Era topics.
+// Sort priority in the approved list: competitor-gap first, then custom, then
+// seeded, then Era — so the high-intent gap topics and manually-added /
+// audience-seeded topics don't get lost among the bulk Era topics.
 function sourceRank(source: string): number {
-  if (source === "custom") return 0;
-  if (source === "seeded") return 1;
-  return 2;
+  if (source === "era-gap") return 0;
+  if (source === "custom") return 1;
+  if (source === "seeded") return 2;
+  return 3;
 }
 
 export function GeneratePanel() {
@@ -242,6 +243,14 @@ export function GeneratePanel() {
                   <div style={styles.rowContent}>
                     <div style={styles.query}>{t.query}</div>
                     <div style={styles.meta}>
+                      {t.source === "era-gap" && (
+                        <span
+                          style={styles.gapBadge}
+                          title="Competitor gap: rivals are cited in AI answers for this query, CRMChat is not"
+                        >
+                          ◎ GAP
+                        </span>
+                      )}
                       {t.source === "seeded" && <span style={styles.seedBadge}>SEEDED</span>}
                       {t.source === "custom" && <span style={styles.customBadge}>CUSTOM</span>}
                       {t.opportunity_score?.toFixed(0)} pts
@@ -314,6 +323,7 @@ const styles: Record<string, React.CSSProperties> = {
   meta: { color: "#888", fontSize: 12, marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
   customBadge: { background: "#3a3a1a", color: "#fa0", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   seedBadge: { background: "#3a2a5a", color: "#b9f", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
+  gapBadge: { background: "#5a1a2a", color: "#f9a", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   generateButton: { padding: "6px 14px", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, flexShrink: 0 },
   disabled: { opacity: 0.4, cursor: "not-allowed" },
   empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", padding: 32, gap: 8 },
