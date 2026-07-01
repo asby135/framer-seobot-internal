@@ -36,7 +36,6 @@ Use any tools responsibly and reasonably.
 | **Quick OSINT Bot** | [quickosint.biz](https://quickosint.biz/index_en.php) | Express check: quickly understand whether a digital footprint exists. |
 | **LeakCheck** | [leakcheck.io](https://leakcheck.io/) | A tool more about checking leaks and digital hygiene. LeakCheck has an official website and a separate documentation page for its Telegram bot. |
 | **Himera Search** | [himera.io](https://himera.io/) | The site advertises search across people, vehicles, and businesses, but it is actually one of the most serious tools, with access to a very comprehensive database. Often overkill for outreach tasks. |
-| **Duhless** | `@dyxless_sbot` | An analog of the now-defunct "Eye of God." A fast tool with clean output. It has a Telegram entry point noted at the time of writing, but this may change over time. |
 
 ## Search Methodology
 
