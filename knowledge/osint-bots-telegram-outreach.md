@@ -31,11 +31,11 @@ Use any tools responsibly and reasonably.
 
 | Tool | Link / Bot | Comment |
 |---|---|---|
-| **Maigret OSINT Bot** | `@maigret_searchbot` | Checks digital footprint, matches, and public profiles. The Bellingcat Toolkit describes Maigret as a tool for searching usernames across a large number of sites. |
-| **Sherlock** | Each user is offered the option to create their own bot (via link). | Open-source project. One of the best options in terms of price/quality for use in the context of Telegram outreach. |
-| **Quick OSINT Bot** | A link to the current bot can be found via link. | Express check: quickly understand whether a digital footprint exists. |
-| **LeakCheck** | Register and get access via link. | A tool more about checking leaks and digital hygiene. LeakCheck has an official website and a separate documentation page for its Telegram bot. |
-| **Himera Search** | A link to the current bot can be found via link. | The site advertises search across people, vehicles, and businesses, but it is actually one of the most serious tools, with access to a very comprehensive database. Often overkill for outreach tasks. |
+| **Maigret OSINT Bot** | [`@maigret_searchbot`](https://t.me/maigret_searchbot) | Checks digital footprint, matches, and public profiles. The Bellingcat Toolkit describes Maigret as a tool for searching usernames across a large number of sites. |
+| **Sherlock** | [736865726c6f636b.com](https://736865726c6f636b.com/#tH0n4jbk8_uVBcrdJiY) | Open-source project. One of the best options in terms of price/quality for use in the context of Telegram outreach. |
+| **Quick OSINT Bot** | [quickosint.biz](https://quickosint.biz/index_en.php) | Express check: quickly understand whether a digital footprint exists. |
+| **LeakCheck** | [leakcheck.io](https://leakcheck.io/) | A tool more about checking leaks and digital hygiene. LeakCheck has an official website and a separate documentation page for its Telegram bot. |
+| **Himera Search** | [himera.io](https://himera.io/) | The site advertises search across people, vehicles, and businesses, but it is actually one of the most serious tools, with access to a very comprehensive database. Often overkill for outreach tasks. |
 | **Duhless** | `@dyxless_sbot` | An analog of the now-defunct "Eye of God." A fast tool with clean output. It has a Telegram entry point noted at the time of writing, but this may change over time. |
 
 ## Search Methodology
