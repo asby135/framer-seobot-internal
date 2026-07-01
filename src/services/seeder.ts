@@ -154,7 +154,10 @@ async function generateTopicCandidates(
   count: number
 ): Promise<string[]> {
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
+    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
+    // (forced tool_choice below + fixed token budget).
+    thinking: { type: "disabled" },
     max_tokens: 2048,
     tools: [
       {

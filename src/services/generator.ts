@@ -224,7 +224,10 @@ async function researchCompetitorContext(query: string): Promise<string> {
     };
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
+      // Sonnet 5 runs adaptive thinking when `thinking` is omitted (4.6 ran
+      // thinking-off). Keep it disabled to preserve behavior and token budget.
+      thinking: { type: "disabled" },
       max_tokens: 2048,
       tools: [webSearchTool] as Parameters<
         typeof anthropic.messages.create
@@ -308,7 +311,10 @@ Key site pages you can link to where relevant:
 - https://developers.crmchat.ai/ — "CRMChat API" (link when mentioning integrations, API, or developer features)`;
 
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
+    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
+    // (forced tool_choice below + fixed token budget).
+    thinking: { type: "disabled" },
     max_tokens: 16384,
     tools: [
       {
@@ -614,7 +620,10 @@ async function regenerateTitle(
   violations: string[]
 ): Promise<string> {
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
+    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
+    // (forced tool_choice below + tight 512-token budget).
+    thinking: { type: "disabled" },
     max_tokens: 512,
     tools: [
       {
@@ -715,7 +724,10 @@ async function regenerateSchemaJsonld(
   content: string
 ): Promise<string> {
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
+    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
+    // (forced tool_choice below + fixed token budget).
+    thinking: { type: "disabled" },
     max_tokens: 2048,
     tools: [
       {

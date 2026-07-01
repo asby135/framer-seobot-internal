@@ -169,7 +169,10 @@ ${article.schema_jsonld}
     : "";
 
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
+    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
+    // (the existing max_tokens truncation guard assumes thinking-off output).
+    thinking: { type: "disabled" },
     max_tokens: 16384,
     system: `You are a professional translator specializing in marketing and tech content.
 Translate the provided article into ${langName}.
