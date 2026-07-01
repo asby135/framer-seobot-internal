@@ -1,5 +1,46 @@
 # CRMChat Monthly Updates
 
+## June 2026
+
+### Smarter Spam Report Handling
+Building on automatic spam-block tracking and send rescheduling, CRMChat now tracks each individual spam report and pauses sending from that account for 2 hours to keep it safe.
+
+### New Telegram Folder Sync Flow
+Run folder sync across multiple Telegram accounts at once. Every account connected to your workspace in the Telegram Accounts section can now be synced to CRM in one go.
+
+### Private Accounts
+Control who in the workspace can access each account — make it available to everyone, keep it just for yourself, or share it with select team members.
+
+## May 2026
+
+### SpamBot Tracking and Smart Send Rescheduling
+CRMChat automatically detects temporary spam blocks on accounts. If an account gets restricted, sending pauses automatically and resumes once the block is lifted. You can also track the status of each account in the Telegram Accounts section.
+
+### Campaign Results Export
+Campaign Details now includes a full export of outreach results. View each lead's status, rebuild new CSVs filtered by status, and re-launch follow-up campaigns to exactly the right segments.
+
+### Multi-Session Account Support
+Multiple team members can use the same Telegram account simultaneously, with everyone seeing live, up-to-date data in real time. Previously, only one user would receive updates if the account was open across multiple sessions. A game-changer for larger teams where response speed matters.
+
+## April 2026
+
+### Telegram Channel Sync to CRM
+Turn your Telegram channels into a lead generation machine. Sync channel subscribers directly into your CRM pipeline and manage them like any other lead — with full outreach, notes, and deal tracking capabilities.
+
+### Smarter Outreach Sequences to CRM Leads
+Two upgrades to "Leads from CRM" sequences. Auto-update custom properties on reply: leads can automatically move to a new pipeline stage the moment they reply, so nothing falls through the cracks. Same account continuity: CRM sequences now always use the account that previously messaged the lead, keeping conversations natural and connected instead of switching accounts mid-thread.
+
+### Lead-Account Association
+CRMChat remembers which Telegram account was used with each lead and always opens the chat from that account. If you message the lead from a new account, the association updates automatically — a small but powerful improvement for teams running manual outreach and follow-up workflows.
+
+### API Case Study
+A real-world example of using the CRMChat API to find Telegram channel owners with over 500 subscribers among existing Telegram conversations and automatically DM them via the API.
+
+## March 2026
+
+### The CRMChat API
+Build custom Telegram automation workflows with full programmatic access to CRMChat. Create leads, manage pipelines, trigger sequences, and integrate with existing tools through the REST API. Documentation is at https://developers.crmchat.ai. Get access by starting @crmchat_crm_bot and finding your API keys in Settings. Teams are using it to sync leads from custom data sources, trigger outreach sequences from external events, build internal dashboards with CRMChat data, and automate lead enrichment workflows.
+
 ## February 2026
 
 ### Flexible Pricing
