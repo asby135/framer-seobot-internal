@@ -1,80 +1,73 @@
-# Использование OSINT-ботов в Telegram-outreach
+# Using OSINT Bots in Telegram Outreach
 
-> Source: Leadsflow.ai — материал для участников практикума «Аутричеры» (май 2026)
+## Introduction: OSINT as a Digital Search Tool
 
-## Вводная часть: OSINT как инструмент цифрового поиска
+OSINT (open-source intelligence) is the collection and analysis of publicly available information: posts, metadata, registries, and other digital traces. OSINT does not involve illegally breaking into systems — it only connects scattered data that is already publicly accessible.
 
-OSINT (разведка по открытым источникам) — это сбор и анализ общедоступной информации: постов, метаданных, реестров и других цифровых следов. OSINT не подразумевает незаконного проникновения в системы — он лишь связывает разрозненные данные, уже находящиеся в открытом доступе.
+OSINT tools automate this work. Where dozens of scripts and manual queries were once required, there are now unified, convenient solutions.
 
-OSINT-инструменты автоматизируют эту работу. Там, где раньше требовались десятки скриптов и ручных запросов, сегодня есть единые и удобные решения.
+One of the most convenient formats has become Telegram bots: they work like lightweight API clients, query sources instantly, and require no installation.
 
-Одним из самых удобных форматов стали Telegram-боты: они работают как лёгкие API-клиенты, мгновенно обращаются к источникам и не требуют установки.
+In this material we break down which OSINT bots are relevant in 2026 and how to use them to find Telegram accounts and phone numbers.
 
-В этом материале мы разбираем, какие OSINT-боты актуальны в 2026 году и как с их помощью находить Telegram-аккаунты и телефонные номера.
+## Disclaimer
 
-## Дисклеймер
+This material is for informational purposes only and is not a guide to the illegal collection, purchase, or processing of personal data. Consider your local legislation. As a rule, the mass collection of personal data is prohibited.
 
-Наш материал носит ознакомительный характер и не является инструкцией к незаконному сбору, покупке или обработке персональных данных. Учитывайте ваше местное законодательство. Как правило, запрещён массовый сбор личных данных.
+OSINT relies on the right to freely search for open information and differs from doxxing — the illegal disclosure of personal data without consent, often for the purpose of blackmail, pressure, or bypassing privacy.
 
-OSINT опирается на право свободно искать открытую информацию и отличается от доксинга — нелегального раскрытия личных данных без согласия, зачастую с целью шантажа, давления и обхода приватности.
+In Russia, OSINT sits in a gray zone. The main statutes:
 
-В России OSINT находится в серой зоне. Основные нормы:
+- **Federal Law 152 "On Personal Data"** — prohibits the collection and processing of personal data without consent.
+- **Federal Law 149 "On Information…"** — regulates access to open data.
+- **Federal Law 187 "On the Security of Critical Information Infrastructure"** — prohibits unauthorized access to information systems.
+- **Article 137 of the Criminal Code** — violation of privacy (doxxing).
 
-- **ФЗ-152 «О персональных данных»** — запрещает сбор и обработку персональных данных без согласия.
-- **ФЗ-149 «Об информации…»** — регулирует доступ к открытым данным.
-- **ФЗ-187 «О безопасности КИИ»** — запрещает несанкционированный доступ к информационным системам.
-- **Ст. 137 УК РФ** — нарушение неприкосновенности частной жизни (доксинг).
+Viewing open data is not a crime, but publishing it without consent is a violation of the law.
 
-Просмотр открытых данных не является преступлением, но их публикация без согласия — нарушение закона.
+Use any tools responsibly and reasonably.
 
-Используйте любые инструменты ответственно и разумно.
+## Telegram OSINT Bots Relevant as of May 2026
 
-## Список актуальных на май 2026 Telegram OSINT-ботов
-
-| Инструмент | Ссылка / Бот | Комментарий |
+| Tool | Link / Bot | Comment |
 |---|---|---|
-| **Maigret OSINT Bot** | `@maigret_searchbot` | Проверка цифрового следа, совпадений и публичных профилей. Bellingcat Toolkit описывает Maigret как инструмент поиска username по большому числу сайтов. |
-| **Sherlock** | Каждому пользователю предлагается создать свой бот (по ссылке). | Open-source проект. Один из наиболее оптимальных для использования в контексте Telegram-outreach вариантов по соотношению цена/качество. |
-| **Quick OSINT Bot** | Ссылку на актуальный бот можно найти по ссылке. | Экспресс-проверка: быстро понять, есть ли цифровой след. |
-| **LeakCheck** | Зарегистрироваться и получить доступ можно по ссылке. | Инструмент больше про проверку утечек и цифровую гигиену. У LeakCheck есть официальный сайт и отдельная страница документации по Telegram-боту. |
-| **Himera Search** | Ссылку на актуальный бот можно найти по ссылке. | На сайте заявлены поиск по людям, авто и бизнесу, но на самом деле это один из самых серьёзных инструментов с доступом к наиболее полной базе данных. Зачастую избыточен для задач по аутричу. |
-| **Duhless** | `@dyxless_sbot` | Аналог почившего «Глаза Бога». Быстрый инструмент с чистой выдачей. По нему есть указанная на момент написания материала Telegram-точка входа, но со временем она может измениться. |
+| **Maigret OSINT Bot** | `@maigret_searchbot` | Checks digital footprint, matches, and public profiles. The Bellingcat Toolkit describes Maigret as a tool for searching usernames across a large number of sites. |
+| **Sherlock** | Each user is offered the option to create their own bot (via link). | Open-source project. One of the best options in terms of price/quality for use in the context of Telegram outreach. |
+| **Quick OSINT Bot** | A link to the current bot can be found via link. | Express check: quickly understand whether a digital footprint exists. |
+| **LeakCheck** | Register and get access via link. | A tool more about checking leaks and digital hygiene. LeakCheck has an official website and a separate documentation page for its Telegram bot. |
+| **Himera Search** | A link to the current bot can be found via link. | The site advertises search across people, vehicles, and businesses, but it is actually one of the most serious tools, with access to a very comprehensive database. Often overkill for outreach tasks. |
+| **Duhless** | `@dyxless_sbot` | An analog of the now-defunct "Eye of God." A fast tool with clean output. It has a Telegram entry point noted at the time of writing, but this may change over time. |
 
-## Методика поиска
+## Search Methodology
 
-Допустим, у вас есть лишь обрывочная информация: имя и фамилия человека, ссылка на его профиль в одной из соцсетей или просто место работы и должность. Задача — выйти на его Telegram-аккаунт (username) или мобильный номер.
+Suppose you have only fragmentary information: a person's first and last name, a link to their profile on one of the social networks, or simply their place of work and job title. The task is to reach their Telegram account (username) or mobile number.
 
-Современные OSINT-боты позволяют выстроить цепочку связей, которая ведёт от этих фрагментов к искомому идентификатору. Ниже — пошаговая логика такого поиска с примерами из Sherlock bot.
+Modern OSINT bots let you build a chain of connections that leads from these fragments to the identifier you want. Below is the step-by-step logic of such a search, with examples from the Sherlock bot.
 
-### 1. Отправная точка: имя, фамилия и место работы
+### 1. Starting Point: First Name, Last Name, and Place of Work
 
-Самый первый шаг — превратить текстовые данные в цифровые идентификаторы. Зная имя, фамилию и компанию, мы можем с помощью поисковиков найти профиль человека в LinkedIn, Facebook, Instagram или других соцсетях. Часто в публичных профилях видны уникальные username (например, `ivan_petrov`, `petrov1991`, `vanyapp`). Скопируйте этот ник — он станет универсальным ключом для поиска.
+The very first step is to turn text data into digital identifiers. Knowing the first name, last name, and company, we can use search engines to find the person's profile on LinkedIn, Facebook, Instagram, or other social networks. Public profiles often reveal unique usernames (for example, `ivan_petrov`, `petrov1991`, `vanyapp`). Copy this handle — it becomes a universal key for the search.
 
-Также в некоторых ботах доступен поиск по неполным данным — зная, например, только имя, фамилию и примерный возраст человека, вы сможете найти подходящие варианты и более полные данные о них, и в итоге найти именно того, кто вам нужен.
+Some bots also support searching by incomplete data — knowing, for example, only a person's first name, last name, and approximate age, you can find matching options and more complete data about them, and ultimately find exactly the person you need.
 
-### 2. Поиск по адресу электронной почты
+### 2. Search by Email Address
 
-Если на предыдущем шаге удалось найти рабочую или личную почту (например, в разделе «Контакты» профиля LinkedIn, в подписи на форуме или через утекшие базы), её можно проверить. Боты часто показывают, привязан ли email к Telegram-аккаунту, и могут раскрыть связанный номер телефона, если тот фигурирует в открытых утечках. В результате вы получаете искомые данные.
+If in the previous step you managed to find a work or personal email (for example, in the "Contacts" section of a LinkedIn profile, in a forum signature, or through leaked databases), you can check it. Bots often show whether an email is linked to a Telegram account, and can reveal an associated phone number if it appears in open leaks. As a result, you get the data you were looking for.
 
-### 3. Обратный поиск: от номера телефона к Telegram
+### 3. Reverse Search: From Phone Number to Telegram
 
-Если исходным фрагментом оказался номер телефона (например, из визитки, объявления или результатов поиска), задача упрощается. Большинство ботов принимают номер в международном формате и сразу возвращают привязанный Telegram-аккаунт и другую информацию. Попутно вы получите другие ассоциированные профили.
+If the starting fragment turned out to be a phone number (for example, from a business card, an ad, or search results), the task is simplified. Most bots accept a number in international format and immediately return the linked Telegram account and other information. Along the way, you get other associated profiles.
 
-## Заключение
+## Conclusion
 
-Таким образом, обладая минимумом исходных данных, за несколько итераций с помощью OSINT-ботов можно от фрагментарных данных прийти к более полным, с конкретными контактами и дополнительной информацией.
+Thus, with a minimum of starting data, over several iterations with OSINT bots you can go from fragmentary data to more complete data, with specific contacts and additional information.
 
-На западном B2B-рынке роль единого профессионального хаба во многом выполняет LinkedIn. В России такой точки сборки нет: данные о ЛПРах размазаны по Telegram, сайтам, соцсетям, каталогам, форумам и полузакрытым базам. Но экосистема OSINT-ботов значительно упрощает задачу поиска информации.
+In the Western B2B market, the role of a single professional hub is largely played by LinkedIn. In Russia there is no such assembly point: data about decision-makers is spread across Telegram, websites, social networks, directories, forums, and semi-closed databases. But the ecosystem of OSINT bots significantly simplifies the task of finding information.
 
-Они помогают сопоставлять разрозненные данные: находить username, проверять номера, смотреть цифровой след и понимать, действительно ли перед вами нужный человек.
+They help match scattered data: find usernames, verify numbers, look at digital footprints, and understand whether you are really dealing with the right person.
 
-Мы уже говорили об этом, но важно помнить: большинство таких инструментов находится в серой зоне. Где-то они работают с открытыми источниками, где-то — с утекшими базами и данными не вполне известного происхождения. Поэтому использовать их нужно этично.
+We have said this before, but it is important to remember: most such tools sit in a gray zone. In some cases they work with open sources, in others with leaked databases and data of not entirely known origin. So they must be used ethically.
 
-- Пользуйтесь аккуратно.
-- Проверяйте источники.
-- Не храните лишнее.
-
-И помните: выигрывает не тот, кто нашёл больше данных, а тот, кто использует их умело.
-
-Команда Leadsflow.ai, с Любовью ♥.
-Специально для участников практикума «Аутричеры».
+- Use carefully.
+- Verify sources.
+- Do not store more than you need.
