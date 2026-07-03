@@ -327,7 +327,7 @@ Key site pages you can link to where relevant:
             slug: { type: "string" as const, description: "URL-friendly slug" },
             category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
             summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
-            content: { type: "string" as const, description: "Full HTML article body following the AEO RULES" },
+            content: { type: "string" as const, description: "Full HTML article body following the AEO RULES. Article HTML ONLY — do NOT include the JSON-LD/FAQPage schema, any <script> tag, or raw JSON here. The schema goes ONLY in the schema_jsonld field." },
             schema_jsonld: {
               type: "string" as const,
               description:
@@ -480,6 +480,8 @@ Emit a STRING (the tool field) containing a valid JSON FAQPage document with thi
 }
 
 Emit ONLY the FAQPage — do NOT include a BlogPosting or Article node. Framer generates the BlogPosting/Article schema automatically from the CMS page; your job is the FAQPage it does not generate.
+
+CRITICAL: This JSON-LD belongs ONLY in the schema_jsonld field. NEVER put it — or any part of it, any <script> tag, or raw JSON — inside the content field. The content field is article HTML only; if the schema leaks into content it renders as visible text in the published article.
 
 The schema_jsonld value MUST be a valid JSON string. No backtick fences, no commentary, no trailing commas. Inside Answer.text, use plain text (no HTML tags). Pick the H2 sections that are framed as questions for the FAQ; if a section is a statement not a question, rephrase its first H2 line as a question for the FAQ entry (e.g., "5 Ways to Avoid Telegram Bans" → "How do I avoid Telegram bans?"). Use 2-6 Q&A pairs total, matched to the article's length and section count.
 
@@ -844,9 +846,34 @@ Only flag specific, verifiable product claims. General marketing language or ind
  * Strip dangerous tags and attributes from generated HTML.
  * Allows only safe structural/content tags.
  */
-function sanitizeHTML(html: string): string {
+/**
+ * Strip JSON-LD schema the model sometimes leaks into the article body.
+ *
+ * The publish_article tool has a separate `schema_jsonld` field, but the model
+ * occasionally ALSO appends the FAQPage JSON-LD as trailing raw text inside the
+ * `content` field. That JSON belongs only in schema_jsonld (Framer injects it as
+ * a <script type="application/ld+json"> tag) — in the body it renders as visible
+ * text. The leaked blob always begins with a schema.org @context or a FAQPage
+ * @type object and sits at the end of the content, so cut from the first such
+ * marker to end-of-content. These markers do not occur in normal article prose.
+ */
+export function stripLeakedJsonLd(html: string): string {
+  const m = html.search(
+    /\{\s*"@context"\s*:\s*"https?:\/\/schema\.org"|\{\s*"@type"\s*:\s*"FAQPage"/
+  );
+  if (m === -1) return html;
+  let out = html.slice(0, m);
+  // Drop a now-dangling trailing open wrapper tag (e.g. a "<p>" that wrapped the JSON).
+  out = out.replace(/\s*<(?:p|div|span|pre|code)>\s*$/i, "");
+  return out.trimEnd();
+}
+
+export function sanitizeHTML(html: string): string {
+  // Remove any JSON-LD schema the model leaked into the body (belongs in schema_jsonld).
+  let clean = stripLeakedJsonLd(html);
+
   // Remove script tags and their content
-  let clean = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+  clean = clean.replace(/<script[\s\S]*?<\/script>/gi, "");
 
   // Remove style tags and their content
   clean = clean.replace(/<style[\s\S]*?<\/style>/gi, "");
