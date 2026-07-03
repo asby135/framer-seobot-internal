@@ -11,6 +11,7 @@ No credit card required.
 Includes:
 - All core CRM Features
 - 50 CRM leads
+- Unlimited Campaigns
 - Connect 1 Telegram Account
 - CRM & Chat on one screen
 - Telegram Folder Sync to CRM
