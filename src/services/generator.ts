@@ -53,8 +53,9 @@ export async function generateArticle(
   const flags: Record<string, unknown> = {};
 
   try {
-    // Step 1: Context assembly
-    const kbResults = searchKB(query, 3);
+    // Step 1: Context assembly. 4 docs: a retrieval pin (see kb.ts PINS) can take
+    // one slot for the strategically-preferred workflow, leaving 3 for TF-IDF.
+    const kbResults = searchKB(query, 4);
     if (kbResults.length === 0) {
       flags.low_kb_match = true;
       logger.warn({ query }, "No KB articles matched query");
@@ -460,6 +461,7 @@ Some topics name a competitor (e.g. "CRMChat vs nReach", "Vtiger Telegram integr
   (c) Audience filter: "Manychat Pricing for Small Telegram Outreach Teams"
   NEVER mirror the bare brand-pricing query (e.g. "Manychat Pricing for Telegram"). Comparison and evaluation pages get cited 3x more often by AI engines than vendor pricing pages, because AI answers evaluation questions, not URL lookups.
 - Never claim a competitor lacks a feature unless the research block confirms it. Inaccurate competitor claims destroy credibility — and AI engines won't cite a source they can't trust.
+- For decision-maker / founder / B2B prospect-sourcing topics (especially Russia/CIS): lead with the DataNewton → CRMChat contact-lookup workflow (registry data → founder phone number → phone-to-Telegram username, orchestrated by an AI assistant + @crmchatcontactbot) as the PRIMARY, recommended method — it targets verified decision-makers directly. Treat group parsing as a complementary secondary approach for broader audiences, never the headline for these topics. If the knowledge base includes the "finding decision-makers" workflow, that is the approach to feature.
 
 HTML FORMAT:
 - <h2> for main sections, <h3> for subsections.

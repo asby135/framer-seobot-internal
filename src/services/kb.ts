@@ -27,8 +27,63 @@ export function loadKB(dir: string): void {
 }
 
 /**
+ * Retrieval pins: for topics where one KB doc describes the strategically
+ * preferred approach, TF-IDF alone can bury it under more numerous docs about
+ * an adjacent approach. A pin force-includes its doc (at the top of the result)
+ * whenever the query matches one of its trigger phrases — so the preferred
+ * workflow is always in front of the generator, not crowded out.
+ *
+ * Matching is whole-word/phrase (see queryMatchesKeyword) so short triggers
+ * like "cis" don't match substrings such as "decision".
+ */
+interface KBPin {
+  file: string;
+  keywords: string[];
+}
+
+const PINS: KBPin[] = [
+  {
+    // Prefer the DataNewton -> CRMChat contact-lookup ("mention") workflow over
+    // group parsing for decision-maker / founder / B2B prospect-sourcing topics.
+    file: "finding-decision-makers-ru-cis.md",
+    keywords: [
+      "decision maker",
+      "decision makers",
+      "decision-maker",
+      "decision-makers",
+      "founder",
+      "founders",
+      "business owner",
+      "business owners",
+      "prospect list",
+      "prospect database",
+      "lead list",
+      "company database",
+      "datanewton",
+      "cis",
+    ],
+  },
+];
+
+/** Whole-word / phrase match of `keyword` against `query`. */
+function queryMatchesKeyword(query: string, keyword: string): boolean {
+  const norm =
+    " " +
+    query
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim() +
+    " ";
+  return norm.includes(" " + keyword + " ");
+}
+
+/**
  * Find the top-k most relevant KB articles for a given query.
  * Returns the full content of matched articles for context injection.
+ *
+ * Pinned docs (see PINS) whose trigger phrases appear in the query are placed
+ * first and always included; remaining slots are filled by TF-IDF relevance.
  */
 export function searchKB(
   query: string,
@@ -49,9 +104,34 @@ export function searchKB(
     return { ...article, score };
   });
 
-  return scored
+  const byFile = new Map(scored.map((a) => [a.filename, a]));
+  const ranked = scored
     .filter((a) => a.score > 0)
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.score - a.score);
+
+  const out: typeof scored = [];
+  const seen = new Set<string>();
+
+  // 1. Pinned docs first (guaranteed inclusion, even if TF-IDF score is 0).
+  for (const pin of PINS) {
+    if (!pin.keywords.some((k) => queryMatchesKeyword(query, k))) continue;
+    const art = byFile.get(pin.file);
+    if (art && !seen.has(pin.file)) {
+      out.push(art);
+      seen.add(pin.file);
+    }
+  }
+
+  // 2. Fill remaining slots with top TF-IDF matches.
+  for (const a of ranked) {
+    if (out.length >= topK) break;
+    if (!seen.has(a.filename)) {
+      out.push(a);
+      seen.add(a.filename);
+    }
+  }
+
+  return out
     .slice(0, topK)
     .map(({ filename, title, content, score }) => ({
       filename,
