@@ -1,0 +1,228 @@
+# SEO Autopilot — Design
+
+**Date:** 2026-08-18
+**Status:** Design agreed, not yet implemented
+
+Automate topic seeding, title proposal, article generation, RU translation, Framer
+sync and site publishing, behind two Telegram approval gates. Replaces the manual
+loop of seeding audiences by hand, approving topics in the plugin, triggering
+generation, triggering translation, and pressing Sync in Framer.
+
+## Goal
+
+Run 5-10 articles per night unattended, with two taps from the operator: approve
+the proposed titles, then approve the finished articles. Framer never needs to be
+opened for the daily loop.
+
+## Key platform finding
+
+Framer shipped a **Server API** (Feb 2026, `framer-api` on npm, free open beta).
+It exposes the same surface as the Plugin API *plus* publishing, from any server:
+
+- `framer.getManagedCollections()` — managed collections, the kind `seobtn` owns
+- `collection.setFields() / addItems() / removeItems() / setItemOrder()`
+- `framer.getLocales()`, and field inputs accept
+  `valueByLocale: { [localeId]: { action: "set", value } }`
+- `framer.publish()` then `framer.deploy(deploymentId)`
+
+The per-locale shape is byte-identical to what `src/routes/sync.ts` already emits,
+so RU translations carry across with no reshaping.
+
+Caveats from Framer's own docs: not transactional, ~1-2s cold start, JS SDK only,
+free during beta with usage-based pricing expected later.
+
+`framer-api` requires **Node >= 22**; the Dockerfile currently pins `node:20-slim`.
+
+## Decisions
+
+| Decision | Choice |
+|---|---|
+| Automation level | Autopilot with review gates |
+| Gates | Two: proposed titles, then finished articles |
+| Review surface | Telegram bot; plugin becomes settings/deep-dive only |
+| Gate 1 content | Proposed headline from a new `proposeTitle()` step |
+| Gate 2 preview | Message summary + full article attached as `.html` |
+| Batching | One digest per gate, per-item buttons plus Approve all / Reject all |
+| Volume | 5-10 articles per night, randomised |
+| Topic source | Self-seeded audiences (Era research dropped — it didn't work) |
+| Taxonomy | niche → subniche → angle |
+| Subniches | Claude proposes ~6 per niche, editable in Settings |
+| Angles | how-to, comparison, migration, troubleshooting, pricing |
+| Thin-KB niches | Start them, watch output, write KB pages if weak |
+| RU niches | English-first; existing translator serves `/ru/` |
+| Publish timing | Debounced — one site deploy ~5 min after last approval |
+| Scheduler | In-process (Railway cron requires process exit; volume is single-mount) |
+| Plugin hosting | Static build on a public URL, opened via "Open Plugin from URL" |
+
+## Audiences
+
+Eight niches. The first five have industry pages and case studies in `knowledge/`;
+the last three have thin or no KB coverage and start on **probation**.
+
+| Niche | KB grounding |
+|---|---|
+| Web3 / crypto | `industry-web3-crypto.md`, `product-web3-database.md` |
+| B2B lead-gen agencies | `industry-leadgen-agencies.md`, LeadSniper/uForce/LeadBridge cases |
+| iGaming affiliates | `industry-igaming.md` |
+| Creator / OnlyFans agencies | `creator-agency-telegram.md`, `product-ppv-bot.md` |
+| Media buying | `industry-media-buying.md` |
+| RU B2B SaaS | thin — `finding-decision-makers-ru-cis.md` only (probation) |
+| RU AI companies | none (probation) |
+| Online currency exchanges | none (probation) |
+
+Each niche stores a **persona sentence**, not a label — `seedTopics()` grounds on
+`searchKB(audience, 5)`, so lexical overlap with the industry page matters.
+Optional `kb_hints` force-include specific KB docs ahead of TF-IDF.
+
+**Probation:** topics from a probationary niche land as `pending` and appear in the
+digest, but are excluded from auto-pick until manually approved in the Topics tab.
+Clear the flag once the niche proves out.
+
+## Architecture
+
+One Railway service, unchanged in kind. New pieces:
+
+- `src/services/scheduler.ts` — nightly run, single-flight lock, `last_run_date`
+- `src/services/framer-sync.ts` — Server API push, publish/deploy, wipe guard
+- `src/services/notify.ts` — Telegram digests and alerts
+- `src/routes/telegram.ts` — webhook, `secret_token`, chat-ID allowlist
+- `settings` table — key/value JSON: niches, rotation cursor, schedule, Framer creds
+- `keywords` gains `proposed_title`, `bot_message_id`
+- Dockerfile: `node:20-slim` → `node:22-slim`
+
+The plugin keeps `getPluginData` for credentials and retains `SyncHandler` as a
+manual fallback. It is no longer on the daily critical path.
+
+## Nightly flow
+
+**~20:00 — propose**
+
+1. **Top-up.** Count pending `source='seeded'` keywords. If low, advance the
+   rotation cursor to the next `(niche, subniche, angle)` and call `seedTopics()`
+   with `persona + subniche` as the audience and the angle as a hard constraint.
+2. **Select.** Randomly pick 5-10 pending topics from non-probationary niches.
+   Selection filters to `source IN ('seeded', 'custom')` — Era/GSC rows are
+   excluded permanently, not just deprioritised.
+3. **Title.** `proposeTitle()` per topic — reuses the TITLE CRAFT rules and
+   `findTitleTics()` ban-list, plus recent published titles for shape variety.
+4. **Gate 1 digest.** Numbered list of proposed headlines with niche → subniche →
+   angle and the underlying topic phrase. Buttons per item plus Approve all /
+   Reject all. Reroll re-invokes `proposeTitle()` excluding the rejected headline.
+
+**Overnight — generate**
+
+5. Approval pins the title to the keyword and enqueues generation with a
+   `titleOverride`, passed into the `publish_article` tool as required output so
+   the body is written to the approved headline.
+6. Completion auto-enqueues RU translation — the chain `queue.ts` doesn't do today.
+7. Articles land in `review`. Nothing publishes unattended.
+
+**Morning — publish**
+
+8. **Gate 2 digest.** EN title, RU title, summary, word count, flags
+   (`thumbnail_missing`, `low_kb_match`, `ru_missing`), full article attached as
+   `.html`. Buttons: Publish / Regenerate / Delete, plus Publish all.
+9. Publish calls the existing `POST /api/articles/:id/publish`, pushes the item to
+   Framer, and arms a 5-minute debounce.
+10. Debounce fires once: `framer.publish()` → `framer.deploy()` → `sync_log` →
+    Telegram confirmation.
+
+## Anti-repetition
+
+Three mechanisms, all needed at this volume:
+
+1. **Taxonomy depth.** 8 niches × ~6 subniches × 5 angles = 240 rotation slots.
+   At 10 topics per seed that is ~2,400 topics, roughly a year at 7.5/night.
+   (Without the angle level: 480 topics, ~64 nights.)
+2. **Already-covered block.** `generateTopicCandidates()` gains a fourth input —
+   the last ~60 topic queries and ~30 published titles, injected as "propose
+   adjacent territory, not variations of these." This is the change that makes
+   long-run rotation viable; the taxonomy alone only delays repetition.
+3. **Wider title-variety window.** The generator's last-30-published-titles check
+   covers a month at 2-3/night but only ~4 days at 7.5/night. Widen to 100.
+
+## Safety rails
+
+- **Wipe guard.** `SyncHandler` computes `toRemove` as "Framer items absent from
+  the backend", so an empty or half-loaded DB silently deletes the live blog. The
+  server path refuses to sync when the backend reports zero published articles
+  while Framer holds many, or when removals exceed a configured share of the
+  collection. It alerts instead of proceeding.
+- **Append-only fields.** `setFields` passes existing field objects back with
+  identical IDs so canvas variable bindings survive.
+- **Rate limiter.** `maxPerHour = 10` in `routes/generate.ts` sits exactly at the
+  new ceiling; the internal scheduler path uses its own daily cap instead.
+- **Bot state in SQLite.** `proposed_title` and `bot_message_id` persist so a
+  restart between gates can't orphan a job. Callbacks are idempotent — tapping
+  Publish twice publishes once.
+- **Single-flight lock** on the scheduler; `last_run_date` catches missed runs.
+
+## Error handling
+
+The Server API is explicitly not transactional. Each stage is wrapped
+independently: a failed `addItems` logs to `sync_log` and alerts without aborting
+the batch. Connections are per-operation with guaranteed disconnect. Publish
+retries once with backoff, then fails loudly. Generation failures land as
+`generation_failed` without blocking the serial queue. Translation failure flags
+`ru_missing` at gate 2 and offers publish-EN-only or retry.
+
+## Testing
+
+- `framer-api` behind a thin port interface; tests never hit the network
+- Pure units: rotation cursor, top-up decision, probation filtering, random pick,
+  debounce, wipe-guard predicate, item builder (currently untested — lives in the
+  plugin today)
+- Mock Anthropic for `proposeTitle()` and the seeder
+- `SCHEDULER_DRY_RUN=1` — selection, titles and digest, no generation
+- Clear the two `TODOS.md` items for `translator.ts` and the generator
+  schema-retry path; translation now runs unattended up to 10x/night
+
+## Topic pool state (2026-08-18)
+
+The queue shows **772 pending** topics, but these are overwhelmingly Era/GSC rows
+that largely duplicate already-published articles. They are to be purged, not
+consumed:
+
+```
+DELETE /api/research/keywords?source=era        (&status=approved)
+DELETE /api/research/keywords?source=era-gap    (&status=approved)
+DELETE /api/research/keywords?source=gsc        (&status=approved)
+```
+
+The endpoint only accepts `pending` and `approved`, one source at a time; run both
+statuses for each source. After purging, count the remaining `source='seeded'`
+rows — that is the real runway. Assume it is small, so **the seeding rotation is
+needed from night one**, not deferred.
+
+That Era rows duplicated published articles is direct evidence for the
+already-covered block under Anti-repetition: an unfiltered topic source drifts
+into re-covering existing content, and only an explicit exclusion list prevents it.
+
+## Rollout
+
+0. **Purge Era/GSC keywords** and count remaining seeded topics.
+1. **Spike (blocking):** confirm the Server API can adopt the existing
+   `seobtn`-managed collection rather than only writing collections it created.
+   This is the one unverified assumption. ~20 lines.
+2. Node 22 bump, add `framer-api`
+3. `settings` table, Settings UI, niche/subniche/angle expansion
+4. `proposeTitle()` + `titleOverride` in `generateArticle()`
+5. Telegram bot, webhook, digests
+6. Scheduler, caps, dry-run mode
+7. `framer-sync.ts`, wipe guard, debounced publish
+8. Host `plugin/dist`, switch to "Open Plugin from URL"
+
+Run at 1-2/night for a week with the three new niches on probation before opening
+up to 5-10.
+
+## Open risks
+
+- **Server API collection adoption** — settled by step 1 of rollout.
+- **Content volume vs citation credibility.** ~225 articles/month of AI-generated
+  content aimed at being cited as a credible source. The two gates are the control;
+  if citation rate per article falls as volume climbs, volume is the first thing
+  to look at.
+- **Server API pricing** post-beta is unannounced; the debounced single-deploy
+  design is what keeps that exposure small.
+- **Thin-KB niches** may produce generic topics until KB pages exist. Probation
+  plus the gate-1 digest is the detection mechanism.
