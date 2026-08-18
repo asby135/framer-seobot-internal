@@ -33,6 +33,57 @@ free during beta with usage-based pricing expected later.
 
 `framer-api` requires **Node >= 22**; the Dockerfile currently pins `node:20-slim`.
 
+## Spike result (2026-08-18) — collection ownership
+
+Read-only spike against project `CRMChat-New--obDYpxrpLqjA1CG4lfvg`:
+
+```
+"CRMChat SEO Engine" (cPhSKcDSv)  managedBy = anotherPlugin   readonly = true
+"Seobot"             (hNojT21es)  managedBy = anotherPlugin   readonly = true
+"articles"           (ewhHuyXZI)  managedBy = user            readonly = false
+getManagedCollections() → 0
+LOCALES → ru-RU (mG5aB_oJw)
+```
+
+**The Server API cannot write the existing collection.** It is owned by the
+`seobtn` plugin, and `createManagedCollection(name)` accepts only a name — there
+is no adoption parameter, and it rejects names that match an existing collection.
+Per the type docs: "Collections managed by plugins are read-only. To modify them,
+use `ManagedCollection` (only possible in `configureManagedCollection` or
+`syncManagedCollection` modes)."
+
+Two findings that make migration cheap:
+
+- The collection's 9 field IDs already match the backend schema exactly:
+  `image, title, category, created, updated, summary, content, tool, schema_jsonld`
+- Locale is `ru-RU` / `mG5aB_oJw`; `findFramerLocaleId()` already resolves `"ru"`
+  through its `startsWith("ru-")` branch, so the mapping ports unchanged.
+
+**Decision: migrate to a Server-API-owned managed collection.**
+
+### Migration procedure
+
+1. `framer.createManagedCollection("CRMChat SEO Engine (API)")` — the name must
+   differ from the existing collection.
+2. `setFields()` with the same 9 field IDs, names and types from `/api/schema`.
+3. `addItems()` with the full `/api/sync/collection` payload — identical item IDs
+   and slugs, `valueByLocale` keyed to `mG5aB_oJw`.
+4. Verify: 298 items, spot-check slugs, confirm RU values landed.
+5. In Framer, repoint the blog listing and the article CMS page to the new
+   collection and rebind the template fields.
+6. Preview, then publish once, so there is no window where `/blog/*` 404s.
+7. Rename old → "CRMChat SEO Engine (legacy)", new → "CRMChat SEO Engine".
+8. Keep the legacy collection for rollback; delete only after a few days live.
+
+**Slugs are preserved, so URLs do not change.** The unverified part is step 5 —
+whether Framer allows changing a CMS page's source collection in place, or whether
+the page must be recreated against the new collection. Confirm in the editor
+before deleting anything.
+
+**Consequence for the fallback story:** after migration the plugin's `SyncHandler`
+writes to the legacy collection, which nothing renders. The plugin becomes
+settings/deep-dive only, and the real fallback is re-running the backend sync.
+
 ## Decisions
 
 | Decision | Choice |
@@ -201,9 +252,8 @@ into re-covering existing content, and only an explicit exclusion list prevents 
 ## Rollout
 
 0. **Purge Era/GSC keywords** and count remaining seeded topics.
-1. **Spike (blocking):** confirm the Server API can adopt the existing
-   `seobtn`-managed collection rather than only writing collections it created.
-   This is the one unverified assumption. ~20 lines.
+1. ~~Spike: can the Server API adopt the `seobtn` collection?~~ **Done — no.**
+   See "Spike result" above; migration to an API-owned collection is required.
 2. Node 22 bump, add `framer-api`
 3. `settings` table, Settings UI, niche/subniche/angle expansion
 4. `proposeTitle()` + `titleOverride` in `generateArticle()`
@@ -217,7 +267,10 @@ up to 5-10.
 
 ## Open risks
 
-- **Server API collection adoption** — settled by step 1 of rollout.
+- ~~Server API collection adoption~~ — settled: not possible, migration required.
+- **CMS page rebinding** — whether a Framer CMS page's source collection can be
+  changed in place, or the page must be recreated. Verify before deleting the
+  legacy collection.
 - **Content volume vs citation credibility.** ~225 articles/month of AI-generated
   content aimed at being cited as a credible source. The two gates are the control;
   if citation rate per article falls as volume climbs, volume is the first thing
