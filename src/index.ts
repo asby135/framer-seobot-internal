@@ -15,6 +15,8 @@ import { sync } from "./routes/sync.js";
 import { schema } from "./routes/schema.js";
 import { research } from "./routes/research.js";
 import { kb } from "./routes/kb.js";
+import { telegramRoute } from "./routes/telegram.js";
+import { buildGateHandlers, createNightlyRunner, ensureDefaultSettings } from "./services/bootstrap.js";
 
 // Initialize database
 initDb();
@@ -42,6 +44,11 @@ app.use(
 // Public routes (no auth required)
 app.route("/api/status", status);
 
+// Telegram webhook. Deliberately NOT behind authMiddleware — Telegram cannot
+// send a bearer token. It authenticates on the secret token header plus a
+// chat-id allowlist, both of which fail closed. See routes/telegram.ts.
+app.route("/api/telegram", telegramRoute(buildGateHandlers()));
+
 // Setup: POST /api/setup is public (needs secret), POST /api/setup/rotate is protected
 app.use("/api/setup/rotate", authMiddleware);
 app.route("/api/setup", setup);
@@ -66,15 +73,37 @@ app.route("/api/kb", kb);
 // Graceful shutdown
 process.on("SIGTERM", () => {
   logger.info("SIGTERM received, shutting down");
+  runner?.stop();
   closeDb();
   process.exit(0);
 });
 
 process.on("SIGINT", () => {
   logger.info("SIGINT received, shutting down");
+  runner?.stop();
   closeDb();
   process.exit(0);
 });
+
+// Autopilot — opt-in.
+//
+// Deploying this code must not start generating articles on its own. The
+// scheduler runs only when AUTOPILOT_ENABLED=1, so the pipeline ships dormant
+// and is switched on deliberately, after a dry run.
+ensureDefaultSettings();
+
+const autopilotEnabled = process.env.AUTOPILOT_ENABLED === "1";
+const runner = autopilotEnabled ? createNightlyRunner() : null;
+
+if (runner) {
+  runner.start();
+  logger.info(
+    { dryRun: process.env.SCHEDULER_DRY_RUN === "1" },
+    "Autopilot enabled"
+  );
+} else {
+  logger.info("Autopilot disabled (set AUTOPILOT_ENABLED=1 to enable)");
+}
 
 // Start server
 const port = env.PORT;
