@@ -62,6 +62,26 @@ function recentPublishedTitles(limit = 100): string[] {
   ).map((r) => r.title);
 }
 
+/**
+ * Delete an article and its children.
+ *
+ * Order matters: `foreign_keys = ON` and neither `assets` nor
+ * `article_translations` declares ON DELETE CASCADE, so deleting the parent
+ * first throws SQLITE_CONSTRAINT_FOREIGNKEY. Every generated article has a
+ * thumbnail asset and — now that translation is chained — a translation row,
+ * so a parent-first delete fails 100% of the time.
+ *
+ * Wrapped in a transaction so a partial delete cannot orphan children.
+ */
+function deleteArticleRow(id: string): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare("DELETE FROM assets WHERE article_id = ?").run(id);
+    db.prepare("DELETE FROM article_translations WHERE article_id = ?").run(id);
+    db.prepare("DELETE FROM articles WHERE id = ?").run(id);
+  })();
+}
+
 export function buildGateHandlers(): CallbackHandlers {
   const db = () => getDb();
 
@@ -102,7 +122,7 @@ export function buildGateHandlers(): CallbackHandlers {
     },
 
     deleteArticle: (id) => {
-      db().prepare("DELETE FROM articles WHERE id = ?").run(id);
+      deleteArticleRow(id);
     },
 
     regenerateArticle: (id) => {
@@ -114,7 +134,12 @@ export function buildGateHandlers(): CallbackHandlers {
         .prepare("SELECT id, query, proposed_title FROM keywords WHERE id = ?")
         .get(row.keyword_id) as KeywordRow | undefined;
       if (!kw) return;
-      db().prepare("DELETE FROM articles WHERE id = ?").run(id);
+
+      deleteArticleRow(id);
+      // Reset the keyword so the pipeline treats it as awaiting generation
+      // again, matching what POST /api/articles/:id/regenerate does.
+      db().prepare("UPDATE keywords SET status = 'approved' WHERE id = ?").run(kw.id);
+
       enqueueGeneration({
         keywordId: kw.id,
         query: kw.query,

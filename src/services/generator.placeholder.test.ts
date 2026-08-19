@@ -63,3 +63,40 @@ describe("stripTrailingPlaceholder — no-op safety", () => {
     expect(stripTrailingPlaceholder("<p>Body</p>\n\nplaceholder\n")).toBe("<p>Body</p>");
   });
 });
+
+describe("stripTrailingPlaceholder — must not truncate real prose", () => {
+  // Found in code review, verified against the shipped regex:
+  //   "<p>The final field is a placeholder</p>" -> "<p>The final field is a"
+  // It ran on EVERY generated article via sanitizeHTML, corrupting text and
+  // leaving unbalanced HTML. Worse than the artifact it was written to remove.
+  it("leaves a sentence ending in the word intact", () => {
+    const html = "<p>The final field is a placeholder</p>";
+    expect(stripTrailingPlaceholder(html)).toBe(html);
+  });
+
+  it("leaves a final paragraph ending in the word intact", () => {
+    const html = "<p>Body</p><p>Use a placeholder</p>";
+    expect(stripTrailingPlaceholder(html)).toBe(html);
+  });
+
+  it("leaves 'Set the placeholder' intact", () => {
+    const html = "<p>Set the placeholder</p>";
+    expect(stripTrailingPlaceholder(html)).toBe(html);
+  });
+
+  it("never produces unbalanced HTML", () => {
+    const html = "<p>The final field is a placeholder</p>";
+    const out = stripTrailingPlaceholder(html);
+    const opens = (out.match(/<p[^>]*>/g) ?? []).length;
+    const closes = (out.match(/<\/p>/g) ?? []).length;
+    expect(opens).toBe(closes);
+  });
+
+  it("still removes a paragraph whose ENTIRE content is the word", () => {
+    expect(stripTrailingPlaceholder("<p>Body</p><p>placeholder</p>")).toBe("<p>Body</p>");
+  });
+
+  it("still removes a bare trailing text node", () => {
+    expect(stripTrailingPlaceholder("<p>Body</p>\n\nplaceholder")).toBe("<p>Body</p>");
+  });
+});

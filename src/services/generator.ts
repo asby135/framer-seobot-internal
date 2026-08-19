@@ -909,10 +909,27 @@ export function stripLeakedJsonLd(html: string): string {
  * content.
  */
 export function stripTrailingPlaceholder(html: string): string {
-  const stripped = html.replace(/(?:<p[^>]*>\s*)?placeholder(?:\s*<\/p>)?\s*$/i, "");
-  // Only touch the content when a placeholder was actually found. Trimming
-  // unconditionally would rewrite every article for no reason, which makes
-  // audits noisy and diffs meaningless.
+  // Two shapes only, and in both the word must be the ENTIRE trailing node:
+  //   1. <p>placeholder</p>  — a paragraph containing nothing else
+  //   2. ...</p>\n\nplaceholder — a bare text node after the last element
+  //
+  // The word must NOT be preceded by prose. An earlier version matched
+  // /placeholder\s*<\/p>$/ and turned "<p>The final field is a placeholder</p>"
+  // into "<p>The final field is a" — truncated text and unbalanced HTML, on
+  // every generated article. "Placeholder" is ordinary vocabulary in articles
+  // about form fields and message templates.
+  const wholeParagraph = /<p[^>]*>\s*placeholder\s*<\/p>\s*$/i;
+  const bareTextNode = /(>|^)\s*placeholder\s*$/i;
+
+  let stripped = html.replace(wholeParagraph, "");
+  if (stripped === html) {
+    // Keep the delimiter that ended the previous element.
+    stripped = html.replace(bareTextNode, (_m, lead: string) => lead);
+  }
+
+  // Only touch the content when something was actually removed. Trimming
+  // unconditionally rewrites every article for no reason, which makes audits
+  // noisy and diffs meaningless.
   return stripped === html ? html : stripped.trimEnd();
 }
 
