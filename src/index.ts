@@ -17,6 +17,7 @@ import { research } from "./routes/research.js";
 import { kb } from "./routes/kb.js";
 import { telegramRoute } from "./routes/telegram.js";
 import { settings as settingsRoute } from "./routes/settings.js";
+import { autopilot as autopilotRoute } from "./routes/autopilot.js";
 import {
   buildGateHandlers,
   createNightlyRunner,
@@ -71,6 +72,7 @@ app.use("/api/research/*", authMiddleware);
 app.use("/api/kb/*", authMiddleware);
 app.use("/api/settings/*", authMiddleware);
 app.use("/api/settings", authMiddleware);
+app.use("/api/autopilot/*", authMiddleware);
 
 app.route("/api/topics", topics);
 app.route("/api/articles", articles);
@@ -80,6 +82,7 @@ app.route("/api/schema", schema);
 app.route("/api/research", research);
 app.route("/api/kb", kb);
 app.route("/api/settings", settingsRoute);
+app.route("/api/autopilot", autopilotRoute);
 
 // Graceful shutdown
 process.on("SIGTERM", () => {
