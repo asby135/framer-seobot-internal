@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
-import { searchKB } from "./kb.js";
+import { searchKB, getKBArticle } from "./kb.js";
 import { isPureCompetitorTopic } from "./research.js";
 import { queryToSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
@@ -12,36 +12,146 @@ const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 const DEFAULT_COUNT = 10;
 const MAX_COUNT = 20;
 
+/**
+ * How many already-covered topics to list in the prompt. Bounded so a growing
+ * corpus cannot inflate the prompt without limit — at ~300 articles the full
+ * list would dominate the context window.
+ */
+export const MAX_COVERED = 90;
+
 export interface SeedResult {
   seeded: Array<{ query: string }>;
   skipped: number; // duplicates / competitor-filtered
   audience: string;
 }
 
+export interface SeederPromptInput {
+  audience: string;
+  /** Omitted for ad-hoc seeding from the plugin, where there is no rotation slot. */
+  subniche?: string;
+  angle?: string;
+  kbContext: string;
+  covered: string[];
+  count: number;
+}
+
+/**
+ * Build the user message for topic generation.
+ *
+ * The `covered` block is the anti-repetition mechanism. On a fixed rotation the
+ * model will otherwise re-propose the same territory each cycle. Exact duplicate
+ * queries are already rejected by insertSeededTopics, but NEAR-duplicates
+ * ("Telegram CRM for crypto teams" vs "CRM for Web3 sales teams") pass straight
+ * through and then compete with each other in search — so they have to be
+ * prevented at generation time, not filtered afterwards.
+ *
+ * This is not hypothetical: the retired Era source produced 767 pending queries
+ * that largely duplicated already-published articles.
+ */
+export function buildSeederPrompt(input: SeederPromptInput): string {
+  const { audience, subniche, angle, kbContext, covered, count } = input;
+  const trimmed = covered.slice(0, MAX_COVERED);
+
+  const kbBlock = kbContext
+    ? `\nCRMChat KNOWLEDGE BASE (ground topics in this — do not invent features):\n${kbContext}`
+    : "\n(No specific KB context matched — propose topics from CRMChat's general Telegram CRM/outreach positioning.)";
+
+  const coveredBlock =
+    trimmed.length > 0
+      ? `\nALREADY COVERED — do NOT propose these, or close variations of them. Propose adjacent territory instead:\n${trimmed
+          .map((t) => `- ${t}`)
+          .join("\n")}`
+      : "";
+
+  const subnicheLine = subniche ? `\nSUBNICHE — narrow every topic to this: ${subniche}` : "";
+  const angleLine = angle ? `\nANGLE — every topic must take this angle: ${angle}` : "";
+  const closing = [
+    subniche ? `all within the "${subniche}" subniche` : null,
+    angle ? `all taking the "${angle}" angle` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  return `TARGET AUDIENCE: ${audience}${subnicheLine}${angleLine}
+${kbBlock}
+${coveredBlock}
+
+Propose ${count} AEO-optimized article topics for this audience${closing ? `, ${closing}` : ""}. Call emit_topics.`;
+}
+
+/**
+ * The exclusion list handed to the seeder: recent topic queries plus recently
+ * published titles.
+ *
+ * Both matter. Queries catch territory already queued but not yet written;
+ * titles catch territory already published. Without the titles the seeder
+ * happily re-proposes something it wrote a month ago.
+ */
+export function getCoveredTopics(recentQueries = 60, recentTitles = 30): string[] {
+  const db = getDb();
+  const queries = db
+    .prepare("SELECT query FROM keywords ORDER BY created_at DESC LIMIT ?")
+    .all(recentQueries) as { query: string }[];
+  const titles = db
+    .prepare(
+      "SELECT title FROM articles WHERE status = 'published' ORDER BY published_at DESC LIMIT ?"
+    )
+    .all(recentTitles) as { title: string }[];
+  return [...queries.map((q) => q.query), ...titles.map((t) => t.title)];
+}
+
+export interface SeedOptions {
+  /** Rotation slot, when seeding is driven by the scheduler. */
+  subniche?: string;
+  angle?: string;
+  /** KB filenames pinned ahead of TF-IDF results — see Niche.kb_hints. */
+  kbHints?: string[];
+  /** Topics and titles already covered; excluded to prevent near-duplicates. */
+  covered?: string[];
+}
+
 /**
  * Seed pending topics for a target audience, grounded in the knowledge base.
  *
- * Unlike runResearch (which pulls external Era queries), this generates topic
- * IDEAS directly from (a) an audience persona and (b) what CRMChat actually does
- * for that audience per the KB. Output is AEO-optimized article topics that an AI
- * engine would cite when this audience asks for help. Topics land as 'pending'
- * with source='seeded' and flow through the normal approve → generate pipeline.
+ * Generates topic IDEAS from (a) an audience persona and (b) what CRMChat
+ * actually does for that audience per the KB. Topics land as 'pending' with
+ * source='seeded' and flow through the normal approve → generate pipeline.
+ *
+ * Called two ways: ad-hoc from the plugin (audience only), or by the scheduler
+ * with a rotation slot (subniche + angle + kb_hints + covered).
  */
 export async function seedTopics(
   audience: string,
-  count: number = DEFAULT_COUNT
+  count: number = DEFAULT_COUNT,
+  opts: SeedOptions = {}
 ): Promise<SeedResult> {
   const n = Math.min(Math.max(count, 1), MAX_COUNT);
-  const db = getDb();
 
-  // 1. Pull KB context relevant to the audience (top matches by TF-IDF)
-  const kbResults = searchKB(audience, 5);
+  // 1. Assemble KB grounding. Pinned hints go first and are never displaced by
+  //    relevance scoring — niches with thin keyword overlap (RU SaaS, currency
+  //    exchanges) would otherwise retrieve noise and produce generic topics.
+  const pinned = (opts.kbHints ?? [])
+    .map((f) => getKBArticle(f))
+    .filter((a): a is NonNullable<typeof a> => a !== undefined);
+  const pinnedNames = new Set(pinned.map((p) => p.filename));
+  const searched = searchKB(`${audience} ${opts.subniche ?? ""}`.trim(), 5).filter(
+    (r) => !pinnedNames.has(r.filename)
+  );
+  const kbResults = [...pinned, ...searched].slice(0, 5);
+
   const kbContext = kbResults
     .map((kb, i) => `--- KB ${i + 1}: ${kb.title} ---\n${kb.content.slice(0, 2000)}`)
     .join("\n\n");
 
   // 2. Generate candidate topics via Claude
-  const candidates = await generateTopicCandidates(audience, kbContext, n);
+  const candidates = await generateTopicCandidates({
+    audience,
+    subniche: opts.subniche,
+    angle: opts.angle,
+    kbContext,
+    covered: opts.covered ?? [],
+    count: n,
+  });
 
   if (candidates.length === 0) {
     logger.warn({ audience }, "Seeder returned no candidate topics");
@@ -148,11 +258,8 @@ export function insertSeededTopics(
   };
 }
 
-async function generateTopicCandidates(
-  audience: string,
-  kbContext: string,
-  count: number
-): Promise<string[]> {
+async function generateTopicCandidates(input: SeederPromptInput): Promise<string[]> {
+  const { audience, count } = input;
   const response = await anthropic.messages.create({
     model: "claude-sonnet-5",
     // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
@@ -188,7 +295,7 @@ RULES:
   BAD (full headline): "How to Run Multiple OnlyFans Model Accounts on Telegram Without Your Chatters Messaging Fans from the Wrong Profile"
 - Each topic must map to a real question or pain this audience has, where CRMChat (Telegram-native CRM/outreach) is a genuine answer. Ground every topic in the KB context — do not invent features CRMChat doesn't have.
 - Prefer high-intent, specific, low-competition angles over broad head terms. "Selling PPV on Telegram without chargebacks" beats "Telegram CRM".
-- Cover a spread of angles across the batch — how-to, evaluation, comparison, migration, troubleshooting — but expressed as short topics, not headlines.
+- When an ANGLE is given below, EVERY topic in the batch must take that angle. Do not vary it. When no angle is given, cover a spread — how-to, evaluation, comparison, migration, troubleshooting — expressed as short topics, not headlines.
 - BRIDGE FRAMING: when the audience is migrating from another channel/tool (email, OnlyFans DMs, another CRM), frame the topic around the switch — e.g. "migrating OnlyFans DMs to Telegram", "email outreach alternative for B2B".
 - Do NOT propose pure-competitor topics (a competitor name with no CRMChat angle). Comparison/migration topics that name a competitor AND position CRMChat are fine.
 - No marketing fluff, no parenthetical asides, no year suffixes, no clickbait. Just the topic phrase.
@@ -197,10 +304,7 @@ Return exactly ${count} topics via the emit_topics tool.`,
     messages: [
       {
         role: "user",
-        content: `TARGET AUDIENCE: ${audience}
-${kbContext ? `\nCRMChat KNOWLEDGE BASE (ground topics in this — do not invent features):\n${kbContext}` : "\n(No specific KB context matched — propose topics from CRMChat's general Telegram CRM/outreach positioning.)"}
-
-Propose ${count} AEO-optimized article topics for this audience. Call emit_topics.`,
+        content: buildSeederPrompt(input),
       },
     ],
   });
