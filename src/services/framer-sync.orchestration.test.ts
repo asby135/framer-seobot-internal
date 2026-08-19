@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { syncCollection, type CollectionPort, type CollectionItem } from "./framer-sync.js";
+import { syncCollection, previewSync, type CollectionPort, type CollectionItem } from "./framer-sync.js";
 
 /**
  * Integration-shaped tests for the destructive path.
@@ -146,5 +146,49 @@ describe("syncCollection — locale fallback", () => {
 
     const res = await syncCollection(port, [item("a")], ["ru"], locales, opts);
     expect(res.withLocales).toBe(false);
+  });
+});
+
+describe("previewSync — see the arithmetic before granting a write", () => {
+  const item = (id: string): CollectionItem => ({
+    id, slug: `slug-${id}`, fieldData: { title: { type: "string", value: id } },
+  });
+  const locales = [{ id: "ruId", code: "ru-RU", slug: "ru" }];
+  const opts = { collectionId: "c1", maxRemovalShare: 0.2, fields: [] };
+
+  it("reports the guard would refuse a full-corpus removal", () => {
+    const existing = Array.from({ length: 308 }, (_, i) => `old-${i}`);
+    const payload = Array.from({ length: 308 }, (_, i) => item(`new-${i}`));
+    const p = previewSync(existing, payload, ["ru"], locales, opts);
+
+    expect(p.wouldProceed).toBe(false);
+    expect(p.staleCount).toBe(308);
+    expect(p.guard.ok).toBe(false);
+  });
+
+  it("reports a healthy incremental sync", () => {
+    const p = previewSync(["a", "b"], [item("a"), item("b"), item("c")], ["ru"], locales, opts);
+    expect(p.wouldProceed).toBe(true);
+    expect(p.staleCount).toBe(0);
+    expect(p.newCount).toBe(1);
+    expect(p.backendCount).toBe(3);
+    expect(p.framerCount).toBe(2);
+  });
+
+  it("surfaces the resolved locale mapping so a silent RU drop is visible", () => {
+    const p = previewSync([], [item("a")], ["ru"], locales, opts);
+    expect(p.localeMapping).toEqual({ ru: "ruId" });
+  });
+
+  it("shows an empty mapping when no locale resolves", () => {
+    const p = previewSync([], [item("a")], ["fr"], locales, opts);
+    expect(p.localeMapping).toEqual({});
+  });
+
+  it("caps the stale id list so a large diff cannot flood the response", () => {
+    const existing = Array.from({ length: 100 }, (_, i) => `old-${i}`);
+    const p = previewSync(existing, [item("new")], ["ru"], locales, opts);
+    expect(p.staleCount).toBe(100);
+    expect(p.staleIds.length).toBeLessThanOrEqual(25);
   });
 });

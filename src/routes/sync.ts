@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { getDb } from "../db/index.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
+import { syncToFramer, previewSyncToFramer } from "../services/framer-sync.js";
+import { logger } from "../lib/logger.js";
 
 const sync = new Hono();
 
@@ -113,6 +115,49 @@ sync.get("/collection", (c) => {
   });
 
   return c.json({ items, locales: ["ru"] });
+});
+
+/**
+ * Dry-run the Framer sync. Connects and reports, writes nothing.
+ *
+ * The guard verdict is the point. syncToFramer holds real destructive power
+ * over a live corpus, and the honest way to trust its arithmetic is to read it
+ * against real data before granting a write.
+ */
+sync.get("/framer/preview", async (c) => {
+  try {
+    const preview = await previewSyncToFramer();
+    logger.info(
+      { stale: preview.staleCount, proceed: preview.wouldProceed },
+      "Sync preview requested"
+    );
+    return c.json(preview);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    logger.error({ error: message }, "Sync preview failed");
+    return c.json({ error: message }, 500);
+  }
+});
+
+/**
+ * Run the Framer sync by hand.
+ *
+ * Both a deliberate first-run path — so the sync's first contact with the live
+ * collection is a human watching it, not a scheduled bot — and the standing
+ * recovery path when something goes wrong unattended.
+ *
+ * Does NOT publish the site; that stays a separate, explicit act.
+ */
+sync.post("/framer", async (c) => {
+  try {
+    const result = await syncToFramer();
+    return c.json({ success: true, ...result });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    logger.error({ error: message }, "Manual Framer sync failed");
+    // A guard tripping is the expected failure here, and its message says why.
+    return c.json({ error: message }, 500);
+  }
 });
 
 export { sync };

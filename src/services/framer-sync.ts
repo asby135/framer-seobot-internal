@@ -444,6 +444,79 @@ export async function syncCollection(
   return { synced: payload.length, removed: stale.length, withLocales };
 }
 
+export interface SyncPreview {
+  collectionId: string;
+  backendCount: number;
+  framerCount: number;
+  staleCount: number;
+  staleIds: string[];
+  newCount: number;
+  localeMapping: Record<string, string>;
+  guard: GuardResult;
+  wouldProceed: boolean;
+}
+
+/**
+ * Report what a sync WOULD do, without writing anything.
+ *
+ * The point of this is the guard verdict. `syncToFramer` has real destructive
+ * power over a live corpus, and the honest way to gain confidence in it is to
+ * see its arithmetic on real data before granting it a write.
+ */
+export function previewSync(
+  existingIds: string[],
+  payload: CollectionItem[],
+  locales: string[],
+  framerLocales: FramerLocale[],
+  opts: SyncOptions
+): SyncPreview {
+  const backendIds = new Set(payload.map((i) => i.id));
+  const existing = new Set(existingIds);
+  const stale = existingIds.filter((id) => !backendIds.has(id));
+  const added = payload.filter((i) => !existing.has(i.id));
+  const guard = wipeGuard(payload.length, existingIds.length, stale.length, opts.maxRemovalShare);
+
+  return {
+    collectionId: opts.collectionId,
+    backendCount: payload.length,
+    framerCount: existingIds.length,
+    staleCount: stale.length,
+    staleIds: stale.slice(0, 25), // enough to eyeball, not enough to flood
+    newCount: added.length,
+    localeMapping: Object.fromEntries(buildLocaleMap(locales, framerLocales)),
+    guard,
+    wouldProceed: guard.ok,
+  };
+}
+
+/** Connect and report what a sync would do. Performs no writes. */
+export async function previewSyncToFramer(): Promise<SyncPreview> {
+  const collectionId = env.FRAMER_COLLECTION_ID || getSetting("framerCollectionId", "");
+  const maxRemovalShare = getSetting("maxRemovalShare", 0.2);
+  const { items: payload, locales } = loadCollectionPayload();
+
+  const framer = await connect(env.FRAMER_PROJECT_URL, env.FRAMER_API_KEY);
+  try {
+    const collections = await framer.getManagedCollections();
+    const target = collections.find((c) => c.id === collectionId);
+    if (!target) {
+      throw new Error(
+        `configured collection ${collectionId} not found among ${collections.length} managed collections`
+      );
+    }
+    const existingIds = await target.getItemIds();
+    const framerLocales = (await framer.getLocales()) as unknown as FramerLocale[];
+
+    return previewSync(existingIds, payload, locales, framerLocales, {
+      collectionId,
+      maxRemovalShare,
+      fields: FRAMER_FIELDS,
+    });
+  } finally {
+    await framer.disconnect();
+  }
+}
+
 /**
  * Single-flight lock.
  *
