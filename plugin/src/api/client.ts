@@ -110,7 +110,9 @@ class ApiClient {
     this.baseUrl = this.normalizeUrl(baseUrl);
     const result = await this.request<{ api_key: string }>("/api/setup", {
       method: "POST",
-      body: JSON.stringify({ secret }),
+      // Claim a dedicated label so reconnecting the plugin cannot invalidate a
+      // key held elsewhere (a terminal, a script). Each consumer owns its own.
+      body: JSON.stringify({ secret, label: "plugin" }),
       headers: {}, // no auth header for setup
     });
     this.apiKey = result.api_key;
