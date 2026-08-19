@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS keywords (
   cpc REAL,
   opportunity_score REAL,
   status TEXT NOT NULL DEFAULT 'pending', -- pending, approved, rejected, generated
+  proposed_title TEXT,   -- headline approved by the operator at gate 1
+  bot_message_id INTEGER, -- Telegram message carrying that gate's buttons
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -83,3 +85,12 @@ CREATE INDEX IF NOT EXISTS idx_articles_keyword ON articles(keyword_id);
 CREATE INDEX IF NOT EXISTS idx_assets_article ON assets(article_id);
 CREATE INDEX IF NOT EXISTS idx_sync_log_action ON sync_log(action);
 CREATE INDEX IF NOT EXISTS idx_translations_article ON article_translations(article_id);
+
+-- Runtime configuration (niche taxonomy, rotation cursor, schedule, last run).
+-- Values are JSON documents so config can evolve without schema migrations, and
+-- so the operator can retune the pipeline from the plugin without a redeploy.
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

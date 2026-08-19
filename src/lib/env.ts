@@ -31,4 +31,18 @@ export const env = {
 
   // Slack (optional)
   SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL || "",
+
+  // Framer Server API — CMS sync and site publish
+  FRAMER_API_KEY: process.env.FRAMER_API_KEY || "",
+  FRAMER_PROJECT_URL: process.env.FRAMER_PROJECT_URL || "",
+  // The collection bound to the article CMS page. Syncing into any other
+  // collection silently destroys every internal link — see framer-sync.ts.
+  FRAMER_COLLECTION_ID: process.env.FRAMER_COLLECTION_ID || "",
+
+  // Telegram — the two approval gates and failure alerts
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || "",
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || "",
+  // Sent by Telegram as X-Telegram-Bot-Api-Secret-Token; the webhook rejects
+  // any request without it. This is the primary auth on that route.
+  TELEGRAM_WEBHOOK_SECRET: process.env.TELEGRAM_WEBHOOK_SECRET || "",
 };

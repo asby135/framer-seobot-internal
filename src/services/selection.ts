@@ -1,0 +1,58 @@
+/**
+ * Which pending topics become tonight's articles.
+ *
+ * Pure functions with an injected RNG so selection is deterministic under test.
+ */
+
+export interface PendingTopic {
+  id: string;
+  query: string;
+  source: string;
+}
+
+/**
+ * Era/OhMyGEO was retired: its queries largely duplicated already-published
+ * articles, and 770 such rows were purged on 2026-08-19. Only self-seeded and
+ * hand-entered topics are eligible.
+ *
+ * This is an allowlist rather than a denylist so an unrecognised source fails
+ * closed — a new source must be added here deliberately before it can consume
+ * generation budget.
+ */
+const USABLE_SOURCES = new Set(["seeded", "custom"]);
+
+export function usableTopics(topics: PendingTopic[]): PendingTopic[] {
+  return topics.filter((t) => USABLE_SOURCES.has(t.source));
+}
+
+/**
+ * Pick up to `count` topics at random from the usable pool.
+ *
+ * Random rather than scored: with Era gone every seeded topic carries the same
+ * neutral opportunity_score, so ranking would be meaningless. Randomness also
+ * spreads output across niches within a night.
+ */
+export function selectTopics(
+  topics: PendingTopic[],
+  count: number,
+  rng: () => number = Math.random
+): PendingTopic[] {
+  const pool = usableTopics(topics); // already a fresh array — caller is not mutated
+  const picked: PendingTopic[] = [];
+
+  while (picked.length < count && pool.length > 0) {
+    // Clamp: an rng returning exactly 1 would otherwise index out of bounds.
+    const i = Math.min(pool.length - 1, Math.floor(rng() * pool.length));
+    picked.push(pool.splice(i, 1)[0]);
+  }
+
+  return picked;
+}
+
+/**
+ * Should the seeder run tonight? Measured against usable topics only — a pool
+ * full of excluded rows is not runway, however large it looks.
+ */
+export function needsTopUp(topics: PendingTopic[], threshold: number): boolean {
+  return usableTopics(topics).length < threshold;
+}

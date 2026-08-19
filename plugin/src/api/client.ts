@@ -289,6 +289,36 @@ class ApiClient {
   async getSchema() {
     return this.request<{ fields: CMSField[] }>("/api/schema");
   }
+
+  // Generator settings
+  async getSettings() {
+    return this.request<GeneratorSettings>("/api/settings");
+  }
+
+  async updateSettings(patch: Partial<GeneratorSettings>) {
+    return this.request<{ success: boolean; updated: string[] }>("/api/settings", {
+      method: "POST",
+      body: JSON.stringify(patch),
+    });
+  }
+}
+
+export interface Niche {
+  name: string;
+  persona: string;
+  subniches: string[];
+  kb_hints: string[];
+  probation: boolean;
+}
+
+export interface GeneratorSettings {
+  niches: Niche[];
+  minPerNight: number;
+  maxPerNight: number;
+  scheduleHour: number;
+  poolThreshold: number;
+  rotationCursor: number;
+  lastRunDate: string | null;
 }
 
 export class ApiError extends Error {

@@ -145,6 +145,22 @@ export function getKBArticleCount(): number {
   return articles.length;
 }
 
+/**
+ * Fetch a KB doc by filename, for callers that know exactly which grounding
+ * they want rather than relying on TF-IDF to surface it.
+ *
+ * Used by the seeder's `kb_hints`: niches with thin keyword overlap (RU SaaS,
+ * currency exchanges) retrieve noise from a relevance search, so their
+ * grounding is pinned explicitly instead.
+ */
+export function getKBArticle(
+  filename: string
+): { filename: string; title: string; content: string } | undefined {
+  const found = articles.find((a) => a.filename === filename);
+  if (!found) return undefined;
+  return { filename: found.filename, title: found.title, content: found.content };
+}
+
 // --- Internal helpers ---
 
 function extractTitle(content: string, filename: string): string {
