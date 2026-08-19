@@ -83,3 +83,12 @@ CREATE INDEX IF NOT EXISTS idx_articles_keyword ON articles(keyword_id);
 CREATE INDEX IF NOT EXISTS idx_assets_article ON assets(article_id);
 CREATE INDEX IF NOT EXISTS idx_sync_log_action ON sync_log(action);
 CREATE INDEX IF NOT EXISTS idx_translations_article ON article_translations(article_id);
+
+-- Runtime configuration (niche taxonomy, rotation cursor, schedule, last run).
+-- Values are JSON documents so config can evolve without schema migrations, and
+-- so the operator can retune the pipeline from the plugin without a redeploy.
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
