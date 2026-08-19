@@ -55,6 +55,17 @@ export function enqueueGeneration(job: GenerationJob): void {
       { articleId: result.articleId, status: result.status, query: job.query },
       "Generation complete"
     );
+
+    // Chain RU translation so an article reaches the review gate already
+    // localized. Without this the operator would approve an article that only
+    // becomes bilingual after a separate manual trigger.
+    //
+    // Skipped for generation_failed rows: they have no usable content, and
+    // translating a failure stub would waste a call and produce a misleading
+    // "translated" flag on the article.
+    if (result.status !== "generation_failed") {
+      enqueueTranslation({ articleId: result.articleId, force: false });
+    }
   });
 }
 
