@@ -100,37 +100,54 @@ describe("buildItems", () => {
 });
 
 describe("wipeGuard", () => {
+  // Signature: (backendCount, framerCount, removalCount, maxRemovalShare).
+  // removalCount MUST be the actual stale set — see syncCollection.
+
   it("blocks when the backend is empty but Framer holds items", () => {
     // The exact shape of a lost database: sync would delete the whole blog.
-    const r = wipeGuard(0, 308, 0.2);
+    const r = wipeGuard(0, 308, 308, 0.2);
     expect(r.ok).toBe(false);
     expect(r.ok === false && r.reason).toMatch(/0 published/i);
   });
 
   it("blocks when removals exceed the allowed share", () => {
-    const r = wipeGuard(200, 308, 0.2); // would remove 108 of 308 (35%)
+    const r = wipeGuard(200, 308, 108, 0.2); // 108 of 308 = 35%
     expect(r.ok).toBe(false);
     expect(r.ok === false && r.reason).toMatch(/remove/i);
   });
 
+  it("blocks a full-corpus removal even when the counts match", () => {
+    // IDs diverged; counts are identical. The count-based guard passed this.
+    expect(wipeGuard(308, 308, 308, 0.2).ok).toBe(false);
+  });
+
   it("allows a normal incremental sync that adds items", () => {
-    expect(wipeGuard(310, 308, 0.2).ok).toBe(true);
+    expect(wipeGuard(310, 308, 0, 0.2).ok).toBe(true);
   });
 
   it("allows a small removal within the share", () => {
-    expect(wipeGuard(300, 308, 0.2).ok).toBe(true); // 8 of 308 = 2.6%
+    expect(wipeGuard(300, 308, 8, 0.2).ok).toBe(true); // 2.6%
+  });
+
+  it("allows a handful of removals from a small collection", () => {
+    // 1 of 3 is 33% by share, but deleting one article is an ordinary edit.
+    expect(wipeGuard(2, 3, 1, 0.2).ok).toBe(true);
+  });
+
+  it("still blocks a large removal that is under the absolute floor's scale", () => {
+    expect(wipeGuard(50, 100, 40, 0.2).ok).toBe(false);
   });
 
   it("allows the first sync into an empty collection", () => {
-    expect(wipeGuard(308, 0, 0.2).ok).toBe(true);
+    expect(wipeGuard(308, 0, 0, 0.2).ok).toBe(true);
   });
 
   it("allows an empty backend when Framer is also empty", () => {
-    expect(wipeGuard(0, 0, 0.2).ok).toBe(true);
+    expect(wipeGuard(0, 0, 0, 0.2).ok).toBe(true);
   });
 
-  it("blocks a total wipe even at a permissive share", () => {
-    expect(wipeGuard(0, 5, 0.9).ok).toBe(false);
+  it("blocks a total wipe of a large collection at a permissive share", () => {
+    expect(wipeGuard(0, 500, 500, 0.9).ok).toBe(false);
   });
 });
 

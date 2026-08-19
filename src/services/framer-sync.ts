@@ -118,6 +118,19 @@ export function buildItems(
   });
 }
 
+export interface SchemaField {
+  id: string;
+  name: string;
+  type: string;
+}
+
+/**
+ * Removals at or below this count are always allowed, regardless of share.
+ * Deleting a handful of articles is a normal edit; the guard is aimed at the
+ * case where a lost or rebuilt database would take the whole corpus with it.
+ */
+const MIN_UNGUARDED_REMOVALS = 10;
+
 export type GuardResult = { ok: true } | { ok: false; reason: string };
 
 /**
@@ -130,6 +143,7 @@ export type GuardResult = { ok: true } | { ok: false; reason: string };
 export function wipeGuard(
   backendCount: number,
   framerCount: number,
+  removalCount: number,
   maxRemovalShare: number
 ): GuardResult {
   if (framerCount === 0) return { ok: true };
@@ -141,11 +155,20 @@ export function wipeGuard(
     };
   }
 
-  const removals = Math.max(0, framerCount - backendCount);
-  if (removals / framerCount > maxRemovalShare) {
+  // An absolute floor below the share check. The share alone makes any removal
+  // from a small collection look catastrophic — 1 of 3 is 33% — which would
+  // block ordinary edits while a collection is still growing. The guard exists
+  // to catch mass deletion, not to forbid deletion.
+  if (removalCount <= MIN_UNGUARDED_REMOVALS) return { ok: true };
+
+  // MUST be the actual removal set, not framerCount - backendCount. Those
+  // differ whenever IDs diverge rather than counts: 308 backend rows whose ids
+  // no longer match Framer's 308 items yields 0 by subtraction and 308 by set
+  // difference. The count-based version passed that case and deleted the lot.
+  if (removalCount / framerCount > maxRemovalShare) {
     return {
       ok: false,
-      reason: `sync would remove ${removals} of ${framerCount} items (over ${Math.round(
+      reason: `sync would remove ${removalCount} of ${framerCount} items (over ${Math.round(
         maxRemovalShare * 100
       )}%) — refusing`,
     };
@@ -176,12 +199,6 @@ export function assertBoundCollection(targetId: string, configuredId: string): v
         "Syncing into an unbound collection destroys all internal links."
     );
   }
-}
-
-interface SchemaField {
-  id: string;
-  name: string;
-  type: string;
 }
 
 /** Read the published articles in Framer's item shape (mirrors /api/sync/collection). */
@@ -258,6 +275,23 @@ export const FIELD_IDS = [
   "tool",
 ] as const;
 
+/**
+ * The bound collection's field definitions, as verified against the live
+ * project. Used to reconcile fields on sync — previously read from a setting
+ * that nothing ever wrote, which made the whole reconciliation block dead code.
+ */
+export const FRAMER_FIELDS: SchemaField[] = [
+  { id: "image", name: "Image", type: "image" },
+  { id: "title", name: "Title", type: "string" },
+  { id: "category", name: "Category", type: "string" },
+  { id: "created", name: "Created", type: "date" },
+  { id: "updated", name: "Updated", type: "date" },
+  { id: "summary", name: "Summary", type: "string" },
+  { id: "content", name: "Content", type: "formattedText" },
+  { id: "schema_jsonld", name: "Schema JSON-LD", type: "string" },
+  { id: "tool", name: "Tool", type: "string" },
+];
+
 /** Build one Framer item from an article row and its translations. Pure. */
 export function buildItem(a: ArticleRow, translations: TranslationRow[]): CollectionItem {
   const set = (value: string | null) => ({ action: "set", value: value ?? "" });
@@ -305,12 +339,119 @@ export interface SyncResult {
 }
 
 /**
- * Push all published articles into the bound Framer collection.
+ * The subset of Framer's ManagedCollection this module needs.
+ *
+ * Exists so the destructive path can be driven by a fake in tests. The guards
+ * are only meaningful in relation to the calls around them, and asserting them
+ * as standalone predicates is what let a wrong-quantity guard ship.
+ */
+export interface CollectionPort {
+  id: string;
+  getItemIds(): Promise<string[]>;
+  getFields(): Promise<SchemaField[]>;
+  setFields(fields: SchemaField[]): Promise<void>;
+  addItems(items: CollectionItem[]): Promise<void>;
+  removeItems(ids: string[]): Promise<void>;
+  setPluginData(key: string, value: string): Promise<void>;
+}
+
+export interface SyncOptions {
+  collectionId: string;
+  maxRemovalShare: number;
+  fields: SchemaField[];
+}
+
+/** Errors that indicate a locale/variable problem rather than a transport failure. */
+function isLocaleFailure(e: unknown): boolean {
+  const message = e instanceof Error ? e.message.toLowerCase() : "";
+  return (
+    message.includes("locale") ||
+    message.includes("variable") ||
+    message.includes("valuebylocale")
+  );
+}
+
+/**
+ * Orchestrate a sync against an already-connected collection.
+ *
+ * Order is load-bearing:
+ *   1. assert the target is the configured collection
+ *   2. compute the stale set
+ *   3. guard on that set's size          <- before anything destructive
+ *   4. remove stale, then add            <- remove first: a regenerated article
+ *                                           reuses its slug with a new id, and
+ *                                           Framer rejects duplicate slugs
+ */
+export async function syncCollection(
+  collection: CollectionPort,
+  payload: CollectionItem[],
+  locales: string[],
+  framerLocales: FramerLocale[],
+  opts: SyncOptions
+): Promise<SyncResult> {
+  assertBoundCollection(collection.id, opts.collectionId);
+
+  const existingIds = await collection.getItemIds();
+  const backendIds = new Set(payload.map((i) => i.id));
+  const stale = existingIds.filter((id) => !backendIds.has(id));
+
+  const guard = wipeGuard(payload.length, existingIds.length, stale.length, opts.maxRemovalShare);
+  if (!guard.ok) throw new Error(guard.reason);
+
+  // Fields are append-only: existing field objects go back with identical ids
+  // so canvas variable bindings survive.
+  if (opts.fields.length > 0) {
+    const existingFields = await collection.getFields();
+    const existing = new Set(existingFields.map((f) => f.id));
+    const missing = opts.fields.filter((f) => !existing.has(f.id));
+    if (existingFields.length === 0) await collection.setFields(opts.fields);
+    else if (missing.length > 0) await collection.setFields([...existingFields, ...missing]);
+  }
+
+  const localeMap = buildLocaleMap(locales, framerLocales);
+  if (localeMap.size === 0) {
+    logger.warn({ locales }, "No Framer locale matched — syncing without translations");
+  }
+
+  if (stale.length > 0) await collection.removeItems(stale);
+
+  const addAll = async (items: CollectionItem[]) => {
+    for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+      await collection.addItems(items.slice(i, i + CHUNK_SIZE));
+    }
+  };
+
+  let withLocales = true;
+  try {
+    await addAll(buildItems(payload, localeMap));
+  } catch (e) {
+    // Only a locale-shaped failure justifies retrying without translations.
+    // Catching everything meant a rate limit or network blip could silently
+    // blank RU across the whole corpus with nothing but a log line.
+    if (!isLocaleFailure(e)) throw e;
+
+    logger.error(
+      { error: e instanceof Error ? e.message : "unknown" },
+      "Locale sync failed — retrying without translations"
+    );
+    withLocales = false;
+    await addAll(buildItems(payload, localeMap, { includeLocales: false }));
+  }
+
+  await collection.setPluginData("lastSync", new Date().toISOString());
+
+  logger.info({ synced: payload.length, removed: stale.length, withLocales }, "Framer sync complete");
+  return { synced: payload.length, removed: stale.length, withLocales };
+}
+
+/**
+ * Connect to Framer and sync all published articles into the bound collection.
  * Does NOT publish the site — that is debounced separately.
  */
 export async function syncToFramer(): Promise<SyncResult> {
-  const collectionId = getSetting("framerCollectionId", env.FRAMER_COLLECTION_ID);
+  const collectionId = env.FRAMER_COLLECTION_ID || getSetting("framerCollectionId", "");
   const maxRemovalShare = getSetting("maxRemovalShare", 0.2);
+  const fields = getSetting<SchemaField[]>("framerFields", FRAMER_FIELDS);
 
   const { items: payload, locales } = loadCollectionPayload();
 
@@ -323,62 +464,15 @@ export async function syncToFramer(): Promise<SyncResult> {
         `configured collection ${collectionId} not found among ${collections.length} managed collections`
       );
     }
-    assertBoundCollection(target.id, collectionId);
 
-    const existingIds = await target.getItemIds();
-    const guard = wipeGuard(payload.length, existingIds.length, maxRemovalShare);
-    if (!guard.ok) throw new Error(guard.reason);
-
-    // Fields are append-only: existing field objects go back with identical ids
-    // so canvas variable bindings survive.
-    const existingFields = (await target.getFields()) as SchemaField[];
-    const backendFields = getSetting<SchemaField[]>("framerFields", []);
-    if (backendFields.length > 0) {
-      const existing = new Set(existingFields.map((f) => f.id));
-      const missing = backendFields.filter((f) => !existing.has(f.id));
-      if (existingFields.length === 0) await target.setFields(backendFields as never);
-      else if (missing.length > 0) await target.setFields([...existingFields, ...missing] as never);
-    }
-
-    const localeMap = buildLocaleMap(locales, await framer.getLocales());
-    if (localeMap.size === 0) {
-      logger.warn({ locales }, "No Framer locale matched — syncing without translations");
-    }
-
-    const backendIds = new Set(payload.map((i) => i.id));
-    const stale = existingIds.filter((id) => !backendIds.has(id));
-
-    // Remove before adding: a regenerated article keeps its slug but takes a new
-    // id, and Framer rejects duplicate slugs.
-    if (stale.length > 0) await target.removeItems(stale);
-
-    let withLocales = true;
-    const items = buildItems(payload, localeMap);
-    try {
-      for (let i = 0; i < items.length; i += CHUNK_SIZE) {
-        await target.addItems(items.slice(i, i + CHUNK_SIZE) as never);
-      }
-    } catch (e) {
-      // Orphaned variable references in the project can make locale writes fail.
-      // Fall back to syncing content without translations rather than blocking.
-      logger.warn(
-        { error: e instanceof Error ? e.message : "unknown" },
-        "Locale sync failed — retrying without translations"
-      );
-      withLocales = false;
-      const plain = buildItems(payload, localeMap, { includeLocales: false });
-      for (let i = 0; i < plain.length; i += CHUNK_SIZE) {
-        await target.addItems(plain.slice(i, i + CHUNK_SIZE) as never);
-      }
-    }
-
-    await target.setPluginData("lastSync", new Date().toISOString());
-
-    logger.info(
-      { synced: items.length, removed: stale.length, withLocales },
-      "Framer sync complete"
+    const framerLocales = (await framer.getLocales()) as unknown as FramerLocale[];
+    return await syncCollection(
+      target as unknown as CollectionPort,
+      payload,
+      locales,
+      framerLocales,
+      { collectionId, maxRemovalShare, fields }
     );
-    return { synced: items.length, removed: stale.length, withLocales };
   } finally {
     await framer.disconnect();
   }
