@@ -909,9 +909,11 @@ export function stripLeakedJsonLd(html: string): string {
  * content.
  */
 export function stripTrailingPlaceholder(html: string): string {
-  return html
-    .replace(/(?:<p[^>]*>\s*)?placeholder(?:\s*<\/p>)?\s*$/i, "")
-    .trimEnd();
+  const stripped = html.replace(/(?:<p[^>]*>\s*)?placeholder(?:\s*<\/p>)?\s*$/i, "");
+  // Only touch the content when a placeholder was actually found. Trimming
+  // unconditionally would rewrite every article for no reason, which makes
+  // audits noisy and diffs meaningless.
+  return stripped === html ? html : stripped.trimEnd();
 }
 
 export function sanitizeHTML(html: string): string {

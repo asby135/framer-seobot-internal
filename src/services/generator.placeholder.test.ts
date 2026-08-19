@@ -46,3 +46,20 @@ describe("stripTrailingPlaceholder", () => {
     expect(stripTrailingPlaceholder("<p>A</p><p>B</p>placeholder")).toBe("<p>A</p><p>B</p>");
   });
 });
+
+describe("stripTrailingPlaceholder — no-op safety", () => {
+  it("leaves trailing whitespace alone when there is no placeholder", () => {
+    // The function must not rewrite content it did not need to change.
+    const html = "<p>Body</p>\n\n";
+    expect(stripTrailingPlaceholder(html)).toBe(html);
+  });
+
+  it("returns the identical string reference when nothing matches", () => {
+    const html = "<p>Clean</p>";
+    expect(stripTrailingPlaceholder(html)).toBe(html);
+  });
+
+  it("still trims whitespace left behind after removing a placeholder", () => {
+    expect(stripTrailingPlaceholder("<p>Body</p>\n\nplaceholder\n")).toBe("<p>Body</p>");
+  });
+});
