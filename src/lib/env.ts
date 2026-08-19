@@ -31,4 +31,11 @@ export const env = {
 
   // Slack (optional)
   SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL || "",
+
+  // Telegram — the two approval gates and failure alerts
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || "",
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || "",
+  // Sent by Telegram as X-Telegram-Bot-Api-Secret-Token; the webhook rejects
+  // any request without it. This is the primary auth on that route.
+  TELEGRAM_WEBHOOK_SECRET: process.env.TELEGRAM_WEBHOOK_SECRET || "",
 };
