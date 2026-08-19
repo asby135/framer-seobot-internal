@@ -63,12 +63,21 @@ Two findings that make migration cheap:
 
 ### Migration procedure
 
-1. `framer.createManagedCollection("CRMChat SEO Engine (API)")` — the name must
-   differ from the existing collection.
-2. `setFields()` with the same 9 field IDs, names and types from `/api/schema`.
-3. `addItems()` with the full `/api/sync/collection` payload — identical item IDs
-   and slugs, `valueByLocale` keyed to `mG5aB_oJw`.
-4. Verify: 298 items, spot-check slugs, confirm RU values landed.
+1. ~~`createManagedCollection("CRMChat SEO Engine (API)")`~~ **DONE 2026-08-19** —
+   id `kqBHLapEf`.
+2. ~~`setFields()` with the 9 field IDs from `/api/schema`~~ **DONE** — 9 fields.
+3. ~~`addItems()` from `/api/sync/collection`~~ **DONE** — 308 items in chunks of 20
+   (payload is ~10 MB, so a single call is not advisable).
+4. ~~Verify~~ **DONE** — 308/308 items, slug parity exact (0 missing), RU present on
+   title, summary, content and schema_jsonld. Ownership confirmed:
+
+   ```
+   "CRMChat SEO Engine"        managedBy=anotherPlugin   items=308
+   "CRMChat SEO Engine (API)"  managedBy=thisPlugin      items=308
+   ```
+
+   Remaining steps are manual, in the Framer editor:
+
 5. In Framer, repoint the blog listing and the article CMS page to the new
    collection and rebind the template fields.
 6. Preview, then publish once, so there is no window where `/blog/*` 404s.
@@ -138,6 +147,7 @@ One Railway service, unchanged in kind. New pieces:
 - `src/services/notify.ts` — Telegram digests and alerts
 - `src/routes/telegram.ts` — webhook, `secret_token`, chat-ID allowlist
 - `settings` table — key/value JSON: niches, rotation cursor, schedule, Framer creds
+  (`FRAMER_COLLECTION_ID=kqBHLapEf`, locale `ru` → `mG5aB_oJw`)
 - `keywords` gains `proposed_title`, `bot_message_id`
 - Dockerfile: `node:20-slim` → `node:22-slim`
 
@@ -228,7 +238,14 @@ retries once with backoff, then fails loudly. Generation failures land as
 - Clear the two `TODOS.md` items for `translator.ts` and the generator
   schema-retry path; translation now runs unattended up to 10x/night
 
-## Topic pool state (2026-08-18)
+## Topic pool state
+
+**Purged 2026-08-19:** 767 pending + 3 approved Era rows deleted; `era-gap` and
+`gsc` were already empty. Remaining usable pool: **5 pending seeded + 5
+approved seeded/custom** — roughly one night at 5-10/night, confirming the
+seeding rotation is required from night one.
+
+### Original tally (2026-08-18)
 
 The queue shows **772 pending** topics, but these are overwhelmingly Era/GSC rows
 that largely duplicate already-published articles. They are to be purged, not
