@@ -296,18 +296,20 @@ up to 5-10.
 
 ## Known content issues
 
-- **Internal link path mismatch.** `generator.ts` instructs `<a href="/blog/slug">`
-  (lines 301, 469) and validates only that the slug exists in the local DB (line
-  952) — never that the route resolves in Framer. Live testing shows `/blog/:slug`
-  resolves only for slugs that also exist in the legacy Seobot collection;
-  articles unique to this collection 404 there. Options: emit
-  `/articles/<slug>`, or emit absolute `https://crmchat.ai/articles/<slug>`
-  (deterministic, immune to the ingest-resolution problem above — the safer
-  choice for an unattended nightly pipeline).
-- **Canonical tags may point at soft 404s.** `/articles/<slug>` pages declare
-  `canonical → /blog/<slug>`. Where that slug is absent from Seobot, the
-  canonical URL returns Framer's 404 page with HTTP 200. Verify site-wide; if
-  confirmed it is the highest-priority SEO defect in the system.
+- **Route structure is correct — earlier concerns retracted (2026-08-19).**
+  `/blog/<slug>` is the canonical public route: the sitemap lists 616 `/blog/`
+  URLs, project Redirects map `/articles/* → /blog/:1`, and canonical tags point
+  to `/blog/<slug>` accordingly. The generator's `<a href="/blog/slug">` internal
+  links are therefore CORRECT and must not be changed to `/articles/`. All 308
+  published articles appear in the sitemap and serve real content.
+
+  Two earlier claims in this doc were measurement errors and are withdrawn:
+  "canonical tags point at soft 404s" and "articles are not reachable". Both came
+  from parallel HTTP sampling that tripped CDN throttling; throttled responses
+  were misread as 404 shells. Sequential requests with delays return HTTP 200 and
+  full article bodies every time. **Lesson: rate-limit any live-site crawling to
+  sequential requests with delays before drawing conclusions.**
+
 - **Literal "placeholder" text** in 6 of 308 articles (5 as a trailing text
   node). No code emits it — it is model output that survived sanitisation. Add a
   generator check and clean the affected articles.
