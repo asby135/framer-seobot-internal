@@ -360,12 +360,17 @@ export function registerArticleReadyHandler(): void {
   });
 }
 
-export function createNightlyRunner(): Runner {
-  return createRunner({
-    hour: getSetting("scheduleHour", 20),
-    getLastRun: () => getSetting<string | null>("lastRunDate", null),
-    setLastRun: (date) => setSetting("lastRunDate", date),
-    job: async () => {
+/**
+ * The nightly job, callable on demand.
+ *
+ * Shared by the scheduler and by POST /api/autopilot/run so the manual trigger
+ * exercises exactly the code the clock will run — a trigger that took a
+ * different path would prove nothing.
+ *
+ * `dryRun` proposes titles and sends the digest but persists nothing, so a
+ * rehearsal leaves no state for the real run to trip over.
+ */
+export async function runNightlyJob(dryRun: boolean): Promise<void> {
       await runNightly({
         getNiches: () => getSetting<Niche[]>("niches", DEFAULT_NICHES),
         getCursor: () => getSetting("rotationCursor", 0),
@@ -400,9 +405,28 @@ export function createNightlyRunner(): Runner {
         sendTitleDigest,
         saveDigestMessageId: (id) => setSetting("lastDigestMessageId", id),
 
-        dryRun: process.env.SCHEDULER_DRY_RUN === "1",
+        dryRun,
       });
-    },
+}
+
+/** Guards against a manual trigger colliding with the scheduled run. */
+let nightlyInFlight: Promise<void> | null = null;
+
+export async function runNightlyOnce(dryRun: boolean): Promise<{ started: boolean }> {
+  if (nightlyInFlight) return { started: false };
+  nightlyInFlight = runNightlyJob(dryRun).finally(() => {
+    nightlyInFlight = null;
+  });
+  await nightlyInFlight;
+  return { started: true };
+}
+
+export function createNightlyRunner(): Runner {
+  return createRunner({
+    hour: getSetting("scheduleHour", 20),
+    getLastRun: () => getSetting<string | null>("lastRunDate", null),
+    setLastRun: (date) => setSetting("lastRunDate", date),
+    job: () => runNightlyJob(process.env.SCHEDULER_DRY_RUN === "1"),
   });
 }
 
