@@ -304,11 +304,21 @@ up to 5-10.
   published articles appear in the sitemap and serve real content.
 
   Two earlier claims in this doc were measurement errors and are withdrawn:
-  "canonical tags point at soft 404s" and "articles are not reachable". Both came
-  from parallel HTTP sampling that tripped CDN throttling; throttled responses
-  were misread as 404 shells. Sequential requests with delays return HTTP 200 and
-  full article bodies every time. **Lesson: rate-limit any live-site crawling to
-  sequential requests with delays before drawing conclusions.**
+  "canonical tags point at soft 404s" and "articles are not reachable".
+
+  **Root cause of the false readings: Framer serves a ~56 KB shell on the FIRST
+  request to a cold URL, and the full ~550 KB pre-rendered article on the second.**
+  Reproduced 4/4 on distinct slugs after a publish (a publish invalidates the
+  cache, so every URL goes cold again). Any single-request probe of a cold URL
+  reads as a 404 shell. **Always request twice, or warm the URL first, before
+  concluding a page is missing.**
+
+  **Open question worth investigating (AEO-relevant):** the cold response carries
+  the homepage `<title>` and no article content. A crawler that does not execute
+  JS and does not retry — which describes most LLM/answer-engine crawlers, the
+  exact audience this system targets — could see a contentless shell on first
+  fetch. Verify with server logs or by testing cold URLs with an LLM-crawler user
+  agent before treating it as a defect.
 
 - **Literal "placeholder" text** in 6 of 308 articles (5 as a trailing text
   node). No code emits it — it is model output that survived sanitisation. Add a
