@@ -57,7 +57,7 @@ describe("webhook route", () => {
   let handlers: CallbackHandlers;
 
   const post = (body: unknown, secret: string | null = SECRET) =>
-    buildTelegramRoute({ secret: SECRET, chatId: CHAT, handlers }).request("/", {
+    buildTelegramRoute({ secret: SECRET, chatId: CHAT, handlers, awaitHandler: true }).request("/", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

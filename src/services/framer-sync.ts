@@ -445,10 +445,31 @@ export async function syncCollection(
 }
 
 /**
+ * Single-flight lock.
+ *
+ * Callbacks are handled concurrently (the webhook acknowledges before working),
+ * and Telegram can redeliver an update. Two syncs interleaving removeItems and
+ * addItems on one collection is exactly how a partial wipe happens, so a second
+ * caller joins the run already in progress instead of starting another.
+ */
+let inFlight: Promise<SyncResult> | null = null;
+
+/**
  * Connect to Framer and sync all published articles into the bound collection.
  * Does NOT publish the site — that is debounced separately.
  */
 export async function syncToFramer(): Promise<SyncResult> {
+  if (inFlight) {
+    logger.info("Sync already in progress — joining it rather than starting a second");
+    return inFlight;
+  }
+  inFlight = doSyncToFramer().finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
+
+async function doSyncToFramer(): Promise<SyncResult> {
   const collectionId = env.FRAMER_COLLECTION_ID || getSetting("framerCollectionId", "");
   const maxRemovalShare = getSetting("maxRemovalShare", 0.2);
   const fields = getSetting<SchemaField[]>("framerFields", FRAMER_FIELDS);

@@ -13,6 +13,8 @@ interface GenerationJob {
 interface TranslationJob {
   articleId: string;
   force: boolean;
+  /** Set by the autopilot chain so the operator is told the article is ready. */
+  notifyWhenReady?: boolean;
 }
 
 interface QueueStatus {
@@ -34,6 +36,33 @@ const translationQueue = new PQueue({ concurrency: 1 });
 
 let lastGenerationResult: QueueStatus["lastResult"] = null;
 let lastTranslationResult: QueueStatus["lastResult"] = null;
+
+/**
+ * Called once an article has finished generating AND translating, i.e. when it
+ * is ready for the operator's second approval gate.
+ *
+ * A hook rather than a direct import so the queue stays free of any dependency
+ * on Telegram, and so tests can observe completion without a bot token.
+ */
+type ArticleReadyHandler = (articleId: string) => void | Promise<void>;
+let onArticleReady: ArticleReadyHandler | null = null;
+
+export function setArticleReadyHandler(handler: ArticleReadyHandler | null): void {
+  onArticleReady = handler;
+}
+
+async function notifyArticleReady(articleId: string): Promise<void> {
+  if (!onArticleReady) return;
+  try {
+    await onArticleReady(articleId);
+  } catch (e) {
+    // Never let a notification failure break the queue.
+    logger.error(
+      { articleId, error: e instanceof Error ? e.message : "unknown" },
+      "Article-ready handler failed"
+    );
+  }
+}
 
 /**
  * Enqueue an article generation job.
@@ -64,7 +93,11 @@ export function enqueueGeneration(job: GenerationJob): void {
     // translating a failure stub would waste a call and produce a misleading
     // "translated" flag on the article.
     if (result.status !== "generation_failed") {
-      enqueueTranslation({ articleId: result.articleId, force: false });
+      enqueueTranslation({ articleId: result.articleId, force: false, notifyWhenReady: true });
+    } else {
+      // A failed generation still needs to reach the operator, or the topic
+      // vanishes with no article and no message.
+      await notifyArticleReady(result.articleId);
     }
   });
 }
@@ -85,12 +118,16 @@ export function enqueueTranslation(job: TranslationJob): void {
         { articleId: job.articleId, ...result },
         "Translation complete"
       );
+      if (job.notifyWhenReady) await notifyArticleReady(job.articleId);
     } catch (e) {
       lastTranslationResult = { articleId: job.articleId, status: "failed" };
       logger.error(
         { articleId: job.articleId, error: e instanceof Error ? e.message : "unknown" },
         "Translation failed"
       );
+      // Still surface the article: an untranslated draft is reviewable, and
+      // silently withholding it would strand it in `review` forever.
+      if (job.notifyWhenReady) await notifyArticleReady(job.articleId);
     }
   });
 }

@@ -13,7 +13,8 @@ import { createPublishDebouncer } from "./publish-debounce.js";
 import { createRunner, type Runner } from "./scheduler.js";
 import { createGateHandlers, type KeywordRow, type ArticleRow } from "./gates.js";
 import { runNightly, type TitleProposal } from "./autopilot.js";
-import { buildDigest, buildKeyboard, sendMessage, editMessage, alert } from "./notify.js";
+import { buildDigest, buildKeyboard, sendMessage, sendDocument, editMessage, alert, escapeHtml } from "./notify.js";
+import { setArticleReadyHandler } from "./queue.js";
 import type { CallbackHandlers } from "../routes/telegram.js";
 
 /**
@@ -46,9 +47,43 @@ async function publishFramerSite(): Promise<void> {
 
 const debouncer = createPublishDebouncer({
   delayMs: PUBLISH_DEBOUNCE_MS,
-  publish: publishFramerSite,
-  onError: alert,
+  publish: async () => {
+    await publishFramerSite();
+    setSetting("publishPendingSince", null);
+  },
+  onError: async (message) => {
+    // Leave publishPendingSince set so the next boot retries rather than
+    // losing the deploy entirely.
+    await alert(message);
+  },
 });
+
+/**
+ * Arm the debounced deploy AND record that one is owed.
+ *
+ * The timer lives in memory, so a Railway redeploy inside the debounce window
+ * would otherwise drop it silently: articles published in the database and
+ * pushed to Framer, but the site never deployed and nobody told.
+ */
+function schedulePublishPersisted(): void {
+  if (getSetting<string | null>("publishPendingSince", null) === null) {
+    setSetting("publishPendingSince", new Date().toISOString());
+  }
+  debouncer.schedule();
+}
+
+/** On boot, re-arm a deploy that was owed when the process last stopped. */
+export function recoverPendingPublish(): void {
+  const pending = getSetting<string | null>("publishPendingSince", null);
+  if (pending === null) return;
+  logger.warn({ pendingSince: pending }, "Publish was owed at shutdown — re-arming");
+  debouncer.schedule();
+}
+
+/** Flush a pending deploy on shutdown rather than losing it. */
+export async function flushPendingPublish(): Promise<void> {
+  if (debouncer.isPending()) await debouncer.flushNow();
+}
 
 function recentPublishedTitles(limit = 100): string[] {
   // 100 rather than 30: at 5-10 articles a night, 30 titles is only four days
@@ -148,7 +183,31 @@ export function buildGateHandlers(): CallbackHandlers {
     },
 
     syncToFramer,
-    schedulePublish: () => debouncer.schedule(),
+    schedulePublish: () => schedulePublishPersisted(),
+
+    unpublishArticle: (id) => {
+      db()
+        .prepare(
+          "UPDATE articles SET status = 'review', published_at = NULL, updated_at = datetime('now') WHERE id = ?"
+        )
+        .run(id);
+    },
+
+    pendingProposedKeywordIds: () =>
+      (
+        db()
+          .prepare(
+            "SELECT id FROM keywords WHERE status = 'pending' AND proposed_title IS NOT NULL"
+          )
+          .all() as { id: string }[]
+      ).map((r) => r.id),
+
+    reviewArticleIds: () =>
+      (
+        db()
+          .prepare("SELECT id FROM articles WHERE status IN ('draft','review') ORDER BY created_at")
+          .all() as { id: string }[]
+      ).map((r) => r.id),
 
     recentTitles: () => recentPublishedTitles(),
     proposeTitle,
@@ -179,6 +238,126 @@ async function sendTitleDigest(proposals: TitleProposal[]): Promise<number> {
 
   await sendMessage(text, buildKeyboard(rows));
   return 0; // sendMessage does not surface the id; digest edits are by content
+}
+
+/**
+ * Gate 2: tell the operator an article is ready, and give them the buttons to
+ * publish, regenerate or delete it.
+ *
+ * One message per article rather than a batch digest: the article body goes out
+ * as an .html attachment (a 1,500-word body is several times Telegram's
+ * 4,096-character message limit), and an attachment belongs with the item it
+ * describes. The Publish-all button on each message acts on everything in
+ * review, so approving a whole batch is still one tap.
+ */
+export async function sendArticleReadyDigest(articleId: string): Promise<void> {
+  const db = getDb();
+  const article = db
+    .prepare("SELECT id, title, slug, summary, content, status, flags FROM articles WHERE id = ?")
+    .get(articleId) as
+    | {
+        id: string;
+        title: string;
+        slug: string;
+        summary: string | null;
+        content: string | null;
+        status: string;
+        flags: string | null;
+      }
+    | undefined;
+
+  if (!article) {
+    logger.warn({ articleId }, "Article-ready: article not found");
+    return;
+  }
+
+  if (article.status === "generation_failed") {
+    await alert(`Generation failed for "${article.title}" (${article.slug}).`);
+    return;
+  }
+
+  const ru = db
+    .prepare("SELECT title FROM article_translations WHERE article_id = ? AND locale = 'ru'")
+    .get(articleId) as { title: string } | undefined;
+
+  const words = (article.content ?? "").replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length;
+
+  const flags: string[] = [];
+  if (!ru) flags.push("⚠️ RU translation missing");
+  try {
+    const parsed = JSON.parse(article.flags ?? "{}") as Record<string, unknown>;
+    for (const key of Object.keys(parsed)) flags.push(`⚠️ ${key}`);
+  } catch {
+    /* flags column is best-effort metadata */
+  }
+
+  const text = [
+    `<b>Ready for review</b>`,
+    "",
+    `<b>${escapeHtml(article.title)}</b>`,
+    ru ? `🇷🇺 ${escapeHtml(ru.title)}` : "",
+    "",
+    escapeHtml(article.summary ?? ""),
+    "",
+    `<i>${words} words · /${escapeHtml(article.slug)}</i>`,
+    flags.length > 0 ? `\n${flags.join("\n")}` : "",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+
+  const keyboard = buildKeyboard([
+    [
+      { text: "🚀 Publish", data: `pub:${article.id}` },
+      { text: "🔄 Regenerate", data: `rgn:${article.id}` },
+      { text: "🗑 Delete", data: `del:${article.id}` },
+    ],
+    [{ text: "🚀 Publish all in review", data: "puball:" }],
+  ]);
+
+  await sendMessage(text, keyboard);
+
+  // The body as an attachment: Telegram previews .html inline on mobile, and
+  // this keeps the operator off a public URL entirely.
+  if (article.content) {
+    const doc = renderArticleHtml(article.title, article.content, ru?.title ?? null, articleId);
+    await sendDocument(`${article.slug}.html`, doc, escapeHtml(article.title));
+  }
+}
+
+/** Wrap the stored body fragment in a minimal readable document. */
+function renderArticleHtml(
+  title: string,
+  content: string,
+  ruTitle: string | null,
+  articleId: string
+): string {
+  const ruContent =
+    (
+      getDb()
+        .prepare("SELECT content FROM article_translations WHERE article_id = ? AND locale = 'ru'")
+        .get(articleId) as { content: string | null } | undefined
+    )?.content ?? null;
+
+  return `<!doctype html>
+<meta charset="utf-8">
+<title>${escapeHtml(title)}</title>
+<style>
+  body { font: 16px/1.6 -apple-system, system-ui, sans-serif; max-width: 40em; margin: 2em auto; padding: 0 1em; }
+  h1 { font-size: 1.6em; line-height: 1.2; }
+  hr { margin: 3em 0; border: 0; border-top: 1px solid #ccc; }
+  .locale { color: #888; font-size: .8em; text-transform: uppercase; letter-spacing: .08em; }
+</style>
+<p class="locale">English</p>
+<h1>${escapeHtml(title)}</h1>
+${content}
+${ruContent ? `<hr><p class="locale">Russian</p><h1>${escapeHtml(ruTitle ?? "")}</h1>\n${ruContent}` : ""}`;
+}
+
+/** Register the queue hook so finished articles reach gate 2. */
+export function registerArticleReadyHandler(): void {
+  setArticleReadyHandler(async (articleId) => {
+    await sendArticleReadyDigest(articleId);
+  });
 }
 
 export function createNightlyRunner(): Runner {

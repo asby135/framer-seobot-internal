@@ -17,7 +17,14 @@ import { research } from "./routes/research.js";
 import { kb } from "./routes/kb.js";
 import { telegramRoute } from "./routes/telegram.js";
 import { settings as settingsRoute } from "./routes/settings.js";
-import { buildGateHandlers, createNightlyRunner, ensureDefaultSettings } from "./services/bootstrap.js";
+import {
+  buildGateHandlers,
+  createNightlyRunner,
+  ensureDefaultSettings,
+  registerArticleReadyHandler,
+  recoverPendingPublish,
+  flushPendingPublish,
+} from "./services/bootstrap.js";
 
 // Initialize database
 initDb();
@@ -78,15 +85,21 @@ app.route("/api/settings", settingsRoute);
 process.on("SIGTERM", () => {
   logger.info("SIGTERM received, shutting down");
   runner?.stop();
-  closeDb();
-  process.exit(0);
+  // Flush rather than drop a pending deploy; publishPendingSince covers us if
+  // the flush itself does not finish in time.
+  void flushPendingPublish().finally(() => {
+    closeDb();
+    process.exit(0);
+  });
 });
 
 process.on("SIGINT", () => {
   logger.info("SIGINT received, shutting down");
   runner?.stop();
-  closeDb();
-  process.exit(0);
+  void flushPendingPublish().finally(() => {
+    closeDb();
+    process.exit(0);
+  });
 });
 
 // Autopilot — opt-in.
@@ -95,6 +108,14 @@ process.on("SIGINT", () => {
 // scheduler runs only when AUTOPILOT_ENABLED=1, so the pipeline ships dormant
 // and is switched on deliberately, after a dry run.
 ensureDefaultSettings();
+
+// Gate 2: finished articles must reach the operator. Registered regardless of
+// AUTOPILOT_ENABLED, because generation can also be triggered by hand and a
+// finished article with nobody told is the failure this closes.
+registerArticleReadyHandler();
+
+// Re-arm a site deploy that was owed when the process last stopped.
+recoverPendingPublish();
 
 const autopilotEnabled = process.env.AUTOPILOT_ENABLED === "1";
 const runner = autopilotEnabled ? createNightlyRunner() : null;

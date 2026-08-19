@@ -13,6 +13,9 @@ function deps(over: Partial<GateDeps> = {}): GateDeps {
     regenerateArticle: vi.fn(),
     syncToFramer: vi.fn(async () => ({ synced: 1, removed: 0, withLocales: true })),
     schedulePublish: vi.fn(),
+    unpublishArticle: vi.fn(),
+    pendingProposedKeywordIds: vi.fn(() => ["kw1", "kw2"]),
+    reviewArticleIds: vi.fn(() => ["art1", "art2"]),
     recentTitles: () => [],
     proposeTitle: vi.fn(async () => "A Rerolled Headline"),
     saveProposedTitle: vi.fn(),
@@ -102,6 +105,56 @@ describe("onPublish", () => {
   });
 });
 
+describe("onPublish — rollback and locale reporting", () => {
+  it("reverts the publish when the sync fails, so a retry can work", async () => {
+    // Without this the article reads as published, so a second tap is a no-op
+    // while it never reached Framer — recoverable only by a manual API call.
+    const d = deps({ syncToFramer: vi.fn(async () => { throw new Error("guard tripped"); }) });
+    await createGateHandlers(d).onPublish("art1", 5);
+    expect(d.unpublishArticle).toHaveBeenCalledWith("art1");
+  });
+
+  it("tells the operator the publish was reverted and can be retried", async () => {
+    const d = deps({ syncToFramer: vi.fn(async () => { throw new Error("guard tripped"); }) });
+    await createGateHandlers(d).onPublish("art1", 5);
+    expect(String((d.alert as ReturnType<typeof vi.fn>).mock.calls[0][0])).toMatch(/retry/i);
+  });
+
+  it("does not revert a successful publish", async () => {
+    const d = deps();
+    await createGateHandlers(d).onPublish("art1", 5);
+    expect(d.unpublishArticle).not.toHaveBeenCalled();
+  });
+
+  it("alerts when the sync silently dropped translations", async () => {
+    const d = deps({
+      syncToFramer: vi.fn(async () => ({ synced: 1, removed: 0, withLocales: false })),
+    });
+    await createGateHandlers(d).onPublish("art1", 5);
+    expect(String((d.alert as ReturnType<typeof vi.fn>).mock.calls[0][0])).toMatch(/translation/i);
+  });
+});
+
+describe("bulk actions", () => {
+  it("approve-all routes every pending proposal through the single-item path", async () => {
+    const d = deps();
+    await createGateHandlers(d).onApproveAll(0);
+    expect(d.enqueueGeneration).toHaveBeenCalledTimes(2);
+  });
+
+  it("publish-all routes every reviewable article through the single-item path", async () => {
+    const d = deps();
+    await createGateHandlers(d).onPublishAll(0);
+    expect(d.publishArticle).toHaveBeenCalledTimes(2);
+  });
+
+  it("approve-all is a no-op when nothing is pending", async () => {
+    const d = deps({ pendingProposedKeywordIds: vi.fn(() => []) });
+    await createGateHandlers(d).onApproveAll(0);
+    expect(d.enqueueGeneration).not.toHaveBeenCalled();
+  });
+});
+
 describe("onDelete / onRegenerate", () => {
   it("deletes the article", async () => {
     const d = deps();
@@ -113,6 +166,24 @@ describe("onDelete / onRegenerate", () => {
     const d = deps();
     await createGateHandlers(d).onRegenerate("art1", 5);
     expect(d.regenerateArticle).toHaveBeenCalledWith("art1");
+  });
+
+  it("refuses to regenerate an already-published article", async () => {
+    // A double-tap otherwise runs two full generations; the second collides on
+    // the unique slug and lands as generation_failed.
+    const d = deps({
+      getArticle: vi.fn(() => ({ id: "art1", title: "T", slug: "s", status: "published", content: "x" })),
+    });
+    await createGateHandlers(d).onRegenerate("art1", 5);
+    expect(d.regenerateArticle).not.toHaveBeenCalled();
+  });
+
+  it("refuses to delete an already-published article", async () => {
+    const d = deps({
+      getArticle: vi.fn(() => ({ id: "art1", title: "T", slug: "s", status: "published", content: "x" })),
+    });
+    await createGateHandlers(d).onDelete("art1", 5);
+    expect(d.deleteArticle).not.toHaveBeenCalled();
   });
 
   it("ignores an unknown article", async () => {

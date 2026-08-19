@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { timingSafeEqual } from "node:crypto";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
-import { answerCallback } from "../services/notify.js";
+import { answerCallback, alert } from "../services/notify.js";
 
 /**
  * Telegram webhook — the operator's two approval gates.
@@ -77,6 +77,10 @@ interface RouteConfig {
   secret: string;
   chatId: string;
   handlers: CallbackHandlers;
+  /** Surfaces a handler failure after the callback has been acknowledged. */
+  onHandlerError?: (message: string) => Promise<void>;
+  /** Tests await the handler; production fires it and returns immediately. */
+  awaitHandler?: boolean;
 }
 
 interface TelegramUpdate {
@@ -119,23 +123,41 @@ export function buildTelegramRoute(config: RouteConfig): Hono {
     const messageId = cq.message?.message_id ?? 0;
     const h = config.handlers;
 
-    try {
-      switch (parsed.action) {
-        case "gen": await h.onApproveTitle(parsed.id, messageId); break;
-        case "rrl": await h.onRerollTitle(parsed.id, messageId); break;
-        case "rej": await h.onRejectTopic(parsed.id, messageId); break;
-        case "pub": await h.onPublish(parsed.id, messageId); break;
-        case "rgn": await h.onRegenerate(parsed.id, messageId); break;
-        case "del": await h.onDelete(parsed.id, messageId); break;
-        case "genall": await h.onApproveAll(messageId); break;
-        case "puball": await h.onPublishAll(messageId); break;
+    const cb = parsed; // narrowed; the closure below loses the type guard
+
+    const runHandler = async (): Promise<void> => {
+      try {
+        switch (cb.action) {
+          case "gen": await h.onApproveTitle(cb.id, messageId); break;
+          case "rrl": await h.onRerollTitle(cb.id, messageId); break;
+          case "rej": await h.onRejectTopic(cb.id, messageId); break;
+          case "pub": await h.onPublish(cb.id, messageId); break;
+          case "rgn": await h.onRegenerate(cb.id, messageId); break;
+          case "del": await h.onDelete(cb.id, messageId); break;
+          case "genall": await h.onApproveAll(messageId); break;
+          case "puball": await h.onPublishAll(messageId); break;
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "unknown";
+        logger.error({ action: cb.action, id: cb.id, error: message }, "Callback handler failed");
+        // The callback is already acknowledged, so a message is the only way
+        // left to surface the failure.
+        await config.onHandlerError?.(`${cb.action} failed: ${message}`);
       }
-      await answerCallback(cq.id);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "unknown";
-      logger.error({ action: parsed.action, id: parsed.id, error: message }, "Callback handler failed");
-      await answerCallback(cq.id, `Failed: ${message}`.slice(0, 200));
-    }
+    };
+
+    // Acknowledge FIRST, then work.
+    //
+    // A publish triggers a full collection sync (~10 MB over the Framer API),
+    // far longer than Telegram's callback timeout. Awaiting it here means
+    // Telegram gives up and redelivers the same update while the first is
+    // still running — two concurrent syncs against one collection, interleaving
+    // removeItems and addItems. syncToFramer holds a single-flight lock for the
+    // same reason.
+    await answerCallback(cb.id);
+
+    if (config.awaitHandler) await runHandler();
+    else void runHandler();
 
     return c.json({ ok: true });
   });
@@ -149,5 +171,6 @@ export function telegramRoute(handlers: CallbackHandlers): Hono {
     secret: env.TELEGRAM_WEBHOOK_SECRET,
     chatId: env.TELEGRAM_CHAT_ID,
     handlers,
+    onHandlerError: alert,
   });
 }

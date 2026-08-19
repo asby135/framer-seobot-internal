@@ -39,6 +39,13 @@ export interface GateDeps {
 
   syncToFramer(): Promise<{ synced: number; removed: number; withLocales: boolean }>;
   schedulePublish(): void;
+  /** Revert a publish when the subsequent sync fails, so a retry can work. */
+  unpublishArticle(id: string): void;
+
+  /** Keyword ids still pending with a proposed title — for Approve all. */
+  pendingProposedKeywordIds(): string[];
+  /** Article ids sitting in review — for Publish all. */
+  reviewArticleIds(): string[];
 
   recentTitles(): string[];
   proposeTitle(topic: string, recent: string[], rejected: string[]): Promise<string>;
@@ -49,7 +56,7 @@ export interface GateDeps {
 }
 
 export function createGateHandlers(deps: GateDeps): CallbackHandlers {
-  return {
+  const handlers: CallbackHandlers = {
     async onApproveTitle(keywordId) {
       const kw = deps.getKeyword(keywordId);
       if (!kw) {
@@ -98,13 +105,22 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
       try {
         const result = await deps.syncToFramer();
         logger.info({ articleId, ...result }, "Synced to Framer");
+        if (!result.withLocales) {
+          await deps.alert(`Synced ${articleId} WITHOUT translations — RU is missing on the site.`);
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : "unknown";
         logger.error({ articleId, error: message }, "Framer sync failed after publish");
+
+        // Roll the publish back. Without this the article is stuck: it reads
+        // as published so a second tap is a no-op, but it never reached
+        // Framer, and the only recovery is a manual API call.
+        deps.unpublishArticle(articleId);
+
         // Deliberately do NOT arm the deploy: publishing the site after a
-        // failed sync would ship a site missing the article that was just
-        // approved, and the guards throw precisely when something is wrong.
-        await deps.alert(`Framer sync failed for ${articleId}: ${message}`);
+        // failed sync would ship a site missing the article just approved, and
+        // the guards throw precisely when something is wrong.
+        await deps.alert(`Framer sync failed for ${articleId}: ${message} — publish reverted, tap Publish to retry.`);
         return;
       }
 
@@ -112,23 +128,44 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
     },
 
     async onRegenerate(articleId) {
-      if (!deps.getArticle(articleId)) return;
+      const article = deps.getArticle(articleId);
+      // Idempotency: only an unpublished article may be regenerated. Without
+      // this a double-tap runs two full generations, and the second collides
+      // on the unique slug and lands as generation_failed.
+      if (!article || !["draft", "review"].includes(article.status)) {
+        logger.info({ articleId, status: article?.status }, "Regenerate: not in a regenerable state");
+        return;
+      }
       deps.regenerateArticle(articleId);
     },
 
     async onDelete(articleId) {
-      if (!deps.getArticle(articleId)) return;
+      const article = deps.getArticle(articleId);
+      if (!article || !["draft", "review", "generation_failed"].includes(article.status)) {
+        logger.info({ articleId, status: article?.status }, "Delete: not in a deletable state");
+        return;
+      }
       deps.deleteArticle(articleId);
     },
 
     async onApproveAll() {
-      logger.info("Approve-all requested");
-      // Bulk actions are fanned out by the caller, which holds the digest's
-      // item list; this handler exists so the callback is not silently dropped.
+      const ids = deps.pendingProposedKeywordIds();
+      logger.info({ count: ids.length }, "Approve-all requested");
+      for (const id of ids) {
+        // Reuse the single-item path so the same idempotency and pinning rules
+        // apply. A bulk button that took a different code path would drift.
+        await handlers.onApproveTitle(id, 0);
+      }
     },
 
     async onPublishAll() {
-      logger.info("Publish-all requested");
+      const ids = deps.reviewArticleIds();
+      logger.info({ count: ids.length }, "Publish-all requested");
+      for (const id of ids) {
+        await handlers.onPublish(id, 0);
+      }
     },
   };
+
+  return handlers;
 }
