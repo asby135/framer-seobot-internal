@@ -80,6 +80,17 @@ Two findings that make migration cheap:
 
 5. In Framer, repoint the blog listing and the article CMS page to the new
    collection and rebind the template fields.
+5a. **RE-SYNC AFTER REPOINTING — required.** Framer resolves relative hrefs
+   (`<a href="/blog/slug">`) to CMS item references *at ingest time*, against the
+   site's route map. Items loaded into a collection that is not yet bound to a
+   CMS page keep the `<a>` element but lose the link target: the anchor renders
+   unstyled (invisible on dark backgrounds) and is not clickable. Confirmed
+   2026-08-19 — identical article renders blue links in the old collection and
+   dead ones in the API collection. Absolute URLs are unaffected, since they
+   need no resolution. The API serializes resolved and unresolved links
+   identically (bare `<a>`), so this is NOT detectable via the Server API —
+   only by eye on the canvas. Re-run `addItems` (an upsert on item ID) once the
+   page is bound.
 6. Preview, then publish once, so there is no window where `/blog/*` 404s.
 7. Rename old → "CRMChat SEO Engine (legacy)", new → "CRMChat SEO Engine".
 8. Keep the legacy collection for rollback; delete only after a few days live.
@@ -281,6 +292,28 @@ into re-covering existing content, and only an explicit exclusion list prevents 
 
 Run at 1-2/night for a week with the three new niches on probation before opening
 up to 5-10.
+
+## Known content issues
+
+- **Internal link path mismatch.** `generator.ts` instructs `<a href="/blog/slug">`
+  (lines 301, 469) and validates only that the slug exists in the local DB (line
+  952) — never that the route resolves in Framer. Live testing shows `/blog/:slug`
+  resolves only for slugs that also exist in the legacy Seobot collection;
+  articles unique to this collection 404 there. Options: emit
+  `/articles/<slug>`, or emit absolute `https://crmchat.ai/articles/<slug>`
+  (deterministic, immune to the ingest-resolution problem above — the safer
+  choice for an unattended nightly pipeline).
+- **Canonical tags may point at soft 404s.** `/articles/<slug>` pages declare
+  `canonical → /blog/<slug>`. Where that slug is absent from Seobot, the
+  canonical URL returns Framer's 404 page with HTTP 200. Verify site-wide; if
+  confirmed it is the highest-priority SEO defect in the system.
+- **Literal "placeholder" text** in 6 of 308 articles (5 as a trailing text
+  node). No code emits it — it is model output that survived sanitisation. Add a
+  generator check and clean the affected articles.
+- **Unreachable route:** `GET /api/articles/translate-status` is shadowed by
+  `GET /api/articles/:id` (registered first), so it always returns "Article not
+  found". The plugin's `getTranslationStatus()` polling has never worked. Move
+  the literal route above the parameterised one.
 
 ## Open risks
 
