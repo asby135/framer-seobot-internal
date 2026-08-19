@@ -6,6 +6,8 @@ import { logger } from "../lib/logger.js";
 interface GenerationJob {
   keywordId: string;
   query: string;
+  /** Headline approved by the operator at gate 1, pinned through generation. */
+  titleOverride?: string;
 }
 
 interface TranslationJob {
@@ -41,7 +43,7 @@ export function enqueueGeneration(job: GenerationJob): void {
   generationQueue.add(async () => {
     logger.info({ keywordId: job.keywordId, query: job.query }, "Generation starting");
 
-    const result = await generateArticle(job.keywordId, job.query);
+    const result = await generateArticle(job.keywordId, job.query, job.titleOverride);
 
     lastGenerationResult = {
       articleId: result.articleId,

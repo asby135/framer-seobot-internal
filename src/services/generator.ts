@@ -48,7 +48,13 @@ const ALLOWED_ATTRS = new Set([
  */
 export async function generateArticle(
   keywordId: string,
-  query: string
+  query: string,
+  /**
+   * Headline approved by the operator at gate 1. When present it is pinned
+   * verbatim and the post-generation tic check is skipped — silently rewriting
+   * an approved title would break the gate's contract.
+   */
+  approvedTitle?: string
 ): Promise<GenerationResult> {
   const flags: Record<string, unknown> = {};
 
@@ -66,7 +72,7 @@ export async function generateArticle(
     const existingArticles = getExistingArticlesForLinking();
 
     // Step 2: Claude generation (with retry on timeout/500)
-    const article = await callClaudeWithRetry(query, kbResults, relatedQueries, existingSlugs, existingArticles);
+    const article = await callClaudeWithRetry(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle);
 
     // Step 3: Quality checks
     const qualityIssues = runQualityChecks(article, query, existingSlugs);
@@ -184,10 +190,11 @@ async function callClaudeWithRetry(
   kbResults: Array<{ title: string; content: string }>,
   relatedQueries: string[],
   existingSlugs: Set<string>,
-  existingArticles: Array<{ slug: string; title: string }>
+  existingArticles: Array<{ slug: string; title: string }>,
+  approvedTitle?: string
 ): Promise<GeneratedArticle> {
   try {
-    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles);
+    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle);
   } catch (e) {
     const isRetryable =
       e instanceof Error &&
@@ -200,7 +207,7 @@ async function callClaudeWithRetry(
 
     logger.warn({ query, error: e instanceof Error ? e.message : "unknown" }, "Claude API failed, retrying in 30s");
     await new Promise((resolve) => setTimeout(resolve, 30_000));
-    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles);
+    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle);
   }
 }
 
@@ -270,12 +277,29 @@ Gather accurate, current facts. Explicitly flag anything you could not verify.`,
   }
 }
 
+/**
+ * The `title` field instruction for the publish_article tool.
+ *
+ * When the operator has approved a headline at gate 1, it is pinned verbatim
+ * and the ban-list is deliberately NOT restated — repeating it invites the
+ * model to "improve" an already-approved string, which would silently break
+ * the contract the gate exists to enforce.
+ */
+export function buildTitleInstruction(approvedTitle?: string): string {
+  if (approvedTitle) {
+    const safe = approvedTitle.replace(/"/g, '\\"');
+    return `Use this EXACT title, verbatim, with no changes whatsoever: "${safe}". It has already been approved by the operator. Write the article body to fit this headline.`;
+  }
+  return "Article title. Reframe the keyword into a reader-friendly headline — do NOT just copy the keyword phrase. HARD BAN — your title MUST NOT contain any of: 'Actually', 'Really', 'Ultimate', 'Complete Guide', 'Everything You Need', 'A Deep Dive', 'No-Fluff', 'No-Agency', 'The Truth About', parenthetical subtitles like '(Step-by-Step)' / '(And Where Each Falls Short)', or year suffixes like 'in 2026'. These are AI-content tells that destroy citation credibility. See TITLE CRAFT in the system prompt for shape variety and reframe examples.";
+}
+
 async function callClaude(
   query: string,
   kbResults: Array<{ title: string; content: string }>,
   relatedQueries: string[],
   existingSlugs: Set<string>,
-  existingArticles: Array<{ slug: string; title: string }>
+  existingArticles: Array<{ slug: string; title: string }>,
+  approvedTitle?: string
 ): Promise<GeneratedArticle> {
   const kbContext = kbResults
     .map(
@@ -324,7 +348,7 @@ Key site pages you can link to where relevant:
         input_schema: {
           type: "object" as const,
           properties: {
-            title: { type: "string" as const, description: "Article title. Reframe the keyword into a reader-friendly headline — do NOT just copy the keyword phrase. HARD BAN — your title MUST NOT contain any of: 'Actually', 'Really', 'Ultimate', 'Complete Guide', 'Everything You Need', 'A Deep Dive', 'No-Fluff', 'No-Agency', 'The Truth About', parenthetical subtitles like '(Step-by-Step)' / '(And Where Each Falls Short)', or year suffixes like 'in 2026'. These are AI-content tells that destroy citation credibility. See TITLE CRAFT in the system prompt for shape variety and reframe examples." },
+            title: { type: "string" as const, description: buildTitleInstruction(approvedTitle) },
             slug: { type: "string" as const, description: "URL-friendly slug" },
             category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
             summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
@@ -541,11 +565,13 @@ Write the article following the four AEO rules and call the publish_article tool
   // Validate title doesn't contain banned AI-content tics ("Actually",
   // "(Step-by-Step)", etc.). If it does, regenerate the title once. If the
   // retry still has tics, keep the original (don't block publishing).
-  const cleanTitle = await validateOrRegenerateTitle(
-    parsed.title,
-    query,
-    parsed.content || ""
-  );
+  //
+  // Skipped entirely when the operator approved a headline at gate 1: they
+  // approved that exact string, so rewriting it here would mean publishing
+  // something they never saw.
+  const cleanTitle = approvedTitle
+    ? approvedTitle
+    : await validateOrRegenerateTitle(parsed.title, query, parsed.content || "");
 
   return {
     title: cleanTitle,

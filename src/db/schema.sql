@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS keywords (
   cpc REAL,
   opportunity_score REAL,
   status TEXT NOT NULL DEFAULT 'pending', -- pending, approved, rejected, generated
+  proposed_title TEXT,   -- headline approved by the operator at gate 1
+  bot_message_id INTEGER, -- Telegram message carrying that gate's buttons
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
