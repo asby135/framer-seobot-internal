@@ -61,6 +61,16 @@ articles.get("/", (c) => {
   return c.json({ articles: enriched });
 });
 
+// Translation queue status.
+//
+// MUST stay above `GET /:id`: Hono matches routes in registration order, so a
+// literal path registered after a parameterised one is shadowed — this
+// endpoint previously returned {"error":"Article not found"} for every call,
+// silently breaking the plugin's translation polling.
+articles.get("/translate-status", (c) => {
+  return c.json({ queue: getTranslationQueueStatus() });
+});
+
 // Get full article with assets
 articles.get("/:id", (c) => {
   const db = getDb();
@@ -342,10 +352,6 @@ articles.post("/translate-batch", async (c) => {
 });
 
 // Translation queue status — parallel to /api/generate/status
-articles.get("/translate-status", (c) => {
-  return c.json({ queue: getTranslationQueueStatus() });
-});
-
 // Translate all published articles (runs in background)
 articles.post("/translate-all", async (c) => {
   const db = getDb();
