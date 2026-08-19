@@ -16,6 +16,7 @@ import { schema } from "./routes/schema.js";
 import { research } from "./routes/research.js";
 import { kb } from "./routes/kb.js";
 import { telegramRoute } from "./routes/telegram.js";
+import { settings as settingsRoute } from "./routes/settings.js";
 import { buildGateHandlers, createNightlyRunner, ensureDefaultSettings } from "./services/bootstrap.js";
 
 // Initialize database
@@ -61,6 +62,8 @@ app.use("/api/sync/*", authMiddleware);
 app.use("/api/schema/*", authMiddleware);
 app.use("/api/research/*", authMiddleware);
 app.use("/api/kb/*", authMiddleware);
+app.use("/api/settings/*", authMiddleware);
+app.use("/api/settings", authMiddleware);
 
 app.route("/api/topics", topics);
 app.route("/api/articles", articles);
@@ -69,6 +72,7 @@ app.route("/api/sync", sync);
 app.route("/api/schema", schema);
 app.route("/api/research", research);
 app.route("/api/kb", kb);
+app.route("/api/settings", settingsRoute);
 
 // Graceful shutdown
 process.on("SIGTERM", () => {
