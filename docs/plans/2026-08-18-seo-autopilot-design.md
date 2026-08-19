@@ -90,7 +90,8 @@ Two findings that make migration cheap:
    need no resolution. The API serializes resolved and unresolved links
    identically (bare `<a>`), so this is NOT detectable via the Server API —
    only by eye on the canvas. Re-run `addItems` (an upsert on item ID) once the
-   page is bound.
+   page is bound. **Verified fixed 2026-08-19:** page repointed, all 308 items
+   re-synced, internal links render correctly again.
 6. Preview, then publish once, so there is no window where `/blog/*` 404s.
 7. Rename old → "CRMChat SEO Engine (legacy)", new → "CRMChat SEO Engine".
 8. Keep the legacy collection for rollback; delete only after a few days live.
