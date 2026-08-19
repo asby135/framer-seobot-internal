@@ -896,9 +896,30 @@ export function stripLeakedJsonLd(html: string): string {
   return out.trimEnd();
 }
 
+/**
+ * Strip a trailing bare "placeholder" text node.
+ *
+ * Observed on 6 of 308 published articles (5 trailing). Nothing in this
+ * codebase emits it — it is model output that survived sanitisation and
+ * shipped to the live site.
+ *
+ * Deliberately narrow: only a trailing occurrence that is the ENTIRE remaining
+ * content is removed. "Placeholder" is a legitimate word in articles about
+ * form fields and message templates, so a broader match would corrupt real
+ * content.
+ */
+export function stripTrailingPlaceholder(html: string): string {
+  return html
+    .replace(/(?:<p[^>]*>\s*)?placeholder(?:\s*<\/p>)?\s*$/i, "")
+    .trimEnd();
+}
+
 export function sanitizeHTML(html: string): string {
   // Remove any JSON-LD schema the model leaked into the body (belongs in schema_jsonld).
   let clean = stripLeakedJsonLd(html);
+
+  // Remove a trailing bare "placeholder" text node — a recurring model artifact.
+  clean = stripTrailingPlaceholder(clean);
 
   // Remove script tags and their content
   clean = clean.replace(/<script[\s\S]*?<\/script>/gi, "");
