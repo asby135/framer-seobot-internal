@@ -92,3 +92,37 @@ describe("needsTopUp", () => {
     expect(needsTopUp(pool, 10)).toBe(false);
   });
 });
+
+describe("probation filtering", () => {
+  const withNiche = (id: string, niche: string | null) => ({
+    id, query: `q-${id}`, source: "seeded", niche,
+  });
+  const onProbation = new Set(["Online currency exchanges"]);
+
+  it("excludes topics from a probationary niche", () => {
+    expect(usableTopics([withNiche("a", "Online currency exchanges")], onProbation)).toHaveLength(0);
+  });
+
+  it("keeps topics from a niche that is not on probation", () => {
+    expect(usableTopics([withNiche("a", "Web3 / crypto")], onProbation)).toHaveLength(1);
+  });
+
+  it("FAILS OPEN on a null niche — legacy rows predate the column", () => {
+    // Documented, not accidental: rows written before the niche column exists
+    // cannot be attributed, so probation cannot bind them. Contrast with
+    // USABLE_SOURCES, which deliberately fails CLOSED on unknown sources.
+    expect(usableTopics([withNiche("legacy", null)], onProbation)).toHaveLength(1);
+  });
+
+  it("selectTopics honours the exclusion set", () => {
+    const pool = [withNiche("a", "Online currency exchanges"), withNiche("b", "Web3 / crypto")];
+    expect(selectTopics(pool, 5, () => 0, onProbation).map((t) => t.id)).toEqual(["b"]);
+  });
+
+  it("needsTopUp counts probationary topics, so the pool can fill", () => {
+    // Regression: excluding them meant the pool never looked full and seeding
+    // fired every night forever while selection returned nothing.
+    const pool = Array.from({ length: 12 }, (_, i) => withNiche(String(i), "Online currency exchanges"));
+    expect(needsTopUp(pool, 10)).toBe(false);
+  });
+});

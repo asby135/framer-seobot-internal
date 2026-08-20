@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
 import { searchKB, getKBArticle } from "./kb.js";
+import { ANGLE_GUIDANCE } from "./taxonomy.js";
 import { isPureCompetitorTopic } from "./research.js";
 import { queryToSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
@@ -64,7 +65,12 @@ export function buildSeederPrompt(input: SeederPromptInput): string {
       : "";
 
   const subnicheLine = subniche ? `\nSUBNICHE — narrow every topic to this: ${subniche}` : "";
-  const angleLine = angle ? `\nANGLE — every topic must take this angle: ${angle}` : "";
+  // The bare angle word is ambiguous — "tops" would not, on its own, produce
+  // "best X tools" topics — so ship its definition alongside it.
+  const angleGuidance = angle ? ANGLE_GUIDANCE[angle] : undefined;
+  const angleLine = angle
+    ? `\nANGLE — every topic must take this angle: ${angle}${angleGuidance ? `\n  (${angle} means: ${angleGuidance})` : ""}`
+    : "";
   const closing = [
     subniche ? `all within the "${subniche}" subniche` : null,
     angle ? `all taking the "${angle}" angle` : null,
@@ -102,6 +108,7 @@ export function getCoveredTopics(recentQueries = 60, recentTitles = 30): string[
 
 export interface SeedOptions {
   /** Rotation slot, when seeding is driven by the scheduler. */
+  niche?: string;
   subniche?: string;
   angle?: string;
   /** KB filenames pinned ahead of TF-IDF results — see Niche.kb_hints. */
@@ -158,7 +165,7 @@ export async function seedTopics(
     return { seeded: [], skipped: 0, audience };
   }
 
-  const { seeded, skipped, revived } = insertSeededTopics(candidates);
+  const { seeded, skipped, revived } = insertSeededTopics(candidates, opts.niche);
   logger.info(
     { audience, requested: n, seeded: seeded.length, revived, skipped },
     "Audience topic seeding complete"
@@ -182,7 +189,8 @@ export async function seedTopics(
  *  - Otherwise → insert new.
  */
 export function insertSeededTopics(
-  candidates: string[]
+  candidates: string[],
+  niche?: string
 ): { seeded: Array<{ query: string }>; skipped: number; revived: number } {
   const db = getDb();
   const SEEDED_SCORE = 50;
@@ -239,15 +247,19 @@ export function insertSeededTopics(
   }
 
   const insertStmt = db.prepare(
-    `INSERT INTO keywords (id, query, source, opportunity_score, status)
-     VALUES (?, ?, 'seeded', ?, 'pending')`
+    `INSERT INTO keywords (id, query, source, opportunity_score, status, niche)
+     VALUES (?, ?, 'seeded', ?, 'pending', ?)`
   );
+  // Revive must set `niche` too. Writing it only on the INSERT path meant a
+  // previously-rejected topic revived by a probationary niche kept a NULL or
+  // stale niche, so the probation filter never matched it and it could
+  // generate unattended — the exact leak probation exists to prevent.
   const reviveStmt = db.prepare(
-    `UPDATE keywords SET status = 'pending', source = 'seeded', opportunity_score = ?, updated_at = datetime('now') WHERE id = ?`
+    `UPDATE keywords SET status = 'pending', source = 'seeded', opportunity_score = ?, niche = ?, updated_at = datetime('now') WHERE id = ?`
   );
   const insertMany = db.transaction((items: string[]) => {
-    for (const q of items) insertStmt.run(nanoid(), q, SEEDED_SCORE);
-    for (const id of toRevive) reviveStmt.run(SEEDED_SCORE, id);
+    for (const q of items) insertStmt.run(nanoid(), q, SEEDED_SCORE, niche ?? null);
+    for (const id of toRevive) reviveStmt.run(SEEDED_SCORE, niche ?? null, id);
   });
   if (toInsert.length > 0 || toRevive.length > 0) insertMany(toInsert);
 
@@ -295,7 +307,7 @@ RULES:
   BAD (full headline): "How to Run Multiple OnlyFans Model Accounts on Telegram Without Your Chatters Messaging Fans from the Wrong Profile"
 - Each topic must map to a real question or pain this audience has, where CRMChat (Telegram-native CRM/outreach) is a genuine answer. Ground every topic in the KB context — do not invent features CRMChat doesn't have.
 - Prefer high-intent, specific, low-competition angles over broad head terms. "Selling PPV on Telegram without chargebacks" beats "Telegram CRM".
-- When an ANGLE is given below, EVERY topic in the batch must take that angle. Do not vary it. When no angle is given, cover a spread — how-to, evaluation, comparison, migration, troubleshooting — expressed as short topics, not headlines.
+- When an ANGLE is given below, EVERY topic in the batch must take that angle. Do not vary it. When no angle is given, cover a spread — how-to, what-is, troubleshooting, comparison, tops — expressed as short topics, not headlines.
 - BRIDGE FRAMING: when the audience is migrating from another channel/tool (email, OnlyFans DMs, another CRM), frame the topic around the switch — e.g. "migrating OnlyFans DMs to Telegram", "email outreach alternative for B2B".
 - Do NOT propose pure-competitor topics (a competitor name with no CRMChat angle). Comparison/migration topics that name a competitor AND position CRMChat are fine.
 - No marketing fluff, no parenthetical asides, no year suffixes, no clickbait. Just the topic phrase.

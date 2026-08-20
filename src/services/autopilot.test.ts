@@ -101,14 +101,31 @@ describe("runNightly", () => {
     expect(d.sendTitleDigest).not.toHaveBeenCalled();
   });
 
-  it("skips seeding when every niche is on probation", async () => {
+  it("seeds a probationary niche but never auto-selects its topics", async () => {
     const d = deps({
       getNiches: () => DEFAULT_NICHES.map((n) => ({ ...n, probation: true })),
-      getPending: () => [topic("1")],
+      getPending: () => [{ id: "p", query: "probation topic", source: "seeded", niche: "Web3 / crypto" }],
     });
     await runNightly(d);
-    expect(d.seed).not.toHaveBeenCalled();
-    // Still proposes from whatever is already pending.
+
+    // Seeding happens — that is how the operator gets something to judge.
+    expect(d.seed).toHaveBeenCalledOnce();
+    // Selection does not: nothing generates from an unproven niche unattended.
+    expect(d.proposeTitle).not.toHaveBeenCalled();
+  });
+
+  it("records which niche seeded a topic, so probation can be enforced later", async () => {
+    const d = deps({ getPending: () => [topic("1")] });
+    await runNightly(d);
+    const arg = (d.seed as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(arg.niche).toBe("Web3 / crypto");
+  });
+
+  it("selects topics from niches that are not on probation", async () => {
+    const d = deps({
+      getPending: () => [{ id: "ok", query: "fine", source: "seeded", niche: "Web3 / crypto" }],
+    });
+    await runNightly(d);
     expect(d.proposeTitle).toHaveBeenCalled();
   });
 
@@ -119,5 +136,40 @@ describe("runNightly", () => {
     });
     await runNightly(d);
     expect(d.proposeTitle).not.toHaveBeenCalled();
+  });
+});
+
+describe("runNightly — title variety within a batch", () => {
+  it("shows each proposal the ones already chosen tonight", async () => {
+    // Observed in a live digest: three of four headlines opened with a
+    // quantity ("Two Reps", "3,000 Members", "Three DeFi Protocols"). Each
+    // proposal was generated independently against the last 100 PUBLISHED
+    // titles and never saw its siblings, so within-batch collision was
+    // completely unguarded — the exact tell the shape rules exist to avoid.
+    const seen: string[][] = [];
+    const d = deps({
+      articlesPerNight: () => 3,
+      recentTitles: () => ["Published One"],
+      proposeTitle: vi.fn(async (t: string, recent: string[]) => {
+        seen.push([...recent]);
+        return `Headline ${t}`;
+      }),
+    });
+
+    await runNightly(d);
+
+    expect(seen[0]).toEqual(["Published One"]);
+    expect(seen[1]).toHaveLength(2);
+    expect(seen[1][1]).toMatch(/^Headline /);
+    expect(seen[2]).toHaveLength(3);
+  });
+
+  it("still passes published titles to the first proposal", async () => {
+    const d = deps({
+      articlesPerNight: () => 1,
+      recentTitles: () => ["A", "B"],
+    });
+    await runNightly(d);
+    expect(d.proposeTitle).toHaveBeenCalledWith(expect.any(String), ["A", "B"], []);
   });
 });

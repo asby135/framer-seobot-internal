@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextSlot, countSlots, DEFAULT_NICHES, ANGLES, type Niche } from "./taxonomy.js";
+import { nextSlot, countSlots, countPairs, probationaryNames, DEFAULT_NICHES, ANGLES, type Niche } from "./taxonomy.js";
 
 const niches: Niche[] = [
   { name: "A", persona: "pa", subniches: ["a1", "a2"], kb_hints: [], probation: false },
@@ -18,29 +18,42 @@ describe("countSlots", () => {
 });
 
 describe("nextSlot", () => {
-  it("returns the first slot at cursor 0", () => {
-    expect(nextSlot(niches, 0)).toEqual({
-      niche: niches[0],
-      subniche: "a1",
-      angle: ANGLES[0],
-      cursor: 1,
-    });
-  });
-
-  it("advances through angles before moving subniche", () => {
-    const s = nextSlot(niches, 1)!;
-    expect(s.angle).toBe(ANGLES[1]);
+  it("returns the first pair at cursor 0", () => {
+    const s = nextSlot(niches, 0)!;
+    expect(s.niche).toEqual(niches[0]);
     expect(s.subniche).toBe("a1");
+    expect(s.cursor).toBe(1);
+    expect(ANGLES).toContain(s.angle);
   });
 
-  it("moves to the next subniche once angles are exhausted", () => {
-    const s = nextSlot(niches, ANGLES.length)!;
-    expect(s.subniche).toBe("a2");
-    expect(s.angle).toBe(ANGLES[0]);
+  it("advances one subniche per step", () => {
+    // Niche/subniche steps once per seeding; the angle is drawn separately from
+    // the weighted schedule, so it is no longer the innermost loop.
+    expect(nextSlot(niches, 1)!.subniche).toBe("a2");
   });
 
-  it("moves to the next niche once its subniches are exhausted", () => {
-    expect(nextSlot(niches, ANGLES.length * 2)!.niche.name).toBe("B");
+  it("moves to the next niche once its subniches are used", () => {
+    expect(nextSlot(niches, 2)!.niche.name).toBe("B");
+    expect(nextSlot(niches, 2)!.subniche).toBe("b1");
+  });
+
+  it("draws the angle from the weighted schedule, not an even cycle", () => {
+    // how-to is 67% of the schedule, so it dominates early cursors — which is
+    // the whole point of weighting.
+    const angles = Array.from({ length: 20 }, (_, i) => nextSlot(niches, i)!.angle);
+    const howTo = angles.filter((a) => a === "how-to").length;
+    expect(howTo).toBeGreaterThan(10);
+  });
+
+  it("does not weld a subniche to a single angle", () => {
+    // pairs (3) and the schedule (100) share no common factor beyond 1, so the
+    // same subniche is approached from different angles as the cursor advances.
+    const seen = new Set<string>();
+    for (let c = 0; c < 60; c++) {
+      const s = nextSlot(niches, c)!;
+      if (s.subniche === "a1") seen.add(s.angle);
+    }
+    expect(seen.size).toBeGreaterThan(1);
   });
 
   it("wraps around to the start but keeps the cursor monotonic", () => {
@@ -51,13 +64,19 @@ describe("nextSlot", () => {
     expect(s.cursor).toBe(total + 1);
   });
 
-  it("skips niches on probation", () => {
+  it("STILL seeds a niche on probation", () => {
+    // Probation gates SELECTION, not seeding. Its topics land as pending so the
+    // operator can judge them; skipping them here produced nothing to judge.
     const withProbation: Niche[] = [{ ...niches[0], probation: true }, niches[1]];
-    expect(nextSlot(withProbation, 0)!.niche.name).toBe("B");
+    expect(nextSlot(withProbation, 0)!.niche.name).toBe("A");
   });
 
-  it("returns null when every niche is on probation", () => {
-    expect(nextSlot(niches.map((n) => ({ ...n, probation: true })), 0)).toBeNull();
+  it("still rotates when every niche is on probation", () => {
+    expect(nextSlot(niches.map((n) => ({ ...n, probation: true })), 0)).not.toBeNull();
+  });
+
+  it("returns null only when no niche has subniches", () => {
+    expect(nextSlot([{ ...niches[0], subniches: [] }], 0)).toBeNull();
   });
 
   it("returns null when there are no niches at all", () => {
@@ -68,14 +87,23 @@ describe("nextSlot", () => {
     expect(nextSlot(niches, -1)).not.toBeNull();
   });
 
-  it("visits every slot exactly once across a full cycle", () => {
-    const total = countSlots(niches);
+  it("visits every (niche, subniche) pair exactly once per pair cycle", () => {
+    const pairs = countPairs(niches);
     const seen = new Set<string>();
-    for (let c = 0; c < total; c++) {
+    for (let c = 0; c < pairs; c++) {
       const s = nextSlot(niches, c)!;
-      seen.add(`${s.niche.name}|${s.subniche}|${s.angle}`);
+      seen.add(`${s.niche.name}|${s.subniche}`);
     }
-    expect(seen.size).toBe(total);
+    expect(seen.size).toBe(pairs);
+  });
+});
+
+describe("probationaryNames", () => {
+  it("names the niches whose topics must not be auto-selected", () => {
+    const names = probationaryNames(DEFAULT_NICHES);
+    expect(names.has("RU AI companies")).toBe(true);
+    expect(names.has("Web3 / crypto")).toBe(false);
+    expect(names.size).toBe(3);
   });
 });
 
@@ -105,16 +133,16 @@ describe("DEFAULT_NICHES", () => {
     }
   });
 
-  it("provides ~6 months of runway while 3 niches are still on probation", () => {
-    // countSlots counts only ROTATABLE niches, so probation shrinks the live
-    // space: 5 niches × 6 subniches × 5 angles = 150 slots = ~1,500 topics,
-    // roughly 200 nights at 7.5 articles/night.
-    const topics = countSlots(DEFAULT_NICHES) * 10;
-    expect(topics).toBeGreaterThan(1000);
+  it("provides about a year of distinct ground", () => {
+    // 8 niches × 6 subniches × 5 angles = 240 slots; at 10 topics per seed that
+    // is ~2,400 topics, roughly a year at 7.5 articles/night.
+    expect(countSlots(DEFAULT_NICHES)).toBe(240);
+    expect(countSlots(DEFAULT_NICHES) * 10).toBeGreaterThan(2000);
   });
 
-  it("reaches a year of runway once probation is cleared", () => {
+  it("counts probationary niches too, since they are seeded like any other", () => {
+    // Probation gates SELECTION, not seeding, so it does not shrink the space.
     const cleared = DEFAULT_NICHES.map((n) => ({ ...n, probation: false }));
-    expect(countSlots(cleared) * 10).toBeGreaterThan(2000);
+    expect(countSlots(cleared)).toBe(countSlots(DEFAULT_NICHES));
   });
 });

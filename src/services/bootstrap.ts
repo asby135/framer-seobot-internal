@@ -386,14 +386,15 @@ export async function runNightlyJob(dryRun: boolean): Promise<void> {
 
         getPending: () =>
           getDb()
-            .prepare("SELECT id, query, source FROM keywords WHERE status = 'pending'")
-            .all() as Array<{ id: string; query: string; source: string }>,
+            .prepare("SELECT id, query, source, niche FROM keywords WHERE status = 'pending'")
+            .all() as Array<{ id: string; query: string; source: string; niche: string | null }>,
         poolThreshold: getSetting("poolThreshold", 10),
         articlesPerNight: () =>
           randomInt(getSetting("minPerNight", 5), getSetting("maxPerNight", 10)),
 
         seed: async (req) => {
           await seedTopics(`${req.persona}`, 10, {
+            niche: req.niche,
             subniche: req.subniche,
             angle: req.angle,
             kbHints: req.kbHints,
@@ -434,6 +435,8 @@ export function createNightlyRunner(): Runner {
     hour: getSetting("scheduleHour", 20),
     getLastRun: () => getSetting<string | null>("lastRunDate", null),
     setLastRun: (date) => setSetting("lastRunDate", date),
+    maxAttemptsPerDay: getSetting("maxAttemptsPerDay", 3),
+    onExhausted: alert,
     job: () => runNightlyJob(process.env.SCHEDULER_DRY_RUN === "1"),
   });
 }

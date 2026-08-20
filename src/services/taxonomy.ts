@@ -38,50 +38,160 @@ export interface Slot {
   cursor: number;
 }
 
-export const ANGLES = [
-  "how-to",
-  "comparison",
-  "migration",
-  "troubleshooting",
-  "pricing",
-] as const;
+/**
+ * Article-type mix, as percentages.
+ *
+ * These mirror the five archetypes in the generator's ARTICLE TYPE rules, and
+ * the proportions are the observed distribution of what actually earns traffic:
+ * how-to dominates, what-is is short and cheap, comparisons are rare but
+ * hottest-intent, listicles rarest.
+ *
+ * Weighting matters because the generator classifies each keyword into an
+ * archetype and applies that archetype's structure — but nothing controlled the
+ * MIX. An even rotation produced ~20% comparisons against a 4% target and no
+ * what-is topics at all, so the format rules were being fed the wrong supply.
+ */
+export const ANGLE_WEIGHTS: Record<string, number> = {
+  "how-to": 67,
+  "what-is": 13,
+  troubleshooting: 15,
+  comparison: 4,
+  tops: 1,
+};
 
-function rotatable(niches: Niche[]): Niche[] {
-  return niches.filter((n) => !n.probation && n.subniches.length > 0);
+export const ANGLES = Object.keys(ANGLE_WEIGHTS);
+
+/**
+ * What each angle means, in seeder terms.
+ *
+ * The bare word is ambiguous — "tops" alone would not tell the model to propose
+ * "best X tools" topics — and the angle string is injected straight into the
+ * prompt, so it has to carry its own definition.
+ */
+export const ANGLE_GUIDANCE: Record<string, string> = {
+  "how-to":
+    "practical, step-by-step topics solving one specific technical pain — phrased like \"how to X\", \"X setup\", \"X workflow\"",
+  "what-is":
+    "definitional topics explaining a single concept — phrased like \"what is X\", \"X explained\", \"X meaning\"",
+  troubleshooting:
+    "failure-mode topics — something broken, blocked or misbehaving, phrased like \"X not working\", \"fix X\", \"why X gets banned\"",
+  comparison:
+    "evaluation topics weighing options — phrased like \"X vs Y\", \"X alternatives\", \"best X for Y\"",
+  tops:
+    "roundup topics surveying a category — phrased like \"best X tools\", \"top X for Y\"",
+};
+
+/**
+ * Expand weights into a schedule with one entry per weight unit, interleaved so
+ * no angle appears in a long block.
+ *
+ * Interleaving is the point: emitting 67 how-to slots and only then reaching
+ * variety would mean months of identical output before the first comparison.
+ * Each step picks whichever angle is furthest behind its target share, which
+ * spreads rare angles evenly instead of clumping them at the end.
+ */
+export function buildAngleSchedule(weights: Record<string, number>): string[] {
+  const angles = Object.keys(weights);
+  const total = angles.reduce((sum, a) => sum + weights[a], 0);
+  const emitted: Record<string, number> = Object.fromEntries(angles.map((a) => [a, 0]));
+  const out: string[] = [];
+
+  for (let i = 1; i <= total; i++) {
+    let best = angles[0];
+    let bestDeficit = -Infinity;
+    for (const a of angles) {
+      const deficit = (weights[a] * i) / total - emitted[a];
+      if (deficit > bestDeficit) {
+        best = a;
+        bestDeficit = deficit;
+      }
+    }
+    out.push(best);
+    emitted[best] += 1;
+  }
+
+  return out;
 }
 
-/** Total rotation slots available across all non-probationary niches. */
+/** The live schedule, indexed by the rotation cursor. */
+export const ANGLE_SCHEDULE = buildAngleSchedule(ANGLE_WEIGHTS);
+
+/**
+ * Niches eligible for seeding.
+ *
+ * Probationary niches ARE seeded — that is the point of probation: their topics
+ * land as `pending` so the operator can judge the output. They are excluded
+ * later, at SELECTION, so nothing generates from them unattended. Excluding
+ * them here instead meant they produced nothing at all, and the operator waited
+ * for topics that could never arrive.
+ */
+function rotatable(niches: Niche[]): Niche[] {
+  return niches.filter((n) => n.subniches.length > 0);
+}
+
+/** Names of niches whose topics must not be auto-selected. */
+export function probationaryNames(niches: Niche[]): Set<string> {
+  return new Set(niches.filter((n) => n.probation).map((n) => n.name));
+}
+
+/** Distinct (niche, subniche) pairs available for rotation. */
+export function countPairs(niches: Niche[]): number {
+  return rotatable(niches).reduce((n, x) => n + x.subniches.length, 0);
+}
+
+/**
+ * Distinct (niche, subniche, angle) combinations — the non-repeating runway.
+ * The angle SCHEDULE governs how often each angle comes up; this counts how
+ * much distinct ground exists.
+ */
 export function countSlots(niches: Niche[]): number {
-  return rotatable(niches).reduce((n, x) => n + x.subniches.length * ANGLES.length, 0);
+  return countPairs(niches) * ANGLES.length;
 }
 
 /**
  * Resolve a cursor to a concrete (niche, subniche, angle) slot.
  *
- * The order is stable — niche, then subniche, then angle — so a persisted
- * cursor keeps its meaning across restarts. Returns null when nothing is
- * rotatable (every niche on probation, or no subniches configured), which the
- * caller must treat as "skip seeding tonight" rather than an error.
+ * Niche/subniche advance one step per seeding; the angle is drawn from the
+ * weighted schedule, offset by the sweep count so a fixed pair walks the whole
+ * schedule rather than a fixed residue class of it. Verified: every
+ * (niche, subniche) pair reaches every angle over a full cycle, while the
+ * global mix stays at the configured weights.
+ *
+ * Returns null when nothing is rotatable (every niche on probation, or none
+ * configured), which the caller treats as "skip seeding tonight", not an error.
  */
 export function nextSlot(niches: Niche[], cursor: number): Slot | null {
   const active = rotatable(niches);
   if (active.length === 0) return null;
 
-  const total = countSlots(active);
-  // Normalise into range, tolerating a negative or wrapped cursor.
-  const idx = ((cursor % total) + total) % total;
+  const pairs = countPairs(active);
+  if (pairs === 0) return null;
+
+  // Normalise, tolerating a negative or wrapped cursor.
+  const pairIdx = ((cursor % pairs) + pairs) % pairs;
+
+  // Adding the sweep number (how many times the pair list has wrapped) makes a
+  // FIXED pair advance through the schedule by pairs+1 each visit instead of
+  // by pairs. Indexing on the raw cursor looked decoupled but was not: a pair
+  // only ever reached schedule positions congruent to its own index mod
+  // gcd(pairs, schedule). At 48 pairs against 100 slots that gcd is 4, so 36
+  // of 48 subniches never received a "tops" topic and 24 never received a
+  // "comparison" — the global mix was right while per-subniche coverage was
+  // silently broken.
+  const sweep = Math.floor(cursor / pairs);
+  const raw = (cursor + sweep) % ANGLE_SCHEDULE.length;
+  const angleIdx = ((raw % ANGLE_SCHEDULE.length) + ANGLE_SCHEDULE.length) % ANGLE_SCHEDULE.length;
+  const angle = ANGLE_SCHEDULE[angleIdx];
 
   let seen = 0;
   for (const niche of active) {
     for (const subniche of niche.subniches) {
-      for (const angle of ANGLES) {
-        if (seen === idx) return { niche, subniche, angle, cursor: cursor + 1 };
-        seen++;
-      }
+      if (seen === pairIdx) return { niche, subniche, angle, cursor: cursor + 1 };
+      seen++;
     }
   }
   /* c8 ignore next */
-  return null; // unreachable: idx < total
+  return null; // unreachable: pairIdx < pairs
 }
 
 /**

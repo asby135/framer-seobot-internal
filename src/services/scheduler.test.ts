@@ -128,3 +128,70 @@ describe("createRunner", () => {
     expect(job).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("createRunner — failure handling", () => {
+  const failing = () => async () => { throw new Error("anthropic 529"); };
+
+  it("stops retrying after the attempt cap instead of looping until midnight", async () => {
+    // The tick runs every 5 minutes and lastRun is only recorded on success, so
+    // an unbounded retry means ~48 runs between 20:00 and midnight — each one
+    // proposing titles for 3-10 topics before failing again.
+    const job = vi.fn(failing());
+    const r = createRunner({
+      job, hour: 20, maxAttemptsPerDay: 3,
+      getLastRun: () => null, setLastRun: () => {},
+      now: () => at(2026, 8, 19, 20),
+    });
+    for (let i = 0; i < 10; i++) await r.tick();
+    expect(job).toHaveBeenCalledTimes(3);
+  });
+
+  it("alerts once the attempts are exhausted", async () => {
+    const onExhausted = vi.fn(async () => {});
+    const r = createRunner({
+      job: failing(), hour: 20, maxAttemptsPerDay: 2, onExhausted,
+      getLastRun: () => null, setLastRun: () => {},
+      now: () => at(2026, 8, 19, 20),
+    });
+    await r.tick();
+    await r.tick();
+    await r.tick();
+    expect(onExhausted).toHaveBeenCalledOnce();
+    expect(String(onExhausted.mock.calls[0][0])).toMatch(/anthropic 529/);
+  });
+
+  it("resets the attempt budget on a new day", async () => {
+    const job = vi.fn(failing());
+    let day = 19;
+    const r = createRunner({
+      job, hour: 20, maxAttemptsPerDay: 2,
+      getLastRun: () => null, setLastRun: () => {},
+      now: () => at(2026, 8, day, 20),
+    });
+    await r.tick();
+    await r.tick();
+    await r.tick(); // exhausted
+    expect(job).toHaveBeenCalledTimes(2);
+
+    day = 20; // next evening
+    await r.tick();
+    expect(job).toHaveBeenCalledTimes(3);
+  });
+
+  it("still retries within the budget, so a transient failure recovers", async () => {
+    let calls = 0;
+    const job = vi.fn(async () => {
+      if (++calls === 1) throw new Error("transient");
+    });
+    let saved: string | null = null;
+    const r = createRunner({
+      job, hour: 20, maxAttemptsPerDay: 3,
+      getLastRun: () => saved, setLastRun: (d) => { saved = d; },
+      now: () => at(2026, 8, 19, 20),
+    });
+    await r.tick();
+    await r.tick();
+    expect(job).toHaveBeenCalledTimes(2);
+    expect(saved).not.toBeNull(); // succeeded on the retry
+  });
+});
