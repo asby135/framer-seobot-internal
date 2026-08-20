@@ -133,16 +133,16 @@ describe("DEFAULT_NICHES", () => {
     }
   });
 
-  it("provides ~6 months of runway while 3 niches are still on probation", () => {
-    // countSlots counts only ROTATABLE niches, so probation shrinks the live
-    // space: 5 niches × 6 subniches × 5 angles = 150 slots = ~1,500 topics,
-    // roughly 200 nights at 7.5 articles/night.
-    const topics = countSlots(DEFAULT_NICHES) * 10;
-    expect(topics).toBeGreaterThan(1000);
+  it("provides about a year of distinct ground", () => {
+    // 8 niches × 6 subniches × 5 angles = 240 slots; at 10 topics per seed that
+    // is ~2,400 topics, roughly a year at 7.5 articles/night.
+    expect(countSlots(DEFAULT_NICHES)).toBe(240);
+    expect(countSlots(DEFAULT_NICHES) * 10).toBeGreaterThan(2000);
   });
 
-  it("reaches a year of runway once probation is cleared", () => {
+  it("counts probationary niches too, since they are seeded like any other", () => {
+    // Probation gates SELECTION, not seeding, so it does not shrink the space.
     const cleared = DEFAULT_NICHES.map((n) => ({ ...n, probation: false }));
-    expect(countSlots(cleared) * 10).toBeGreaterThan(2000);
+    expect(countSlots(cleared)).toBe(countSlots(DEFAULT_NICHES));
   });
 });

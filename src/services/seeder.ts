@@ -303,7 +303,7 @@ RULES:
   BAD (full headline): "How to Run Multiple OnlyFans Model Accounts on Telegram Without Your Chatters Messaging Fans from the Wrong Profile"
 - Each topic must map to a real question or pain this audience has, where CRMChat (Telegram-native CRM/outreach) is a genuine answer. Ground every topic in the KB context — do not invent features CRMChat doesn't have.
 - Prefer high-intent, specific, low-competition angles over broad head terms. "Selling PPV on Telegram without chargebacks" beats "Telegram CRM".
-- When an ANGLE is given below, EVERY topic in the batch must take that angle. Do not vary it. When no angle is given, cover a spread — how-to, evaluation, comparison, migration, troubleshooting — expressed as short topics, not headlines.
+- When an ANGLE is given below, EVERY topic in the batch must take that angle. Do not vary it. When no angle is given, cover a spread — how-to, what-is, troubleshooting, comparison, tops — expressed as short topics, not headlines.
 - BRIDGE FRAMING: when the audience is migrating from another channel/tool (email, OnlyFans DMs, another CRM), frame the topic around the switch — e.g. "migrating OnlyFans DMs to Telegram", "email outreach alternative for B2B".
 - Do NOT propose pure-competitor topics (a competitor name with no CRMChat angle). Comparison/migration topics that name a competitor AND position CRMChat are fine.
 - No marketing fluff, no parenthetical asides, no year suffixes, no clickbait. Just the topic phrase.

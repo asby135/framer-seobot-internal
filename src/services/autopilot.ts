@@ -69,7 +69,11 @@ export async function runNightly(deps: AutopilotDeps): Promise<void> {
   const onProbation = probationaryNames(niches);
 
   const pending = deps.getPending();
-  if (needsTopUp(pending, deps.poolThreshold, onProbation)) {
+  // Top-up counts probationary topics: they are real topics sitting in the
+  // queue awaiting review, so they DO fill the pool. Excluding them here meant
+  // that with every niche on probation the pool never looked full — seeding
+  // fired every night, forever, while selection returned nothing.
+  if (needsTopUp(pending, deps.poolThreshold)) {
     const slot = nextSlot(niches, deps.getCursor());
     if (slot) {
       logger.info(
