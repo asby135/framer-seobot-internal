@@ -236,7 +236,15 @@ async function sendTitleDigest(proposals: TitleProposal[]): Promise<number> {
   ]);
   rows.push([{ text: "✅ Approve all", data: "genall:" }]);
 
-  await sendMessage(text, buildKeyboard(rows));
+  const delivered = await sendMessage(text, buildKeyboard(rows));
+  if (!delivered) {
+    // A run that proposed titles nobody saw has not succeeded. Failing here
+    // makes the manual trigger report the problem instead of logging "digest
+    // sent" over a Telegram rejection.
+    throw new Error(
+      "Telegram rejected the gate-1 digest — check the logs for its description (usually a wrong chat_id or malformed HTML)"
+    );
+  }
   return 0; // sendMessage does not surface the id; digest edits are by content
 }
 

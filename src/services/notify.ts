@@ -104,11 +104,19 @@ export function buildKeyboard(rows: Button[][]): InlineKeyboard {
   };
 }
 
-async function call(method: string, body: Record<string, unknown>): Promise<unknown> {
+/**
+ * Call the Telegram API.
+ *
+ * Returns false when the message did not get through, so callers can decide
+ * whether that is fatal. Logs Telegram's own `description` — a bare status code
+ * is nearly useless here, since 400 covers everything from a wrong chat_id to
+ * malformed HTML, and the description names which.
+ */
+async function call(method: string, body: Record<string, unknown>): Promise<boolean> {
   const { fetch, token } = getTransport();
   if (!token) {
     logger.warn({ method }, "TELEGRAM_BOT_TOKEN not set — notification skipped");
-    return undefined;
+    return false;
   }
 
   try {
@@ -117,31 +125,47 @@ async function call(method: string, body: Record<string, unknown>): Promise<unkn
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+
     if (!res.ok) {
-      logger.error({ method, status: res.status }, "Telegram API returned an error");
-      return undefined;
+      let description = "";
+      try {
+        const parsed = (await res.json()) as { description?: string };
+        description = parsed.description ?? "";
+      } catch {
+        description = await res.text().catch(() => "");
+      }
+      logger.error(
+        { method, status: res.status, description, chatId: body.chat_id },
+        "Telegram API rejected the request"
+      );
+      return false;
     }
-    return await res.json();
+
+    return true;
   } catch (e) {
     logger.error(
       { method, error: e instanceof Error ? e.message : "unknown" },
       "Telegram API call failed"
     );
-    return undefined;
+    return false;
   }
 }
 
-export async function sendMessage(text: string, keyboard?: InlineKeyboard): Promise<void> {
+/** Returns false if any chunk failed to send. */
+export async function sendMessage(text: string, keyboard?: InlineKeyboard): Promise<boolean> {
   const { chatId } = getTransport();
+  let ok = true;
   for (const chunk of chunkText(text)) {
-    await call("sendMessage", {
+    const sent = await call("sendMessage", {
       chat_id: chatId,
       text: chunk,
       parse_mode: "HTML",
       disable_web_page_preview: true,
       ...(keyboard ? { reply_markup: keyboard } : {}),
     });
+    if (!sent) ok = false;
   }
+  return ok;
 }
 
 /** Edit a message in place, so a tapped button leaves a clean audit trail. */
