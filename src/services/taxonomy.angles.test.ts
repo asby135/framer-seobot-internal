@@ -5,6 +5,9 @@ import {
   buildAngleSchedule,
   ANGLES,
   ANGLE_GUIDANCE,
+  nextSlot,
+  countPairs,
+  DEFAULT_NICHES,
 } from "./taxonomy.js";
 
 /**
@@ -96,5 +99,53 @@ describe("ANGLE_SCHEDULE", () => {
     expect(counts["how-to"] / 200).toBeCloseTo(0.67, 1);
     expect(counts["what-is"] / 200).toBeCloseTo(0.13, 1);
     expect(counts["comparison"] / 200).toBeCloseTo(0.04, 1);
+  });
+});
+
+describe("angle coverage per subniche (regression)", () => {
+  // Found in review. Indexing the angle on the raw cursor coupled it to the
+  // pair index through gcd(pairs, schedule). At the real 48 pairs vs 100 slots
+  // that gcd is 4, so 36 of 48 subniches NEVER received a "tops" topic and 24
+  // never received a "comparison" — while every aggregate test stayed green,
+  // because the GLOBAL mix was correct the whole time.
+  it("every (niche, subniche) pair reaches every angle over a full cycle", () => {
+    const pairs = countPairs(DEFAULT_NICHES);
+    const cycle = pairs * ANGLE_SCHEDULE.length;
+    const seen = new Map<string, Set<string>>();
+
+    for (let c = 0; c < cycle; c++) {
+      const s = nextSlot(DEFAULT_NICHES, c)!;
+      const key = `${s.niche.name}|${s.subniche}`;
+      if (!seen.has(key)) seen.set(key, new Set());
+      seen.get(key)!.add(s.angle);
+    }
+
+    const starved = [...seen.entries()].filter(([, a]) => a.size < ANGLES.length);
+    expect(starved.map(([k]) => k)).toEqual([]);
+    expect(seen.size).toBe(pairs);
+  });
+
+  it("keeps the global mix at the configured weights", () => {
+    const pairs = countPairs(DEFAULT_NICHES);
+    const cycle = pairs * ANGLE_SCHEDULE.length;
+    const counts: Record<string, number> = {};
+    for (let c = 0; c < cycle; c++) {
+      const a = nextSlot(DEFAULT_NICHES, c)!.angle;
+      counts[a] = (counts[a] ?? 0) + 1;
+    }
+    for (const [angle, weight] of Object.entries(ANGLE_WEIGHTS)) {
+      expect(Math.round((counts[angle] / cycle) * 100)).toBe(weight);
+    }
+  });
+
+  it("does not clump one angle into a long consecutive run", () => {
+    let longest = 1, run = 1, prev = "";
+    for (let c = 0; c < 400; c++) {
+      const a = nextSlot(DEFAULT_NICHES, c)!.angle;
+      run = a === prev ? run + 1 : 1;
+      prev = a;
+      longest = Math.max(longest, run);
+    }
+    expect(longest).toBeLessThanOrEqual(6);
   });
 });

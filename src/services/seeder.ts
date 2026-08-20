@@ -250,12 +250,16 @@ export function insertSeededTopics(
     `INSERT INTO keywords (id, query, source, opportunity_score, status, niche)
      VALUES (?, ?, 'seeded', ?, 'pending', ?)`
   );
+  // Revive must set `niche` too. Writing it only on the INSERT path meant a
+  // previously-rejected topic revived by a probationary niche kept a NULL or
+  // stale niche, so the probation filter never matched it and it could
+  // generate unattended — the exact leak probation exists to prevent.
   const reviveStmt = db.prepare(
-    `UPDATE keywords SET status = 'pending', source = 'seeded', opportunity_score = ?, updated_at = datetime('now') WHERE id = ?`
+    `UPDATE keywords SET status = 'pending', source = 'seeded', opportunity_score = ?, niche = ?, updated_at = datetime('now') WHERE id = ?`
   );
   const insertMany = db.transaction((items: string[]) => {
     for (const q of items) insertStmt.run(nanoid(), q, SEEDED_SCORE, niche ?? null);
-    for (const id of toRevive) reviveStmt.run(SEEDED_SCORE, id);
+    for (const id of toRevive) reviveStmt.run(SEEDED_SCORE, niche ?? null, id);
   });
   if (toInsert.length > 0 || toRevive.length > 0) insertMany(toInsert);
 

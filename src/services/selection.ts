@@ -65,13 +65,14 @@ export function selectTopics(
 }
 
 /**
- * Should the seeder run tonight? Measured against usable topics only — a pool
- * full of excluded rows is not runway, however large it looks.
+ * Should the seeder run tonight?
+ *
+ * Counts every topic with a usable SOURCE, including ones from probationary
+ * niches: those are real topics sitting in the queue awaiting review, so they
+ * fill the pool. Only selection excludes them. Deliberately takes no
+ * exclusion set — passing one here reintroduced unbounded nightly seeding,
+ * because with every niche on probation the pool never looked full.
  */
-export function needsTopUp(
-  topics: PendingTopic[],
-  threshold: number,
-  excludeNiches: Set<string> = new Set()
-): boolean {
-  return usableTopics(topics, excludeNiches).length < threshold;
+export function needsTopUp(topics: PendingTopic[], threshold: number): boolean {
+  return usableTopics(topics).length < threshold;
 }

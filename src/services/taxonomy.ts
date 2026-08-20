@@ -152,10 +152,10 @@ export function countSlots(niches: Niche[]): number {
  * Resolve a cursor to a concrete (niche, subniche, angle) slot.
  *
  * Niche/subniche advance one step per seeding; the angle is drawn from the
- * weighted schedule. Two different moduli means the pair and the angle drift
- * against each other, so a given subniche is not permanently welded to one
- * angle — over time each subniche is approached from every angle, in the target
- * proportions.
+ * weighted schedule, offset by the sweep count so a fixed pair walks the whole
+ * schedule rather than a fixed residue class of it. Verified: every
+ * (niche, subniche) pair reaches every angle over a full cycle, while the
+ * global mix stays at the configured weights.
  *
  * Returns null when nothing is rotatable (every niche on probation, or none
  * configured), which the caller treats as "skip seeding tonight", not an error.
@@ -169,8 +169,18 @@ export function nextSlot(niches: Niche[], cursor: number): Slot | null {
 
   // Normalise, tolerating a negative or wrapped cursor.
   const pairIdx = ((cursor % pairs) + pairs) % pairs;
-  const angleIdx =
-    ((cursor % ANGLE_SCHEDULE.length) + ANGLE_SCHEDULE.length) % ANGLE_SCHEDULE.length;
+
+  // Adding the sweep number (how many times the pair list has wrapped) makes a
+  // FIXED pair advance through the schedule by pairs+1 each visit instead of
+  // by pairs. Indexing on the raw cursor looked decoupled but was not: a pair
+  // only ever reached schedule positions congruent to its own index mod
+  // gcd(pairs, schedule). At 48 pairs against 100 slots that gcd is 4, so 36
+  // of 48 subniches never received a "tops" topic and 24 never received a
+  // "comparison" — the global mix was right while per-subniche coverage was
+  // silently broken.
+  const sweep = Math.floor(cursor / pairs);
+  const raw = (cursor + sweep) % ANGLE_SCHEDULE.length;
+  const angleIdx = ((raw % ANGLE_SCHEDULE.length) + ANGLE_SCHEDULE.length) % ANGLE_SCHEDULE.length;
   const angle = ANGLE_SCHEDULE[angleIdx];
 
   let seen = 0;
