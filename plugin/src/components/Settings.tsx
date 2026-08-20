@@ -13,6 +13,7 @@ export function Settings({ onBack }: Props) {
   const [copied, setCopied] = useState(false);
   const [gen, setGen] = useState<GeneratorSettings | null>(null);
   const [genStatus, setGenStatus] = useState("");
+  const [openNiche, setOpenNiche] = useState<string | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -98,6 +99,10 @@ export function Settings({ onBack }: Props) {
         <p style={styles.keyHint}>Used as the Bearer token for direct API calls (e.g. seeding topics via curl).</p>
       </div>
 
+      <button onClick={handleDisconnect} style={styles.disconnectButton}>
+        Disconnect
+      </button>
+
       {gen && (
         <div style={styles.field}>
           <h4 style={styles.sectionTitle}>Generator</h4>
@@ -146,7 +151,12 @@ export function Settings({ onBack }: Props) {
           {gen.niches.map((n, i) => (
             <div key={n.name} style={styles.nicheRow}>
               <div style={styles.nicheHead}>
-                <span style={styles.nicheName}>{n.name}</span>
+                <button
+                  onClick={() => setOpenNiche(openNiche === n.name ? null : n.name)}
+                  style={styles.nicheToggle}
+                >
+                  {openNiche === n.name ? "▾" : "▸"} {n.name}
+                </button>
                 <label style={styles.probationLabel}>
                   <input
                     type="checkbox"
@@ -156,6 +166,8 @@ export function Settings({ onBack }: Props) {
                   probation
                 </label>
               </div>
+              {openNiche === n.name && (
+                <>
               <textarea
                 value={n.persona}
                 onChange={(e) => updateNiche(i, { persona: e.target.value })}
@@ -172,6 +184,8 @@ export function Settings({ onBack }: Props) {
                 style={styles.subnicheInput}
                 placeholder="comma-separated subniches"
               />
+                </>
+              )}
             </div>
           ))}
 
@@ -182,15 +196,12 @@ export function Settings({ onBack }: Props) {
         </div>
       )}
 
-      <button onClick={handleDisconnect} style={styles.disconnectButton}>
-        Disconnect
-      </button>
     </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { padding: 16, fontFamily: "Inter, system-ui, sans-serif", color: "#e0e0e0", background: "#1a1a1a", height: "100%" },
+  container: { padding: 16, fontFamily: "Inter, system-ui, sans-serif", color: "#e0e0e0", background: "#1a1a1a", height: "100%", overflow: "auto", boxSizing: "border-box" as const },
   backLink: { background: "none", border: "none", color: "#888", cursor: "pointer", padding: 0, fontSize: 13, marginBottom: 16, display: "block" },
   title: { color: "#fff", fontSize: 16, fontWeight: 600, margin: "0 0 24px" },
   field: { marginBottom: 24 },
@@ -210,6 +221,7 @@ const styles: Record<string, React.CSSProperties> = {
   nicheRow: { background: "#222", border: "1px solid #333", borderRadius: 8, padding: 10, marginBottom: 8 },
   nicheHead: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   nicheName: { color: "#fff", fontSize: 13, fontWeight: 500 },
+  nicheToggle: { background: "none", border: "none", color: "#fff", fontSize: 13, fontWeight: 500, cursor: "pointer", padding: 0, textAlign: "left" as const },
   probationLabel: { color: "#c99", fontSize: 11, display: "flex", alignItems: "center", gap: 4 },
   personaInput: { width: "100%", boxSizing: "border-box" as const, padding: "6px 8px", background: "#2a2a2a", color: "#ccc", border: "1px solid #444", borderRadius: 6, fontSize: 12, resize: "vertical" as const, fontFamily: "inherit" },
   subnicheInput: { width: "100%", boxSizing: "border-box" as const, marginTop: 6, padding: "6px 8px", background: "#2a2a2a", color: "#ccc", border: "1px solid #444", borderRadius: 6, fontSize: 12 },
