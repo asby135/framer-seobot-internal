@@ -48,6 +48,7 @@ export function initDb(): Database.Database {
   addColumn("ALTER TABLE article_translations ADD COLUMN slug TEXT");
   addColumn("ALTER TABLE articles ADD COLUMN schema_jsonld TEXT");
   addColumn("ALTER TABLE article_translations ADD COLUMN schema_jsonld TEXT");
+  addColumn("ALTER TABLE keywords ADD COLUMN niche TEXT");
   addColumn("ALTER TABLE keywords ADD COLUMN proposed_title TEXT");
   addColumn("ALTER TABLE keywords ADD COLUMN bot_message_id INTEGER");
   addColumn("ALTER TABLE api_keys ADD COLUMN label TEXT NOT NULL DEFAULT 'default'");

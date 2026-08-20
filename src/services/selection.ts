@@ -8,6 +8,8 @@ export interface PendingTopic {
   id: string;
   query: string;
   source: string;
+  /** Taxonomy niche that seeded it, when known. */
+  niche?: string | null;
 }
 
 /**
@@ -21,8 +23,20 @@ export interface PendingTopic {
  */
 const USABLE_SOURCES = new Set(["seeded", "custom"]);
 
-export function usableTopics(topics: PendingTopic[]): PendingTopic[] {
-  return topics.filter((t) => USABLE_SOURCES.has(t.source));
+/**
+ * Topics eligible for automatic selection.
+ *
+ * `excludeNiches` holds probationary niches: their topics are seeded and
+ * visible in the queue, but must not generate unattended until the operator has
+ * approved some by hand.
+ */
+export function usableTopics(
+  topics: PendingTopic[],
+  excludeNiches: Set<string> = new Set()
+): PendingTopic[] {
+  return topics.filter(
+    (t) => USABLE_SOURCES.has(t.source) && !(t.niche && excludeNiches.has(t.niche))
+  );
 }
 
 /**
@@ -35,9 +49,10 @@ export function usableTopics(topics: PendingTopic[]): PendingTopic[] {
 export function selectTopics(
   topics: PendingTopic[],
   count: number,
-  rng: () => number = Math.random
+  rng: () => number = Math.random,
+  excludeNiches: Set<string> = new Set()
 ): PendingTopic[] {
-  const pool = usableTopics(topics); // already a fresh array — caller is not mutated
+  const pool = usableTopics(topics, excludeNiches); // fresh array; caller unmutated
   const picked: PendingTopic[] = [];
 
   while (picked.length < count && pool.length > 0) {
@@ -53,6 +68,10 @@ export function selectTopics(
  * Should the seeder run tonight? Measured against usable topics only — a pool
  * full of excluded rows is not runway, however large it looks.
  */
-export function needsTopUp(topics: PendingTopic[], threshold: number): boolean {
-  return usableTopics(topics).length < threshold;
+export function needsTopUp(
+  topics: PendingTopic[],
+  threshold: number,
+  excludeNiches: Set<string> = new Set()
+): boolean {
+  return usableTopics(topics, excludeNiches).length < threshold;
 }

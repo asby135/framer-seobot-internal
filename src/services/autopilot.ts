@@ -1,4 +1,4 @@
-import { nextSlot, type Niche } from "./taxonomy.js";
+import { nextSlot, probationaryNames, type Niche } from "./taxonomy.js";
 import { selectTopics, needsTopUp, type PendingTopic } from "./selection.js";
 import { logger } from "../lib/logger.js";
 
@@ -11,6 +11,7 @@ import { logger } from "../lib/logger.js";
  */
 
 export interface SeedRequest {
+  niche: string;
   persona: string;
   subniche: string;
   angle: string;
@@ -60,15 +61,23 @@ export interface AutopilotDeps {
 export async function runNightly(deps: AutopilotDeps): Promise<void> {
   // 1. Top up. Measured against USABLE topics only: a pool full of excluded
   //    rows is not runway, however large it looks.
+  const niches = deps.getNiches();
+  // Probationary niches are seeded but never auto-selected: their topics land
+  // as `pending` for the operator to judge. Excluding them from seeding instead
+  // meant they produced nothing and the operator waited for topics that could
+  // never arrive.
+  const onProbation = probationaryNames(niches);
+
   const pending = deps.getPending();
-  if (needsTopUp(pending, deps.poolThreshold)) {
-    const slot = nextSlot(deps.getNiches(), deps.getCursor());
+  if (needsTopUp(pending, deps.poolThreshold, onProbation)) {
+    const slot = nextSlot(niches, deps.getCursor());
     if (slot) {
       logger.info(
         { niche: slot.niche.name, subniche: slot.subniche, angle: slot.angle },
         "Topic pool low — seeding from rotation slot"
       );
       await deps.seed({
+        niche: slot.niche.name,
         persona: slot.niche.persona,
         subniche: slot.subniche,
         angle: slot.angle,
@@ -85,17 +94,26 @@ export async function runNightly(deps: AutopilotDeps): Promise<void> {
 
   // 2. Select. Re-read the pool so freshly seeded topics are eligible tonight.
   const count = deps.articlesPerNight();
-  const selected = selectTopics(deps.getPending(), count);
+  const selected = selectTopics(deps.getPending(), count, Math.random, onProbation);
   if (selected.length === 0) {
     logger.warn("No usable topics available — nothing to propose tonight");
     return;
   }
 
   // 3. Propose a headline per topic.
-  const recent = deps.recentTitles();
+  //
+  // Each proposal sees the ones already chosen TONIGHT, not just recently
+  // published titles. Without this, proposals are generated independently and
+  // collide with each other: a live digest produced three headlines out of four
+  // opening with a quantity, which is precisely the formulaic tell the shape
+  // rules exist to prevent.
+  const published = deps.recentTitles();
+  const chosenTonight: string[] = [];
   const proposals: TitleProposal[] = [];
+
   for (const topic of selected) {
-    const title = await deps.proposeTitle(topic.query, recent, []);
+    const title = await deps.proposeTitle(topic.query, [...published, ...chosenTonight], []);
+    chosenTonight.push(title);
     proposals.push({ keywordId: topic.id, query: topic.query, title });
   }
 

@@ -108,6 +108,7 @@ export function getCoveredTopics(recentQueries = 60, recentTitles = 30): string[
 
 export interface SeedOptions {
   /** Rotation slot, when seeding is driven by the scheduler. */
+  niche?: string;
   subniche?: string;
   angle?: string;
   /** KB filenames pinned ahead of TF-IDF results — see Niche.kb_hints. */
@@ -164,7 +165,7 @@ export async function seedTopics(
     return { seeded: [], skipped: 0, audience };
   }
 
-  const { seeded, skipped, revived } = insertSeededTopics(candidates);
+  const { seeded, skipped, revived } = insertSeededTopics(candidates, opts.niche);
   logger.info(
     { audience, requested: n, seeded: seeded.length, revived, skipped },
     "Audience topic seeding complete"
@@ -188,7 +189,8 @@ export async function seedTopics(
  *  - Otherwise → insert new.
  */
 export function insertSeededTopics(
-  candidates: string[]
+  candidates: string[],
+  niche?: string
 ): { seeded: Array<{ query: string }>; skipped: number; revived: number } {
   const db = getDb();
   const SEEDED_SCORE = 50;
@@ -245,14 +247,14 @@ export function insertSeededTopics(
   }
 
   const insertStmt = db.prepare(
-    `INSERT INTO keywords (id, query, source, opportunity_score, status)
-     VALUES (?, ?, 'seeded', ?, 'pending')`
+    `INSERT INTO keywords (id, query, source, opportunity_score, status, niche)
+     VALUES (?, ?, 'seeded', ?, 'pending', ?)`
   );
   const reviveStmt = db.prepare(
     `UPDATE keywords SET status = 'pending', source = 'seeded', opportunity_score = ?, updated_at = datetime('now') WHERE id = ?`
   );
   const insertMany = db.transaction((items: string[]) => {
-    for (const q of items) insertStmt.run(nanoid(), q, SEEDED_SCORE);
+    for (const q of items) insertStmt.run(nanoid(), q, SEEDED_SCORE, niche ?? null);
     for (const id of toRevive) reviveStmt.run(SEEDED_SCORE, id);
   });
   if (toInsert.length > 0 || toRevive.length > 0) insertMany(toInsert);

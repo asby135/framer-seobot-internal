@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextSlot, countSlots, countPairs, DEFAULT_NICHES, ANGLES, type Niche } from "./taxonomy.js";
+import { nextSlot, countSlots, countPairs, probationaryNames, DEFAULT_NICHES, ANGLES, type Niche } from "./taxonomy.js";
 
 const niches: Niche[] = [
   { name: "A", persona: "pa", subniches: ["a1", "a2"], kb_hints: [], probation: false },
@@ -64,13 +64,19 @@ describe("nextSlot", () => {
     expect(s.cursor).toBe(total + 1);
   });
 
-  it("skips niches on probation", () => {
+  it("STILL seeds a niche on probation", () => {
+    // Probation gates SELECTION, not seeding. Its topics land as pending so the
+    // operator can judge them; skipping them here produced nothing to judge.
     const withProbation: Niche[] = [{ ...niches[0], probation: true }, niches[1]];
-    expect(nextSlot(withProbation, 0)!.niche.name).toBe("B");
+    expect(nextSlot(withProbation, 0)!.niche.name).toBe("A");
   });
 
-  it("returns null when every niche is on probation", () => {
-    expect(nextSlot(niches.map((n) => ({ ...n, probation: true })), 0)).toBeNull();
+  it("still rotates when every niche is on probation", () => {
+    expect(nextSlot(niches.map((n) => ({ ...n, probation: true })), 0)).not.toBeNull();
+  });
+
+  it("returns null only when no niche has subniches", () => {
+    expect(nextSlot([{ ...niches[0], subniches: [] }], 0)).toBeNull();
   });
 
   it("returns null when there are no niches at all", () => {
@@ -89,6 +95,15 @@ describe("nextSlot", () => {
       seen.add(`${s.niche.name}|${s.subniche}`);
     }
     expect(seen.size).toBe(pairs);
+  });
+});
+
+describe("probationaryNames", () => {
+  it("names the niches whose topics must not be auto-selected", () => {
+    const names = probationaryNames(DEFAULT_NICHES);
+    expect(names.has("RU AI companies")).toBe(true);
+    expect(names.has("Web3 / crypto")).toBe(false);
+    expect(names.size).toBe(3);
   });
 });
 

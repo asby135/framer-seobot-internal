@@ -116,8 +116,22 @@ export function buildAngleSchedule(weights: Record<string, number>): string[] {
 /** The live schedule, indexed by the rotation cursor. */
 export const ANGLE_SCHEDULE = buildAngleSchedule(ANGLE_WEIGHTS);
 
+/**
+ * Niches eligible for seeding.
+ *
+ * Probationary niches ARE seeded — that is the point of probation: their topics
+ * land as `pending` so the operator can judge the output. They are excluded
+ * later, at SELECTION, so nothing generates from them unattended. Excluding
+ * them here instead meant they produced nothing at all, and the operator waited
+ * for topics that could never arrive.
+ */
 function rotatable(niches: Niche[]): Niche[] {
-  return niches.filter((n) => !n.probation && n.subniches.length > 0);
+  return niches.filter((n) => n.subniches.length > 0);
+}
+
+/** Names of niches whose topics must not be auto-selected. */
+export function probationaryNames(niches: Niche[]): Set<string> {
+  return new Set(niches.filter((n) => n.probation).map((n) => n.name));
 }
 
 /** Distinct (niche, subniche) pairs available for rotation. */
