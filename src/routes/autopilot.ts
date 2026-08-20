@@ -19,13 +19,16 @@ const autopilot = new Hono();
 /**
  * POST /api/autopilot/run?dry_run=1
  *
- * dry_run proposes titles and sends the digest but persists nothing — no
- * approved keywords, no stored proposals, no advanced rotation cursor. Safe to
- * repeat.
+ * dry_run skips persisting the proposed titles and the digest message id, so
+ * the digest's approve buttons will not find a pinned title and do nothing.
  *
- * Without dry_run it is the real thing: it may seed topics (one Claude call),
- * proposes a title per selected topic (one call each), and sends a digest whose
- * buttons will spend a full generation when tapped.
+ * It does NOT skip topic seeding or the rotation cursor advance. Those run
+ * either way, because a dry run against an empty pool would have nothing to
+ * propose and would prove nothing. So a dry run can still cost one Claude call
+ * for seeding, plus one per proposed title.
+ *
+ * Without dry_run the digest is live: approving a title spends a full
+ * generation.
  */
 autopilot.post("/run", async (c) => {
   const dryRun = c.req.query("dry_run") === "1";
@@ -44,7 +47,7 @@ autopilot.post("/run", async (c) => {
       success: true,
       dryRun,
       note: dryRun
-        ? "Digest sent. Nothing was persisted — approving from this digest will not work."
+        ? "Digest sent. Titles were not persisted, so approving from this digest will not generate. Topics may have been seeded and the rotation cursor advanced — those are real."
         : "Digest sent. Approving a title will start a real generation.",
     });
   } catch (e) {

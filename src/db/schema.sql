@@ -60,6 +60,11 @@ CREATE TABLE IF NOT EXISTS sync_log (
 CREATE TABLE IF NOT EXISTS api_keys (
   id TEXT PRIMARY KEY,
   key_hash TEXT NOT NULL,
+  -- Named so each consumer (plugin, CLI) holds its own key. Minting one label
+  -- leaves the others alone; the previous single-key design logged everyone
+  -- else out on every mint.
+  label TEXT NOT NULL DEFAULT 'default',
+  last_used_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
