@@ -50,6 +50,8 @@ export function initDb(): Database.Database {
   addColumn("ALTER TABLE article_translations ADD COLUMN schema_jsonld TEXT");
   addColumn("ALTER TABLE keywords ADD COLUMN proposed_title TEXT");
   addColumn("ALTER TABLE keywords ADD COLUMN bot_message_id INTEGER");
+  addColumn("ALTER TABLE api_keys ADD COLUMN label TEXT NOT NULL DEFAULT 'default'");
+  addColumn("ALTER TABLE api_keys ADD COLUMN last_used_at TEXT");
 
   logger.info({ path: dbPath }, "Database initialized");
   return db;
