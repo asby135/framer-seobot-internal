@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
 import { searchKB, getKBArticle } from "./kb.js";
+import { ANGLE_GUIDANCE } from "./taxonomy.js";
 import { isPureCompetitorTopic } from "./research.js";
 import { queryToSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
@@ -64,7 +65,12 @@ export function buildSeederPrompt(input: SeederPromptInput): string {
       : "";
 
   const subnicheLine = subniche ? `\nSUBNICHE — narrow every topic to this: ${subniche}` : "";
-  const angleLine = angle ? `\nANGLE — every topic must take this angle: ${angle}` : "";
+  // The bare angle word is ambiguous — "tops" would not, on its own, produce
+  // "best X tools" topics — so ship its definition alongside it.
+  const angleGuidance = angle ? ANGLE_GUIDANCE[angle] : undefined;
+  const angleLine = angle
+    ? `\nANGLE — every topic must take this angle: ${angle}${angleGuidance ? `\n  (${angle} means: ${angleGuidance})` : ""}`
+    : "";
   const closing = [
     subniche ? `all within the "${subniche}" subniche` : null,
     angle ? `all taking the "${angle}" angle` : null,

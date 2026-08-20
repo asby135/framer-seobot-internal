@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextSlot, countSlots, DEFAULT_NICHES, ANGLES, type Niche } from "./taxonomy.js";
+import { nextSlot, countSlots, countPairs, DEFAULT_NICHES, ANGLES, type Niche } from "./taxonomy.js";
 
 const niches: Niche[] = [
   { name: "A", persona: "pa", subniches: ["a1", "a2"], kb_hints: [], probation: false },
@@ -18,29 +18,42 @@ describe("countSlots", () => {
 });
 
 describe("nextSlot", () => {
-  it("returns the first slot at cursor 0", () => {
-    expect(nextSlot(niches, 0)).toEqual({
-      niche: niches[0],
-      subniche: "a1",
-      angle: ANGLES[0],
-      cursor: 1,
-    });
-  });
-
-  it("advances through angles before moving subniche", () => {
-    const s = nextSlot(niches, 1)!;
-    expect(s.angle).toBe(ANGLES[1]);
+  it("returns the first pair at cursor 0", () => {
+    const s = nextSlot(niches, 0)!;
+    expect(s.niche).toEqual(niches[0]);
     expect(s.subniche).toBe("a1");
+    expect(s.cursor).toBe(1);
+    expect(ANGLES).toContain(s.angle);
   });
 
-  it("moves to the next subniche once angles are exhausted", () => {
-    const s = nextSlot(niches, ANGLES.length)!;
-    expect(s.subniche).toBe("a2");
-    expect(s.angle).toBe(ANGLES[0]);
+  it("advances one subniche per step", () => {
+    // Niche/subniche steps once per seeding; the angle is drawn separately from
+    // the weighted schedule, so it is no longer the innermost loop.
+    expect(nextSlot(niches, 1)!.subniche).toBe("a2");
   });
 
-  it("moves to the next niche once its subniches are exhausted", () => {
-    expect(nextSlot(niches, ANGLES.length * 2)!.niche.name).toBe("B");
+  it("moves to the next niche once its subniches are used", () => {
+    expect(nextSlot(niches, 2)!.niche.name).toBe("B");
+    expect(nextSlot(niches, 2)!.subniche).toBe("b1");
+  });
+
+  it("draws the angle from the weighted schedule, not an even cycle", () => {
+    // how-to is 67% of the schedule, so it dominates early cursors — which is
+    // the whole point of weighting.
+    const angles = Array.from({ length: 20 }, (_, i) => nextSlot(niches, i)!.angle);
+    const howTo = angles.filter((a) => a === "how-to").length;
+    expect(howTo).toBeGreaterThan(10);
+  });
+
+  it("does not weld a subniche to a single angle", () => {
+    // pairs (3) and the schedule (100) share no common factor beyond 1, so the
+    // same subniche is approached from different angles as the cursor advances.
+    const seen = new Set<string>();
+    for (let c = 0; c < 60; c++) {
+      const s = nextSlot(niches, c)!;
+      if (s.subniche === "a1") seen.add(s.angle);
+    }
+    expect(seen.size).toBeGreaterThan(1);
   });
 
   it("wraps around to the start but keeps the cursor monotonic", () => {
@@ -68,14 +81,14 @@ describe("nextSlot", () => {
     expect(nextSlot(niches, -1)).not.toBeNull();
   });
 
-  it("visits every slot exactly once across a full cycle", () => {
-    const total = countSlots(niches);
+  it("visits every (niche, subniche) pair exactly once per pair cycle", () => {
+    const pairs = countPairs(niches);
     const seen = new Set<string>();
-    for (let c = 0; c < total; c++) {
+    for (let c = 0; c < pairs; c++) {
       const s = nextSlot(niches, c)!;
-      seen.add(`${s.niche.name}|${s.subniche}|${s.angle}`);
+      seen.add(`${s.niche.name}|${s.subniche}`);
     }
-    expect(seen.size).toBe(total);
+    expect(seen.size).toBe(pairs);
   });
 });
 
