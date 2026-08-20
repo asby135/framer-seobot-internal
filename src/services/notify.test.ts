@@ -88,14 +88,14 @@ describe("sendMessage", () => {
   it("no-ops without throwing when no bot token is configured", async () => {
     const fetchSpy = vi.fn();
     __setTransport({ fetch: fetchSpy, token: "", chatId: "123" });
-    await sendMessage("hello");
+    expect(await sendMessage("hello")).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("posts to the Telegram API when configured", async () => {
     const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) }));
     __setTransport({ fetch: fetchSpy as never, token: "T", chatId: "123" });
-    await sendMessage("hello");
+    expect(await sendMessage("hello")).toBe(true);
     expect(fetchSpy).toHaveBeenCalledOnce();
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/botT/sendMessage");
@@ -104,14 +104,19 @@ describe("sendMessage", () => {
 
   it("does not throw when the Telegram API returns an error", async () => {
     // A failed notification must never take down the nightly run.
-    const fetchSpy = vi.fn(async () => ({ ok: false, status: 400, text: async () => "bad" }));
+    const fetchSpy = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({ description: "Bad Request: chat not found" }),
+    }));
     __setTransport({ fetch: fetchSpy as never, token: "T", chatId: "123" });
-    await expect(sendMessage("hello")).resolves.toBeUndefined();
+    // Reports failure rather than throwing: the caller decides if it is fatal.
+    expect(await sendMessage("hello")).toBe(false);
   });
 
   it("does not throw when the network call rejects", async () => {
     const fetchSpy = vi.fn(async () => { throw new Error("offline"); });
     __setTransport({ fetch: fetchSpy as never, token: "T", chatId: "123" });
-    await expect(sendMessage("hello")).resolves.toBeUndefined();
+    expect(await sendMessage("hello")).toBe(false);
   });
 });
