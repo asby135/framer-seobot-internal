@@ -378,8 +378,8 @@ export function registerArticleReadyHandler(): void {
  * `dryRun` proposes titles and sends the digest but persists nothing, so a
  * rehearsal leaves no state for the real run to trip over.
  */
-export async function runNightlyJob(dryRun: boolean): Promise<void> {
-      await runNightly({
+export async function runNightlyJob(dryRun: boolean): Promise<TitleProposal[]> {
+      return await runNightly({
         getNiches: () => getSetting<Niche[]>("niches", DEFAULT_NICHES),
         getCursor: () => getSetting("rotationCursor", 0),
         setCursor: (c) => setSetting("rotationCursor", c),
@@ -403,14 +403,6 @@ export async function runNightlyJob(dryRun: boolean): Promise<void> {
         },
         getCovered: () => getCoveredTopics(),
 
-        recentTitles: () => recentPublishedTitles(),
-        proposeTitle,
-
-        saveProposedTitle: (keywordId, title) => {
-          getDb()
-            .prepare("UPDATE keywords SET proposed_title = ? WHERE id = ?")
-            .run(title, keywordId);
-        },
         sendTitleDigest,
         saveDigestMessageId: (id) => setSetting("lastDigestMessageId", id),
 
@@ -419,15 +411,17 @@ export async function runNightlyJob(dryRun: boolean): Promise<void> {
 }
 
 /** Guards against a manual trigger colliding with the scheduled run. */
-let nightlyInFlight: Promise<void> | null = null;
+let nightlyInFlight: Promise<TitleProposal[]> | null = null;
 
-export async function runNightlyOnce(dryRun: boolean): Promise<{ started: boolean }> {
+export async function runNightlyOnce(
+  dryRun: boolean
+): Promise<{ started: boolean; proposals?: TitleProposal[] }> {
   if (nightlyInFlight) return { started: false };
   nightlyInFlight = runNightlyJob(dryRun).finally(() => {
     nightlyInFlight = null;
   });
-  await nightlyInFlight;
-  return { started: true };
+  const proposals = await nightlyInFlight;
+  return { started: true, proposals };
 }
 
 export function createNightlyRunner(): Runner {
@@ -437,7 +431,9 @@ export function createNightlyRunner(): Runner {
     setLastRun: (date) => setSetting("lastRunDate", date),
     maxAttemptsPerDay: getSetting("maxAttemptsPerDay", 3),
     onExhausted: alert,
-    job: () => runNightlyJob(process.env.SCHEDULER_DRY_RUN === "1"),
+    job: async () => {
+      await runNightlyJob(process.env.SCHEDULER_DRY_RUN === "1");
+    },
   });
 }
 

@@ -14,9 +14,6 @@ function deps(over: Partial<AutopilotDeps> = {}): AutopilotDeps {
     articlesPerNight: () => 2,
     seed: vi.fn(async () => {}),
     getCovered: () => ["covered one"],
-    recentTitles: () => ["Recent Title"],
-    proposeTitle: vi.fn(async (t: string) => `Headline for ${t}`),
-    saveProposedTitle: vi.fn(),
     sendTitleDigest: vi.fn(async () => 101),
     saveDigestMessageId: vi.fn(),
     dryRun: false,
@@ -30,11 +27,10 @@ describe("runNightly", () => {
     const d = deps({
       getPending: () => [topic("1")], // 1 < threshold
       seed: vi.fn(async () => { order.push("seed"); }),
-      proposeTitle: vi.fn(async (t: string) => { order.push("title"); return `H ${t}`; }),
+      sendTitleDigest: vi.fn(async () => { order.push("digest"); return 1; }),
     });
     await runNightly(d);
-    expect(order[0]).toBe("seed");
-    expect(order).toContain("title");
+    expect(order).toEqual(["seed", "digest"]);
   });
 
   it("does not seed when the pool is deep enough", async () => {
@@ -60,16 +56,14 @@ describe("runNightly", () => {
     expect(arg.covered).toEqual(["covered one"]);
   });
 
-  it("proposes one title per selected topic", async () => {
-    const d = deps({ articlesPerNight: () => 2 });
-    await runNightly(d);
-    expect(d.proposeTitle).toHaveBeenCalledTimes(2);
-  });
-
-  it("persists each proposed title so approval can pin it later", async () => {
-    const d = deps({ articlesPerNight: () => 1 });
-    await runNightly(d);
-    expect(d.saveProposedTitle).toHaveBeenCalledTimes(1);
+  it("uses the seeded phrase AS the title, with no conversion call", async () => {
+    // The second Claude call that rewrote topics into headlines is gone: the
+    // seeder now writes finished, task-shaped titles, so converting them was a
+    // wasted call and a place for two prompts to drift apart.
+    const d = deps({ articlesPerNight: () => 1, getPending: () => [topic("1")] });
+    const proposals = await runNightly(d);
+    expect(proposals[0].title).toBe("q-1");
+    expect(proposals[0].title).toBe(proposals[0].query);
   });
 
   it("sends one digest containing every proposal", async () => {
@@ -86,18 +80,16 @@ describe("runNightly", () => {
     expect(d.saveDigestMessageId).toHaveBeenCalledWith(101);
   });
 
-  it("stops after the digest in dry-run mode without persisting anything", async () => {
-    const d = deps({ dryRun: true });
-    await runNightly(d);
-    expect(d.proposeTitle).toHaveBeenCalled();
-    expect(d.sendTitleDigest).toHaveBeenCalled();
-    expect(d.saveProposedTitle).not.toHaveBeenCalled();
+  it("dry run returns the titles instead of sending the digest", async () => {
+    const d = deps({ dryRun: true, articlesPerNight: () => 2 });
+    const proposals = await runNightly(d);
+    expect(proposals).toHaveLength(2);
+    expect(d.sendTitleDigest).not.toHaveBeenCalled();
   });
 
   it("does nothing and sends no digest when no topics are available", async () => {
     const d = deps({ getPending: () => [], seed: vi.fn(async () => {}) });
-    await runNightly(d);
-    expect(d.proposeTitle).not.toHaveBeenCalled();
+    expect(await runNightly(d)).toEqual([]);
     expect(d.sendTitleDigest).not.toHaveBeenCalled();
   });
 
@@ -111,7 +103,7 @@ describe("runNightly", () => {
     // Seeding happens — that is how the operator gets something to judge.
     expect(d.seed).toHaveBeenCalledOnce();
     // Selection does not: nothing generates from an unproven niche unattended.
-    expect(d.proposeTitle).not.toHaveBeenCalled();
+    expect(d.sendTitleDigest).not.toHaveBeenCalled();
   });
 
   it("records which niche seeded a topic, so probation can be enforced later", async () => {
@@ -125,8 +117,7 @@ describe("runNightly", () => {
     const d = deps({
       getPending: () => [{ id: "ok", query: "fine", source: "seeded", niche: "Web3 / crypto" }],
     });
-    await runNightly(d);
-    expect(d.proposeTitle).toHaveBeenCalled();
+    expect(await runNightly(d)).toHaveLength(1);
   });
 
   it("never selects an Era topic", async () => {
@@ -134,42 +125,18 @@ describe("runNightly", () => {
       getPending: () => [{ id: "e", query: "era topic", source: "era" }],
       articlesPerNight: () => 5,
     });
-    await runNightly(d);
-    expect(d.proposeTitle).not.toHaveBeenCalled();
+    expect(await runNightly(d)).toEqual([]);
   });
 });
 
-describe("runNightly — title variety within a batch", () => {
-  it("shows each proposal the ones already chosen tonight", async () => {
-    // Observed in a live digest: three of four headlines opened with a
-    // quantity ("Two Reps", "3,000 Members", "Three DeFi Protocols"). Each
-    // proposal was generated independently against the last 100 PUBLISHED
-    // titles and never saw its siblings, so within-batch collision was
-    // completely unguarded — the exact tell the shape rules exist to avoid.
-    const seen: string[][] = [];
-    const d = deps({
-      articlesPerNight: () => 3,
-      recentTitles: () => ["Published One"],
-      proposeTitle: vi.fn(async (t: string, recent: string[]) => {
-        seen.push([...recent]);
-        return `Headline ${t}`;
-      }),
-    });
-
-    await runNightly(d);
-
-    expect(seen[0]).toEqual(["Published One"]);
-    expect(seen[1]).toHaveLength(2);
-    expect(seen[1][1]).toMatch(/^Headline /);
-    expect(seen[2]).toHaveLength(3);
-  });
-
-  it("still passes published titles to the first proposal", async () => {
-    const d = deps({
-      articlesPerNight: () => 1,
-      recentTitles: () => ["A", "B"],
-    });
-    await runNightly(d);
-    expect(d.proposeTitle).toHaveBeenCalledWith(expect.any(String), ["A", "B"], []);
+describe("runNightly — title variety", () => {
+  it("no longer needs within-batch de-collision, because there is no per-title call", async () => {
+    // Batch-level shape collision was a property of generating each headline
+    // independently. Titles now come from ONE seeder call that sees the whole
+    // batch and is told each must be a different task, so variety is the
+    // seeder's job.
+    const d = deps({ articlesPerNight: () => 3 });
+    const proposals = await runNightly(d);
+    expect(new Set(proposals.map((p) => p.title)).size).toBe(proposals.length);
   });
 });

@@ -116,7 +116,7 @@ export function TopicQueue() {
     return (
       <div style={styles.empty}>
         <p style={styles.emptyTitle}>No topics yet</p>
-        <p style={styles.muted}>Run research to discover keywords from Era AI.</p>
+        <p style={styles.muted}>No pending topics. Use ✦ Seed to generate some.</p>
         <button onClick={() => setShowCustom(true)} style={styles.actionButton}>+ Add Custom Topic</button>
         {showCustom && (
           <div style={styles.customRow}>

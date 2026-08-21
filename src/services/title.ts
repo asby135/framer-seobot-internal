@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { findTitleTics } from "./generator.js";
+import { TITLE_RULES } from "./title-rules.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 
@@ -118,20 +119,13 @@ function defaultClient(): TitleClient {
         // deterministic single-output call.
         thinking: { type: "disabled" },
         max_tokens: 256,
-        system: `You write article headlines for CRMChat, a Telegram-native CRM and outreach platform for sales teams.
+        system: `You write article titles for the CRMChat blog — a long-tail task library for sales teams working in Telegram.
 
-TITLE CRAFT:
-- The title is the only thing most people read. Treat it as copywriting, not a label for the article.
-- THE KEYWORD MUST APPEAR. Search engines still rank on it, and an answer engine matches the question to the headline. Carry the topic's substantive words into the title — then reframe AROUND them. Rearrange, drop filler, add a hook, lead with the pain. Do not copy the topic phrase verbatim, and do not drift so far that a searcher could not tell the title answers their query.
-  TOPIC: "Vtiger CRM Telegram integration setup guide"
-  BAD (copy-paste): "Vtiger CRM Telegram Integration: Step-by-Step Setup Guide"
-  BAD (keyword gone): "Connect Everything Without Breaking Your Pipeline"
-  GOOD (reframed, keyword intact): "Connect Vtiger to Telegram Without Breaking Your Pipeline"
-- Lead with the reader's problem or a concrete specific, not with the product.
-- HARD BAN — the title MUST NOT contain any of: 'Actually', 'Really', 'Ultimate', 'Complete Guide', 'Everything You Need', 'A Deep Dive', 'No-Fluff', 'No-Agency', 'The Truth About', parenthetical subtitles like '(Step-by-Step)' or '(And Where Each Falls Short)', or year suffixes like 'in 2026'. These are AI-content tells that destroy citation credibility.
-- Vary the shape: do not reuse the opening word, the hook word, or the colon-subtitle shape of the recent titles listed below.
+${TITLE_RULES}
 
-Reply with the headline only. No quotes, no preamble, no explanation.`,
+You are rewriting ONE title for the same underlying task. Keep the task identical; change only the wording. Do not drift to a different subject, and do not make it cleverer — make it clearer.
+
+Reply with the title only. No quotes, no preamble, no explanation.`,
         messages: [
           {
             role: "user",

@@ -3,7 +3,8 @@ import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
 import { searchKB, getKBArticle } from "./kb.js";
 import { ANGLE_GUIDANCE } from "./taxonomy.js";
-import { isPureCompetitorTopic } from "./research.js";
+import { TITLE_RULES, TITLE_SHAPE_BY_ANGLE } from "./title-rules.js";
+import { isPureCompetitorTopic } from "../lib/competitors.js";
 import { queryToSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
@@ -55,7 +56,7 @@ export function buildSeederPrompt(input: SeederPromptInput): string {
 
   const kbBlock = kbContext
     ? `\nCRMChat KNOWLEDGE BASE (ground topics in this — do not invent features):\n${kbContext}`
-    : "\n(No specific KB context matched — propose topics from CRMChat's general Telegram CRM/outreach positioning.)";
+    : "\n(No specific KB context matched — propose tasks from what you know this audience does day to day in Telegram.)";
 
   const coveredBlock =
     trimmed.length > 0
@@ -68,12 +69,15 @@ export function buildSeederPrompt(input: SeederPromptInput): string {
   // The bare angle word is ambiguous — "tops" would not, on its own, produce
   // "best X tools" topics — so ship its definition alongside it.
   const angleGuidance = angle ? ANGLE_GUIDANCE[angle] : undefined;
+  const shape = angle ? TITLE_SHAPE_BY_ANGLE[angle] : undefined;
   const angleLine = angle
-    ? `\nANGLE — every topic must take this angle: ${angle}${angleGuidance ? `\n  (${angle} means: ${angleGuidance})` : ""}`
+    ? `\nARTICLE TYPE — every title must be this type: ${angle}` +
+      (angleGuidance ? `\n  (${angle} means: ${angleGuidance})` : "") +
+      (shape ? `\n  REQUIRED TITLE SHAPE: ${shape}` : "")
     : "";
   const closing = [
     subniche ? `all within the "${subniche}" subniche` : null,
-    angle ? `all taking the "${angle}" angle` : null,
+    angle ? `all of type "${angle}"` : null,
   ]
     .filter(Boolean)
     .join(", ");
@@ -82,7 +86,7 @@ export function buildSeederPrompt(input: SeederPromptInput): string {
 ${kbBlock}
 ${coveredBlock}
 
-Propose ${count} AEO-optimized article topics for this audience${closing ? `, ${closing}` : ""}. Call emit_topics.`;
+Propose ${count} article titles for this audience${closing ? `, ${closing}` : ""}. Each must be a task this audience genuinely has, NOT a topic about CRMChat. Call emit_topics.`;
 }
 
 /**
@@ -288,7 +292,7 @@ async function generateTopicCandidates(input: SeederPromptInput): Promise<string
             topics: {
               type: "array" as const,
               items: { type: "string" as const },
-              description: "Array of article topic titles, one per element.",
+              description: "Array of finished article titles, one per element.",
             },
           },
           required: ["topics"],
@@ -296,23 +300,28 @@ async function generateTopicCandidates(input: SeederPromptInput): Promise<string
       },
     ],
     tool_choice: { type: "tool" as const, name: "emit_topics" },
-    system: `You propose article topics for CRMChat — a Telegram-native CRM and outreach platform for sales teams. Topics are tuned for AEO/GEO: getting cited by ChatGPT, Perplexity, and Claude when the target audience asks for help.
+    system: `You propose ARTICLE TITLES for the CRMChat blog. CRMChat is a Telegram-native CRM and outreach platform for sales teams.
 
-Your job: given a TARGET AUDIENCE and what CRMChat does for them (from the knowledge base), propose ${count} article topics that audience would search for — and that an AI engine would cite CRMChat as the answer to.
+The blog is a long-tail task library, modelled on how NinjaOne writes for IT admins: articles answer a specific job the reader is trying to do, and the product is introduced inside the article where it genuinely helps. The titles are the search queries, stated plainly.
 
-RULES:
-- Output SHORT topic phrases — roughly 4 to 9 words, like a search query or topic label, NOT a full article headline or sentence. The article generator writes the final headline from your topic later; your job is only the topic seed.
-  GOOD: "Multi-account Telegram CRM for OnlyFans agencies"
-  GOOD: "Selling PPV on Telegram without chargebacks"
-  BAD (full headline): "How to Run Multiple OnlyFans Model Accounts on Telegram Without Your Chatters Messaging Fans from the Wrong Profile"
-- Each topic must map to a real question or pain this audience has, where CRMChat (Telegram-native CRM/outreach) is a genuine answer. Ground every topic in the KB context — do not invent features CRMChat doesn't have.
-- Prefer high-intent, specific, low-competition angles over broad head terms. "Selling PPV on Telegram without chargebacks" beats "Telegram CRM".
-- When an ANGLE is given below, EVERY topic in the batch must take that angle. Do not vary it. When no angle is given, cover a spread — how-to, what-is, troubleshooting, comparison, tops — expressed as short topics, not headlines.
-- BRIDGE FRAMING: when the audience is migrating from another channel/tool (email, OnlyFans DMs, another CRM), frame the topic around the switch — e.g. "migrating OnlyFans DMs to Telegram", "email outreach alternative for B2B".
-- Do NOT propose pure-competitor topics (a competitor name with no CRMChat angle). Comparison/migration topics that name a competitor AND position CRMChat are fine.
-- No marketing fluff, no parenthetical asides, no year suffixes, no clickbait. Just the topic phrase.
+WHAT TO WRITE ABOUT — ADJACENT TASKS, NOT PRODUCT FEATURES:
+- Propose the practical jobs this audience actually has around Telegram, outreach and sales operations. Someone typing that task into Google or asking an AI assistant should land here.
+- The topic must NOT be about CRMChat. Do not propose "CRM for X", "best Telegram CRM", or anything whose subject is the product. CRMChat gets introduced in the BODY, as one way to do the task.
+- A good test: would this article still be useful to someone who never buys anything? If no, it is too product-led.
+  GOOD: "How to Export Telegram Group Members to CSV"
+  GOOD: "Why Telegram Accounts Get Banned for Bulk Messaging"
+  GOOD: "What Is a Telegram Session String"
+  BAD:  "Multi-account Telegram CRM for OnlyFans agencies"   (subject is the product)
+  BAD:  "Best CRM for crypto funds"                          (subject is the product)
+- Stay inside the audience's world. These are tasks THIS cohort does — not unrelated general business advice.
+- Use the knowledge base to understand what this audience does and what is genuinely true about Telegram, so the task is real and the eventual article can be accurate. Do not let the KB pull the topic toward being about CRMChat.
 
-Return exactly ${count} topics via the emit_topics tool.`,
+${TITLE_RULES}
+
+- Each title must be a DIFFERENT task. Do not propose near-variations of one another.
+- Do not propose pure-competitor titles (a competitor name with no task behind it).
+
+Return exactly ${count} titles via the emit_topics tool.`,
     messages: [
       {
         role: "user",

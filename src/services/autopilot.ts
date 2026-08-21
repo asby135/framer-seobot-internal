@@ -38,14 +38,13 @@ export interface AutopilotDeps {
   seed(req: SeedRequest): Promise<void>;
   getCovered(): string[];
 
-  recentTitles(): string[];
-  proposeTitle(topic: string, recentTitles: string[], rejected: string[]): Promise<string>;
-
-  saveProposedTitle(keywordId: string, title: string): void;
   sendTitleDigest(proposals: TitleProposal[]): Promise<number>;
   saveDigestMessageId(messageId: number): void;
 
-  /** Propose and notify, but persist nothing and generate nothing. */
+  /**
+   * Seed and select as normal, but return the titles instead of sending the
+   * digest. Lets the pipeline be exercised without messaging the group.
+   */
   dryRun: boolean;
 }
 
@@ -58,7 +57,7 @@ export interface AutopilotDeps {
  * operator approving a title, so nothing is spent on an article they have not
  * agreed to.
  */
-export async function runNightly(deps: AutopilotDeps): Promise<void> {
+export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> {
   // 1. Top up. Measured against USABLE topics only: a pool full of excluded
   //    rows is not runway, however large it looks.
   const niches = deps.getNiches();
@@ -101,37 +100,33 @@ export async function runNightly(deps: AutopilotDeps): Promise<void> {
   const selected = selectTopics(deps.getPending(), count, Math.random, onProbation);
   if (selected.length === 0) {
     logger.warn("No usable topics available — nothing to propose tonight");
-    return;
+    return [];
   }
 
-  // 3. Propose a headline per topic.
+  // 3. The seeded phrase IS the title.
   //
-  // Each proposal sees the ones already chosen TONIGHT, not just recently
-  // published titles. Without this, proposals are generated independently and
-  // collide with each other: a live digest produced three headlines out of four
-  // opening with a quantity, which is precisely the formulaic tell the shape
-  // rules exist to prevent.
-  const published = deps.recentTitles();
-  const chosenTonight: string[] = [];
-  const proposals: TitleProposal[] = [];
+  // There used to be a second Claude call here rewriting each topic into a
+  // headline. That existed because Era supplied raw search queries that needed
+  // turning into prose. With Era retired and the seeder writing finished,
+  // task-shaped titles itself, the conversion was a wasted call and a place for
+  // the two prompts to drift apart — which they did, until titles stopped
+  // containing their own keyword.
+  const proposals: TitleProposal[] = selected.map((topic) => ({
+    keywordId: topic.id,
+    query: topic.query,
+    title: topic.query,
+  }));
 
-  for (const topic of selected) {
-    const title = await deps.proposeTitle(topic.query, [...published, ...chosenTonight], []);
-    chosenTonight.push(title);
-    proposals.push({ keywordId: topic.id, query: topic.query, title });
-  }
-
-  // 4. Persist, then notify. Dry-run stops short of persisting so a rehearsal
-  //    leaves no state behind for the real run to trip over.
-  if (!deps.dryRun) {
-    for (const p of proposals) deps.saveProposedTitle(p.keywordId, p.title);
+  // 4. Notify — unless this is a rehearsal, in which case hand the titles back
+  //    to the caller instead of pinging the group.
+  if (deps.dryRun) {
+    logger.info({ proposed: proposals.length }, "Dry run — digest not sent");
+    return proposals;
   }
 
   const messageId = await deps.sendTitleDigest(proposals);
-  if (!deps.dryRun) deps.saveDigestMessageId(messageId);
+  deps.saveDigestMessageId(messageId);
 
-  logger.info(
-    { proposed: proposals.length, dryRun: deps.dryRun },
-    "Gate 1 digest sent"
-  );
+  logger.info({ proposed: proposals.length }, "Gate 1 digest sent");
+  return proposals;
 }

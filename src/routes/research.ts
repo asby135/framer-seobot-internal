@@ -1,32 +1,15 @@
 import { Hono } from "hono";
-import { runResearch } from "../services/research.js";
 import { seedTopics, insertSeededTopics } from "../services/seeder.js";
 import { getDb } from "../db/index.js";
 import { logger } from "../lib/logger.js";
 
 const research = new Hono();
 
-// Trigger keyword research refresh (pulls from Era / OhMyGEO).
-// Body { gap: true } runs competitor-gap mode: only queries where competitors
-// are mentioned in AI answers and CRMChat is not (source='era-gap').
-research.post("/", async (c) => {
-  try {
-    const body = await c.req
-      .json<{ gap?: boolean }>()
-      .catch(() => ({ gap: false }));
-    const result = await runResearch({ gap: body.gap === true });
-    return c.json({
-      status: "complete",
-      mode: result.mode,
-      discovered: result.discovered,
-      skipped: result.skipped,
-    });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Unknown error";
-    logger.error({ error: message }, "Research failed");
-    return c.json({ error: message }, 500);
-  }
-});
+// NOTE: POST / used to pull keywords from Era (OhMyGEO). Era is retired — its
+// queries duplicated already-published articles and its topics are excluded
+// from selection (see selection.ts USABLE_SOURCES). The route is gone rather
+// than merely unwired so a stale plugin build cannot re-import them: it now
+// 404s instead of refilling the queue.
 
 // Seed pending topics for a target audience, grounded in the knowledge base.
 // Generates topic IDEAS from an audience persona + KB (no external source),

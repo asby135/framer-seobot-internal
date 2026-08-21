@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { framer } from "framer-plugin";
-import { api, ApiError } from "./api/client";
+import { api } from "./api/client";
 import { SetupFlow } from "./components/SetupFlow";
 import { TopicQueue } from "./components/TopicQueue";
 import { ArticleList } from "./components/ArticleList";
@@ -14,10 +14,6 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>("topics");
   const [showSettings, setShowSettings] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [refreshMessage, setRefreshMessage] = useState("");
-  const [refreshError, setRefreshError] = useState(false);
 
   useEffect(() => {
     checkSetup();
@@ -52,39 +48,6 @@ export function App() {
     setIsSetup(true);
   }
 
-  async function handleRefresh(gap: boolean = false) {
-    setRefreshing(true);
-    setRefreshMessage("");
-    setRefreshError(false);
-    try {
-      // Pull fresh keywords from Era (POST /api/research). This is what
-      // actually fetches new queries when Era's AI-model coverage expands.
-      // gap=true pulls only competitor-gap topics (rivals cited, we're not).
-      // Then re-mount the topic list so the new pending rows appear.
-      const res = await api.runResearch(gap);
-      setRefreshKey((k) => k + 1);
-      const label = gap ? "competitor-gap topic" : "topic from Era";
-      setRefreshMessage(
-        res.discovered === 0
-          ? gap
-            ? "No new competitor-gap topics"
-            : "No new topics from Era"
-          : `Discovered ${res.discovered} new ${label}${res.discovered === 1 ? "" : "s"}`
-      );
-    } catch (e) {
-      setRefreshError(true);
-      setRefreshMessage(
-        e instanceof ApiError ? e.message : "Era refresh failed"
-      );
-    } finally {
-      setRefreshing(false);
-      setTimeout(() => {
-        setRefreshMessage("");
-        setRefreshError(false);
-      }, 5000);
-    }
-  }
-
   if (loading) {
     return (
       <div style={styles.center}>
@@ -108,29 +71,6 @@ export function App() {
         <span style={styles.headerTitle}>CRMChat SEO Engine</span>
         <div style={{ display: "flex", gap: 4 }}>
           <button
-            onClick={() => handleRefresh(false)}
-            disabled={refreshing}
-            style={{
-              ...styles.gearButton,
-              opacity: refreshing ? 0.4 : 1,
-              animation: refreshing ? "spin 1s linear infinite" : "none",
-            }}
-            title={refreshing ? "Pulling new topics from Era…" : "Pull new topics from Era"}
-          >
-            ↻
-          </button>
-          <button
-            onClick={() => handleRefresh(true)}
-            disabled={refreshing}
-            style={{
-              ...styles.gearButton,
-              opacity: refreshing ? 0.4 : 1,
-            }}
-            title="Find competitor-gap topics (rivals cited in AI answers, CRMChat not)"
-          >
-            ◎
-          </button>
-          <button
             onClick={() => setShowSettings(true)}
             style={styles.gearButton}
             title="Settings"
@@ -139,16 +79,6 @@ export function App() {
           </button>
         </div>
       </div>
-
-      {/* Refresh result banner — auto-dismisses */}
-      {refreshMessage && (
-        <div style={{
-          ...styles.refreshBanner,
-          ...(refreshError ? styles.refreshBannerError : {}),
-        }}>
-          {refreshMessage}
-        </div>
-      )}
 
       {/* Tabs */}
       <div style={styles.tabBar}>
@@ -168,7 +98,7 @@ export function App() {
 
       {/* Content */}
       <div style={styles.content}>
-        {activeTab === "topics" && <TopicQueue key={refreshKey} />}
+        {activeTab === "topics" && <TopicQueue />}
         {activeTab === "articles" && <ArticleList />}
         {activeTab === "generate" && <GeneratePanel />}
       </div>
@@ -240,18 +170,5 @@ const styles: Record<string, React.CSSProperties> = {
   },
   textSecondary: {
     color: "#888",
-  },
-  refreshBanner: {
-    padding: "6px 16px",
-    fontSize: 12,
-    color: "#8bf",
-    background: "#1a2a3a",
-    textAlign: "center" as const,
-    borderBottom: "1px solid #2a3a4a",
-  },
-  refreshBannerError: {
-    color: "#f88",
-    background: "#3a1a1a",
-    borderBottom: "1px solid #4a2a2a",
   },
 };
