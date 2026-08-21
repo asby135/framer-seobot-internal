@@ -31,6 +31,11 @@ export const env = {
   // Framer Server API — CMS sync and site publish
   FRAMER_API_KEY: process.env.FRAMER_API_KEY || "",
   FRAMER_PROJECT_URL: process.env.FRAMER_PROJECT_URL || "",
+
+  // Public site origin, e.g. https://true-leaders-745133.framer.app. Optional:
+  // used to turn a slug into a clickable link in the publish notification.
+  // Without it the notification shows the path alone.
+  SITE_URL: process.env.SITE_URL || "",
   // The collection bound to the article CMS page. Syncing into any other
   // collection silently destroys every internal link — see framer-sync.ts.
   FRAMER_COLLECTION_ID: process.env.FRAMER_COLLECTION_ID || "",

@@ -113,11 +113,59 @@ async function publishFramerSite(): Promise<void> {
   }
 }
 
+/**
+ * Which articles went live in this deploy.
+ *
+ * The deploy is armed by the first publish of a batch, so everything published
+ * at or after that moment is what this build shipped.
+ */
+export function articlesPublishedSince(armedAt: string): Array<{ title: string; slug: string }> {
+  // publishPendingSince is an ISO timestamp ('2026-08-21T15:29:12.801Z');
+  // published_at is SQLite's 'YYYY-MM-DD HH:MM:SS'. Comparing the two as
+  // strings silently matches NOTHING — 'T' sorts after ' ', so every row from
+  // the same day looks older than the cursor.
+  const since = armedAt.replace("T", " ").slice(0, 19);
+  return getDb()
+    .prepare(
+      `SELECT title, slug FROM articles
+       WHERE status = 'published' AND published_at >= ?
+       ORDER BY published_at`
+    )
+    .all(since) as Array<{ title: string; slug: string }>;
+}
+
+/** Tell the operator the site is live, and with what. */
+async function announceSitePublished(armedAt: string | null): Promise<void> {
+  const shipped = armedAt ? articlesPublishedSince(armedAt) : [];
+  const base = env.SITE_URL.replace(/\/$/, "");
+
+  if (shipped.length === 0) {
+    await sendMessage("🚀 <b>Site published</b>");
+    return;
+  }
+
+  const shown = shipped.slice(0, 10);
+  const lines = shown.map((a) => {
+    const where = base ? `${base}/${a.slug}` : `/${a.slug}`;
+    return `• ${escapeHtml(a.title)}\n  ${escapeHtml(where)}`;
+  });
+  if (shipped.length > shown.length) {
+    lines.push(`…and ${shipped.length - shown.length} more`);
+  }
+
+  await sendMessage(
+    `🚀 <b>Site published</b> — ${shipped.length} article${shipped.length === 1 ? "" : "s"} live\n\n${lines.join("\n")}`
+  );
+}
+
 const debouncer = createPublishDebouncer({
   delayMs: PUBLISH_DEBOUNCE_MS,
   publish: async () => {
+    // Read BEFORE publishing: the success path clears it.
+    const armedAt = getSetting<string | null>("publishPendingSince", null);
     await publishFramerSite();
     setSetting("publishPendingSince", null);
+    await announceSitePublished(armedAt);
   },
   onError: async (message) => {
     // Leave publishPendingSince set so the next boot retries rather than

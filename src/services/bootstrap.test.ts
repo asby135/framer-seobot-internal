@@ -17,6 +17,7 @@ import { join } from "node:path";
 let buildGateHandlers: typeof import("./bootstrap.js").buildGateHandlers;
 let getDb: typeof import("../db/index.js").getDb;
 let publishIsOverdue: typeof import("./bootstrap.js").publishIsOverdue;
+let articlesPublishedSince: typeof import("./bootstrap.js").articlesPublishedSince;
 
 beforeAll(async () => {
   // env.ts snapshots process.env at import time, so this must be set before
@@ -25,7 +26,9 @@ beforeAll(async () => {
   const dbMod = await import("../db/index.js");
   dbMod.initDb();
   getDb = dbMod.getDb;
-  ({ buildGateHandlers, publishIsOverdue } = await import("./bootstrap.js"));
+  ({ buildGateHandlers, publishIsOverdue, articlesPublishedSince } = await import(
+    "./bootstrap.js"
+  ));
 });
 
 beforeEach(() => {
@@ -110,5 +113,33 @@ describe("publishIsOverdue", () => {
 
   it("re-arms rather than deploying on a corrupt timestamp", () => {
     expect(publishIsOverdue("not-a-date", now, WINDOW)).toBe(false);
+  });
+});
+
+describe("articlesPublishedSince", () => {
+  it("matches rows despite the ISO / SQLite timestamp mismatch", () => {
+    // publishPendingSince is '2026-08-21T15:29:12.801Z'; published_at is
+    // '2026-08-21 16:29:14'. Compared as strings, 'T' sorts AFTER ' ', so every
+    // row from the same day reads as older than the cursor and the notification
+    // would silently list nothing.
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO articles (id, keyword_id, title, slug, content, status, published_at)
+       VALUES ('a1', NULL, 'Shipped Today', 'shipped-today', '<p>x</p>', 'published', '2026-08-21 16:29:14')`
+    ).run();
+
+    const found = articlesPublishedSince("2026-08-21T15:29:12.801Z");
+    expect(found.map((a) => a.slug)).toContain("shipped-today");
+  });
+
+  it("excludes articles published before the deploy was armed", () => {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO articles (id, keyword_id, title, slug, content, status, published_at)
+       VALUES ('a2', NULL, 'Yesterday', 'yesterday', '<p>x</p>', 'published', '2026-08-20 09:00:00')`
+    ).run();
+
+    const found = articlesPublishedSince("2026-08-21T15:29:12.801Z");
+    expect(found.map((a) => a.slug)).not.toContain("yesterday");
   });
 });
