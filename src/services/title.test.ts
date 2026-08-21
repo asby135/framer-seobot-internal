@@ -15,15 +15,20 @@ const stub = (titles: string[]): TitleClient & { calls: unknown[] } => {
 };
 
 describe("proposeTitle", () => {
+  // Topics here must share substantive words with the stubbed titles:
+  // proposeTitle now enforces TITLE CRAFT rule 1 ("the keyword must appear"),
+  // so an unrelated topic/title pair is retried rather than accepted.
   it("returns the model's title when it is clean", async () => {
     const c = stub(["Your Sales Team Runs on Telegram"]);
-    expect(await proposeTitle("topic", [], [], c)).toBe("Your Sales Team Runs on Telegram");
+    expect(await proposeTitle("telegram sales team crm", [], [], c)).toBe(
+      "Your Sales Team Runs on Telegram"
+    );
     expect(c.calls).toHaveLength(1);
   });
 
   it("trims surrounding whitespace", async () => {
     const c = stub(["  Spaced Out Headline  "]);
-    expect(await proposeTitle("topic", [], [], c)).toBe("Spaced Out Headline");
+    expect(await proposeTitle("spaced headline formatting", [], [], c)).toBe("Spaced Out Headline");
   });
 
   it("retries once when the title contains a banned tic", async () => {
