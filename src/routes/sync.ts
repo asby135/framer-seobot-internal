@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { getDb } from "../db/index.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
 import { syncToFramer, previewSyncToFramer } from "../services/framer-sync.js";
+import { schedulePublishSite, publishSiteNow } from "../services/bootstrap.js";
 import { logger } from "../lib/logger.js";
 
 const sync = new Hono();
@@ -155,11 +156,36 @@ sync.post("/framer", async (c) => {
     // Framer UI, which no fingerprint can detect.
     const force = c.req.query("force") === "1";
     const result = await syncToFramer(force);
+
+    // Items in the collection are not a published site. Arm the same debounced
+    // deploy the Telegram gate uses, or a manual sync leaves the changes
+    // sitting in Framer as pending and the live site quietly stale.
+    if (result.written > 0) {
+      schedulePublishSite();
+      logger.info({ written: result.written }, "Deploy armed after manual sync");
+    }
     return c.json({ success: true, ...result });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
     logger.error({ error: message }, "Manual Framer sync failed");
     // A guard tripping is the expected failure here, and its message says why.
+    return c.json({ error: message }, 500);
+  }
+});
+
+/**
+ * Deploy the Framer site now, without waiting out the 5-minute debounce.
+ *
+ * For when changes are already in the collection and the site needs to go out
+ * immediately — including a sync that landed before the deploy was armed.
+ */
+sync.post("/publish-site", async (c) => {
+  try {
+    await publishSiteNow();
+    return c.json({ success: true, status: "site published" });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "unknown";
+    logger.error({ error: message }, "Manual site publish failed");
     return c.json({ error: message }, 500);
   }
 });

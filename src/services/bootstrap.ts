@@ -72,6 +72,24 @@ function schedulePublishPersisted(): void {
   debouncer.schedule();
 }
 
+/**
+ * Arm the debounced site deploy from outside the Telegram gate.
+ *
+ * Writing items into the collection is only half of publishing: until Framer
+ * deploys, the articles sit in the project as pending changes and the live site
+ * does not have them. POST /api/sync/framer pushed items and armed nothing, so
+ * a manual sync left the site silently stale.
+ */
+export function schedulePublishSite(): void {
+  schedulePublishPersisted();
+}
+
+/** Deploy now instead of waiting out the debounce window. */
+export async function publishSiteNow(): Promise<void> {
+  schedulePublishPersisted();
+  await debouncer.flushNow();
+}
+
 /** On boot, re-arm a deploy that was owed when the process last stopped. */
 export function recoverPendingPublish(): void {
   const pending = getSetting<string | null>("publishPendingSince", null);
