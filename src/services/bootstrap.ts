@@ -375,8 +375,10 @@ export function registerArticleReadyHandler(): void {
  * exercises exactly the code the clock will run — a trigger that took a
  * different path would prove nothing.
  *
- * `dryRun` proposes titles and sends the digest but persists nothing, so a
- * rehearsal leaves no state for the real run to trip over.
+ * `dryRun` skips the digest and returns the titles to the caller instead. It is
+ * NOT read-only: topping up still writes seeded topics and advances the
+ * rotation cursor, because a rehearsal that skipped seeding would not exercise
+ * the prompt that decides what the titles say.
  */
 export async function runNightlyJob(dryRun: boolean): Promise<TitleProposal[]> {
       return await runNightly({
