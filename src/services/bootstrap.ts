@@ -30,16 +30,84 @@ function randomInt(min: number, max: number): number {
   return min + Math.floor(Math.random() * (max - min + 1));
 }
 
+/**
+ * Cap on framer.publish().
+ *
+ * The API's own limit is 600s, and a hung publish therefore cost 20 minutes
+ * before reporting — two attempts plus the retry delay — with nothing said in
+ * between. publish() creates a deployment and returns without waiting for
+ * optimization, so it has no business taking minutes; failing at three tells
+ * the operator far sooner that the site needs publishing by hand.
+ */
+const PUBLISH_CALL_TIMEOUT_MS = 3 * 60 * 1000;
+
+async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} did not return within ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** Log why Framer's most recent deployment is unhappy. Diagnostics only. */
+async function logRecentDeploymentIssues(framer: {
+  listDeployments(limit?: number): AsyncIterable<{ id: string }>;
+  getDeploymentIssues(id: string): AsyncIterable<{ severity: string; message: string }>;
+}): Promise<void> {
+  try {
+    let latest: string | null = null;
+    for await (const d of framer.listDeployments(1)) {
+      latest = d.id;
+      break;
+    }
+    if (!latest) return;
+
+    const issues: Array<{ severity: string; message: string }> = [];
+    for await (const issue of framer.getDeploymentIssues(latest)) {
+      issues.push({ severity: issue.severity, message: issue.message });
+      if (issues.length >= 20) break;
+    }
+    if (issues.length > 0) {
+      logger.warn({ deploymentId: latest, issues }, "Framer deployment issues");
+    }
+  } catch (e) {
+    logger.debug(
+      { error: e instanceof Error ? e.message : "unknown" },
+      "Could not read deployment issues"
+    );
+  }
+}
+
 /** Publish the Framer site and deploy to custom domains. */
 async function publishFramerSite(): Promise<void> {
   const framer = await connect(env.FRAMER_PROJECT_URL, env.FRAMER_API_KEY);
   try {
-    const { deployment } = await framer.publish();
-    const hostnames = await framer.deploy(deployment.id);
-    logger.info(
-      { deploymentId: deployment.id, hostnames: hostnames.length },
-      "Framer site published"
-    );
+    let deploymentId: string;
+    try {
+      const { deployment } = await withTimeout(
+        framer.publish(),
+        PUBLISH_CALL_TIMEOUT_MS,
+        'Framer "publish"'
+      );
+      deploymentId = deployment.id;
+    } catch (e) {
+      // A failed publish reports only its own timeout, which says nothing about
+      // the cause. "Assertion Error: The importMap has to exist on the module"
+      // is a project BUILD problem, not a transport one, and no amount of
+      // retrying fixes it — so read the last deployment's issues, which is
+      // where Framer actually explains itself.
+      await logRecentDeploymentIssues(framer);
+      throw e;
+    }
+
+    const hostnames = await framer.deploy(deploymentId);
+    logger.info({ deploymentId, hostnames: hostnames.length }, "Framer site published");
   } finally {
     await framer.disconnect();
   }
@@ -54,7 +122,13 @@ const debouncer = createPublishDebouncer({
   onError: async (message) => {
     // Leave publishPendingSince set so the next boot retries rather than
     // losing the deploy entirely.
-    await alert(message);
+    //
+    // Say what still works. A bare "publish failed" reads as "the articles are
+    // lost"; they are in the collection and one click from live, and the
+    // operator needs to know that is the remaining step.
+    await alert(
+      `${message}\n\nThe articles ARE synced into the Framer collection — only the site deploy failed. Open the project and hit Publish to ship them.`
+    );
   },
 });
 
