@@ -4,11 +4,36 @@ import { DEFAULT_NICHES } from "./taxonomy.js";
 
 const topic = (id: string) => ({ id, query: `q-${id}`, source: "seeded" });
 
+/**
+ * A pending pool that GROWS when seeding writes to it.
+ *
+ * The top-up loop re-reads the pool between seeds, so a fake returning a fixed
+ * array models a seeder that inserts nothing — the loop would then run to its
+ * cap on every test. Reality is that a seed adds ~10 topics, and these fakes
+ * have to say so.
+ */
+function growingPool(start: number, perSeed: number, niche?: string) {
+  let n = start;
+  return {
+    getPending: () =>
+      Array.from({ length: n }, (_, i) => ({ ...topic(String(i)), ...(niche ? { niche } : {}) })),
+    onSeed: () => {
+      n += perSeed;
+    },
+  };
+}
+
 function deps(over: Partial<AutopilotDeps> = {}): AutopilotDeps {
+  // The cursor is STATEFUL, as it is in production (setSetting then getSetting
+  // against the same row). A fixture where setCursor did not feed getCursor
+  // made every seed in a run re-read the same slot.
+  let cursor = 0;
   return {
     getNiches: () => DEFAULT_NICHES,
-    getCursor: () => 0,
-    setCursor: vi.fn(),
+    getCursor: () => cursor,
+    setCursor: vi.fn((c: number) => {
+      cursor = c;
+    }),
     getPending: () => [topic("1"), topic("2"), topic("3")],
     poolThreshold: 10,
     articlesPerNight: () => 2,
@@ -24,13 +49,42 @@ function deps(over: Partial<AutopilotDeps> = {}): AutopilotDeps {
 describe("runNightly", () => {
   it("tops up the pool when it is below threshold, before selecting", async () => {
     const order: string[] = [];
+    const pool = growingPool(1, 10); // 1 < threshold, one seed clears it
     const d = deps({
-      getPending: () => [topic("1")], // 1 < threshold
-      seed: vi.fn(async () => { order.push("seed"); }),
+      getPending: pool.getPending,
+      seed: vi.fn(async () => { order.push("seed"); pool.onSeed(); }),
       sendTitleDigest: vi.fn(async () => { order.push("digest"); return 1; }),
     });
     await runNightly(d);
     expect(order).toEqual(["seed", "digest"]);
+  });
+
+  it("keeps seeding until the pool clears the threshold", async () => {
+    // One seed per run could never fill a pool whose threshold sat at or above
+    // the batch size — the queue parked on the boundary and stopped topping up
+    // for good. 0 -> 6 -> 12 clears a threshold of 11 in two.
+    const pool = growingPool(0, 6);
+    const d = deps({ getPending: pool.getPending, poolThreshold: 11, seed: vi.fn(async () => pool.onSeed()) });
+    await runNightly(d);
+    expect(d.seed).toHaveBeenCalledTimes(2);
+  });
+
+  it("advances the cursor once per seed, so each seed draws a different slot", async () => {
+    const pool = growingPool(0, 6);
+    const d = deps({ getPending: pool.getPending, poolThreshold: 11, seed: vi.fn(async () => pool.onSeed()) });
+    await runNightly(d);
+    const calls = (d.seed as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0][0].niche).not.toBe(calls[1][0].niche);
+    expect(d.setCursor).toHaveBeenNthCalledWith(1, 1);
+    expect(d.setCursor).toHaveBeenNthCalledWith(2, 2);
+  });
+
+  it("stops at the per-run cap rather than spinning when seeding adds nothing", async () => {
+    // Every candidate a duplicate: the pool never grows. Bounded, not infinite.
+    const pool = growingPool(1, 0);
+    const d = deps({ getPending: pool.getPending, seed: vi.fn(async () => pool.onSeed()) });
+    await runNightly(d);
+    expect(d.seed).toHaveBeenCalledTimes(3);
   });
 
   it("does not seed when the pool is deep enough", async () => {
@@ -40,7 +94,8 @@ describe("runNightly", () => {
   });
 
   it("seeds from the rotation slot and advances the cursor", async () => {
-    const d = deps({ getPending: () => [topic("1")] });
+    const pool = growingPool(1, 10);
+    const d = deps({ getPending: pool.getPending, seed: vi.fn(async () => pool.onSeed()) });
     await runNightly(d);
     expect(d.seed).toHaveBeenCalledOnce();
     const arg = (d.seed as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -94,9 +149,11 @@ describe("runNightly", () => {
   });
 
   it("seeds a probationary niche but never auto-selects its topics", async () => {
+    const probationPool = growingPool(1, 10, "Web3 / crypto");
     const d = deps({
       getNiches: () => DEFAULT_NICHES.map((n) => ({ ...n, probation: true })),
-      getPending: () => [{ id: "p", query: "probation topic", source: "seeded", niche: "Web3 / crypto" }],
+      getPending: probationPool.getPending,
+      seed: vi.fn(async () => probationPool.onSeed()),
     });
     await runNightly(d);
 

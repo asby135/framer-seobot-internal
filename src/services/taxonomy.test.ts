@@ -26,15 +26,28 @@ describe("nextSlot", () => {
     expect(ANGLES).toContain(s.angle);
   });
 
-  it("advances one subniche per step", () => {
-    // Niche/subniche steps once per seeding; the angle is drawn separately from
-    // the weighted schedule, so it is no longer the innermost loop.
-    expect(nextSlot(niches, 1)!.subniche).toBe("a2");
+  it("changes NICHE on every step, rather than draining one niche first", () => {
+    // Interleaved, not grouped. Walking niche-major meant six consecutive seeds
+    // — about six nights and forty articles — landed in one niche before any
+    // other was touched, so eight configured audiences read as one.
+    expect(nextSlot(niches, 0)!.niche.name).toBe("A");
+    expect(nextSlot(niches, 1)!.niche.name).toBe("B");
   });
 
-  it("moves to the next niche once its subniches are used", () => {
-    expect(nextSlot(niches, 2)!.niche.name).toBe("B");
-    expect(nextSlot(niches, 2)!.subniche).toBe("b1");
+  it("advances the subniche only after a full lap of the niches", () => {
+    expect(nextSlot(niches, 0)!.subniche).toBe("a1");
+    expect(nextSlot(niches, 2)!.niche.name).toBe("A");
+    expect(nextSlot(niches, 2)!.subniche).toBe("a2");
+  });
+
+  it("drops a short niche out of later laps instead of repeating it", () => {
+    // B has one subniche and A has two, so lap 1 is A only. An uneven taxonomy
+    // must still yield each pair exactly once per cycle.
+    const cycle = [0, 1, 2].map((c) => {
+      const s = nextSlot(niches, c)!;
+      return `${s.niche.name}|${s.subniche}`;
+    });
+    expect(cycle).toEqual(["A|a1", "B|b1", "A|a2"]);
   });
 
   it("draws the angle from the weighted schedule, not an even cycle", () => {

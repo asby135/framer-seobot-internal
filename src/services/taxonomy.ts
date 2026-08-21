@@ -140,6 +140,32 @@ export function countPairs(niches: Niche[]): number {
 }
 
 /**
+ * The (niche, subniche) pairs in the order rotation visits them.
+ *
+ * INTERLEAVED by niche, not grouped: lap 0 takes the first subniche of every
+ * niche, lap 1 the second, and so on. Grouping instead — all of a niche's
+ * subniches before moving on — meant six consecutive seeds, roughly six nights
+ * and forty articles, landed inside one niche. A queue configured with eight
+ * audiences read as a single-audience blog for over a month, which is the
+ * opposite of why the audiences were configured.
+ *
+ * Niches with fewer subniches drop out of the later laps, so an uneven taxonomy
+ * still yields every pair exactly once per cycle.
+ */
+export function rotationPairs(niches: Niche[]): Array<{ niche: Niche; subniche: string }> {
+  const active = rotatable(niches);
+  const laps = active.reduce((m, n) => Math.max(m, n.subniches.length), 0);
+  const out: Array<{ niche: Niche; subniche: string }> = [];
+  for (let lap = 0; lap < laps; lap++) {
+    for (const niche of active) {
+      const subniche = niche.subniches[lap];
+      if (subniche !== undefined) out.push({ niche, subniche });
+    }
+  }
+  return out;
+}
+
+/**
  * Distinct (niche, subniche, angle) combinations — the non-repeating runway.
  * The angle SCHEDULE governs how often each angle comes up; this counts how
  * much distinct ground exists.
@@ -161,10 +187,8 @@ export function countSlots(niches: Niche[]): number {
  * configured), which the caller treats as "skip seeding tonight", not an error.
  */
 export function nextSlot(niches: Niche[], cursor: number): Slot | null {
-  const active = rotatable(niches);
-  if (active.length === 0) return null;
-
-  const pairs = countPairs(active);
+  const pairList = rotationPairs(niches);
+  const pairs = pairList.length;
   if (pairs === 0) return null;
 
   // Normalise, tolerating a negative or wrapped cursor.
@@ -183,15 +207,8 @@ export function nextSlot(niches: Niche[], cursor: number): Slot | null {
   const angleIdx = ((raw % ANGLE_SCHEDULE.length) + ANGLE_SCHEDULE.length) % ANGLE_SCHEDULE.length;
   const angle = ANGLE_SCHEDULE[angleIdx];
 
-  let seen = 0;
-  for (const niche of active) {
-    for (const subniche of niche.subniches) {
-      if (seen === pairIdx) return { niche, subniche, angle, cursor: cursor + 1 };
-      seen++;
-    }
-  }
-  /* c8 ignore next */
-  return null; // unreachable: pairIdx < pairs
+  const { niche, subniche } = pairList[pairIdx];
+  return { niche, subniche, angle, cursor: cursor + 1 };
 }
 
 /**

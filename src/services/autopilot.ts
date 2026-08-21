@@ -57,6 +57,12 @@ export interface AutopilotDeps {
  * operator approving a title, so nothing is spent on an article they have not
  * agreed to.
  */
+/**
+ * How many rotation slots one run may seed. Three keeps a night's pool spanning
+ * several niches without letting a stuck seeder loop.
+ */
+const MAX_SEEDS_PER_RUN = 3;
+
 export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> {
   // 1. Top up. Measured against USABLE topics only: a pool full of excluded
   //    rows is not runway, however large it looks.
@@ -67,32 +73,42 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
   // never arrive.
   const onProbation = probationaryNames(niches);
 
-  const pending = deps.getPending();
   // Top-up counts probationary topics: they are real topics sitting in the
   // queue awaiting review, so they DO fill the pool. Excluding them here meant
   // that with every niche on probation the pool never looked full — seeding
   // fired every night, forever, while selection returned nothing.
-  if (needsTopUp(pending, deps.poolThreshold)) {
+  //
+  // Seed until the pool clears the threshold rather than exactly once. One seed
+  // per run could never fill a pool whose threshold was at or above the batch
+  // size: the queue settled on the boundary and stopped topping up for good,
+  // freezing both the pool AND the cursor, so every night re-drew the same ten
+  // topics from one slot. Bounded at MAX_SEEDS_PER_RUN so a seeder returning
+  // nothing (every candidate a duplicate) cannot spin.
+  let seeds = 0;
+  while (seeds < MAX_SEEDS_PER_RUN && needsTopUp(deps.getPending(), deps.poolThreshold)) {
     const slot = nextSlot(niches, deps.getCursor());
-    if (slot) {
-      logger.info(
-        { niche: slot.niche.name, subniche: slot.subniche, angle: slot.angle },
-        "Topic pool low — seeding from rotation slot"
-      );
-      await deps.seed({
-        niche: slot.niche.name,
-        persona: slot.niche.persona,
-        subniche: slot.subniche,
-        angle: slot.angle,
-        kbHints: slot.niche.kb_hints,
-        covered: deps.getCovered(),
-      });
-      deps.setCursor(slot.cursor);
-    } else {
-      // Every niche on probation, or none configured. Not an error: the run
+    if (!slot) {
+      // No niche has subniches, or none configured. Not an error: the run
       // proceeds on whatever is already pending.
       logger.warn("No rotatable niche available — skipping top-up");
+      break;
     }
+    logger.info(
+      { niche: slot.niche.name, subniche: slot.subniche, angle: slot.angle, seed: seeds + 1 },
+      "Topic pool low — seeding from rotation slot"
+    );
+    // Re-read covered inside the loop so a second seed does not repeat what the
+    // first just wrote.
+    await deps.seed({
+      niche: slot.niche.name,
+      persona: slot.niche.persona,
+      subniche: slot.subniche,
+      angle: slot.angle,
+      kbHints: slot.niche.kb_hints,
+      covered: deps.getCovered(),
+    });
+    deps.setCursor(slot.cursor);
+    seeds++;
   }
 
   // 2. Select. Re-read the pool so freshly seeded topics are eligible tonight.
