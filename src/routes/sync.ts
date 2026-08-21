@@ -150,7 +150,11 @@ sync.get("/framer/preview", async (c) => {
  */
 sync.post("/framer", async (c) => {
   try {
-    const result = await syncToFramer();
+    // ?force=1 rewrites every item instead of only what changed. For when
+    // Framer's copy has drifted from ours — an item edited or deleted in the
+    // Framer UI, which no fingerprint can detect.
+    const force = c.req.query("force") === "1";
+    const result = await syncToFramer(force);
     return c.json({ success: true, ...result });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

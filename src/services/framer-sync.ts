@@ -3,6 +3,7 @@ import { getDb } from "../db/index.js";
 import { getSetting } from "./settings.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
 import { env } from "../lib/env.js";
+import { createHash } from "node:crypto";
 import { logger } from "../lib/logger.js";
 
 /**
@@ -22,8 +23,15 @@ import { logger } from "../lib/logger.js";
  *                        can detect it.
  */
 
-/** Items are written in batches; the full payload is ~10 MB. */
-const CHUNK_SIZE = 20;
+/**
+ * Items per addItems call.
+ *
+ * Deliberately small. Framer applies a 120s timeout per method call and resolves
+ * internal links at ingest, so cost scales with items in the batch, not bytes —
+ * a batch of 20 blew that timeout on a full resync. Normal publishes now write
+ * only what changed, so this bound matters mainly for the force path.
+ */
+const CHUNK_SIZE = 5;
 
 /** Locale code aliases, mirroring the plugin's LOCALE_CODE_MAP. */
 const LOCALE_ALIASES: Record<string, string[]> = { ru: ["ru", "ru-RU"] };
@@ -333,7 +341,10 @@ export function buildItem(a: ArticleRow, translations: TranslationRow[]): Collec
 }
 
 export interface SyncResult {
+  /** Items in the backend payload — the size of the published corpus. */
   synced: number;
+  /** Items actually pushed to Framer this run. */
+  written: number;
   removed: number;
   withLocales: boolean;
 }
@@ -359,6 +370,28 @@ export interface SyncOptions {
   collectionId: string;
   maxRemovalShare: number;
   fields: SchemaField[];
+  /**
+   * Fingerprints of what Framer is believed to already hold, by item id.
+   * Advisory only — Framer's own item ids decide existence (see syncCollection),
+   * so a stale entry costs a redundant write, never a missing article.
+   */
+  syncedHashes?: Map<string, string>;
+  /** Persist fingerprints for the items just written. */
+  recordSynced?: (entries: Array<[string, string]>) => void;
+  /** Rewrite every item regardless of fingerprint. */
+  force?: boolean;
+}
+
+/**
+ * A stable fingerprint of one item's synced content.
+ *
+ * Built from the same object that goes over the wire, so any change to a field,
+ * a locale value or the slug produces a different hash. Items are constructed
+ * by buildItem in a fixed key order, which is what makes JSON.stringify
+ * deterministic here.
+ */
+export function fingerprint(item: CollectionItem): string {
+  return createHash("sha1").update(JSON.stringify(item)).digest("hex");
 }
 
 /** Errors that indicate a locale/variable problem rather than a transport failure. */
@@ -400,12 +433,20 @@ export async function syncCollection(
 
   // Fields are append-only: existing field objects go back with identical ids
   // so canvas variable bindings survive.
+  // A schema change forces a full rewrite below: items already in Framer have
+  // no value for a newly added field, and their fingerprints would still match.
+  let fieldsChanged = false;
   if (opts.fields.length > 0) {
     const existingFields = await collection.getFields();
     const existing = new Set(existingFields.map((f) => f.id));
     const missing = opts.fields.filter((f) => !existing.has(f.id));
-    if (existingFields.length === 0) await collection.setFields(opts.fields);
-    else if (missing.length > 0) await collection.setFields([...existingFields, ...missing]);
+    if (existingFields.length === 0) {
+      await collection.setFields(opts.fields);
+      fieldsChanged = true;
+    } else if (missing.length > 0) {
+      await collection.setFields([...existingFields, ...missing]);
+      fieldsChanged = true;
+    }
   }
 
   const localeMap = buildLocaleMap(locales, framerLocales);
@@ -421,9 +462,42 @@ export async function syncCollection(
     }
   };
 
+  const present = new Set(existingIds);
+  const known = opts.syncedHashes ?? new Map<string, string>();
+  const fullPass = opts.force === true || fieldsChanged || known.size === 0;
+
+  /**
+   * Write the items Framer does not already have in this exact form.
+   *
+   * An item is written when Framer has never seen its id, OR its fingerprint
+   * differs from what we last wrote. Testing `present` first means the hash
+   * store can never suppress a genuinely missing article — the worst a wrong
+   * hash can do is skip an update, which the next content change repairs.
+   */
+  const writeChanged = async (all: CollectionItem[]): Promise<number> => {
+    const changed = fullPass
+      ? all
+      : all.filter((i) => !present.has(i.id) || known.get(i.id) !== fingerprint(i));
+
+    if (changed.length === 0) {
+      logger.info({ total: all.length }, "Framer sync: nothing changed, no items written");
+      return 0;
+    }
+    logger.info(
+      { writing: changed.length, total: all.length, fullPass },
+      "Framer sync: writing changed items"
+    );
+    await addAll(changed);
+    // Recorded only after the write lands. A throw above leaves the old
+    // fingerprints in place, so the next run retries these items.
+    opts.recordSynced?.(changed.map((i) => [i.id, fingerprint(i)] as [string, string]));
+    return changed.length;
+  };
+
   let withLocales = true;
+  let written = 0;
   try {
-    await addAll(buildItems(payload, localeMap));
+    written = await writeChanged(buildItems(payload, localeMap));
   } catch (e) {
     // Only a locale-shaped failure justifies retrying without translations.
     // Catching everything meant a rate limit or network blip could silently
@@ -435,13 +509,21 @@ export async function syncCollection(
       "Locale sync failed — retrying without translations"
     );
     withLocales = false;
-    await addAll(buildItems(payload, localeMap, { includeLocales: false }));
+    // The locale-less shape differs from anything recorded, so this is a full
+    // rewrite by construction.
+    const plain = buildItems(payload, localeMap, { includeLocales: false });
+    await addAll(plain);
+    opts.recordSynced?.(plain.map((i) => [i.id, fingerprint(i)] as [string, string]));
+    written = plain.length;
   }
 
   await collection.setPluginData("lastSync", new Date().toISOString());
 
-  logger.info({ synced: payload.length, removed: stale.length, withLocales }, "Framer sync complete");
-  return { synced: payload.length, removed: stale.length, withLocales };
+  logger.info(
+    { synced: payload.length, written, removed: stale.length, withLocales },
+    "Framer sync complete"
+  );
+  return { synced: payload.length, written, removed: stale.length, withLocales };
 }
 
 export interface SyncPreview {
@@ -531,18 +613,52 @@ let inFlight: Promise<SyncResult> | null = null;
  * Connect to Framer and sync all published articles into the bound collection.
  * Does NOT publish the site — that is debounced separately.
  */
-export async function syncToFramer(): Promise<SyncResult> {
+export async function syncToFramer(force = false): Promise<SyncResult> {
   if (inFlight) {
-    logger.info("Sync already in progress — joining it rather than starting a second");
+    // A joiner takes the run already going, force or not: starting a second
+    // pass concurrently is the partial-wipe scenario this lock exists to stop.
+    // Re-run force once this one settles if a full rewrite is still wanted.
+    logger.info({ force }, "Sync already in progress — joining it rather than starting a second");
     return inFlight;
   }
-  inFlight = doSyncToFramer().finally(() => {
+  inFlight = doSyncToFramer(force).finally(() => {
     inFlight = null;
   });
   return inFlight;
 }
 
-async function doSyncToFramer(): Promise<SyncResult> {
+/** Fingerprints of what Framer is believed to hold, from the last sync. */
+export function loadSyncedHashes(): Map<string, string> {
+  const rows = getDb()
+    .prepare("SELECT item_id, hash FROM framer_sync_state")
+    .all() as Array<{ item_id: string; hash: string }>;
+  return new Map(rows.map((r) => [r.item_id, r.hash]));
+}
+
+/** Record fingerprints for items just written, in one transaction. */
+export function recordSyncedHashes(entries: Array<[string, string]>): void {
+  if (entries.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare(
+    `INSERT INTO framer_sync_state (item_id, hash, synced_at)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(item_id) DO UPDATE SET hash = excluded.hash, synced_at = datetime('now')`
+  );
+  db.transaction((rows: Array<[string, string]>) => {
+    for (const [id, hash] of rows) stmt.run(id, hash);
+  })(entries);
+}
+
+/**
+ * Forget everything we believe Framer holds, forcing the next sync to rewrite
+ * the whole corpus. For use when Framer's copy has drifted — an item edited or
+ * deleted in the Framer UI, or a schema change we did not drive.
+ */
+export function clearSyncedHashes(): void {
+  getDb().prepare("DELETE FROM framer_sync_state").run();
+}
+
+async function doSyncToFramer(force = false): Promise<SyncResult> {
   const collectionId = env.FRAMER_COLLECTION_ID || getSetting("framerCollectionId", "");
   const maxRemovalShare = getSetting("maxRemovalShare", 0.2);
   const fields = getSetting<SchemaField[]>("framerFields", FRAMER_FIELDS);
@@ -565,7 +681,14 @@ async function doSyncToFramer(): Promise<SyncResult> {
       payload,
       locales,
       framerLocales,
-      { collectionId, maxRemovalShare, fields }
+      {
+        collectionId,
+        maxRemovalShare,
+        fields,
+        syncedHashes: loadSyncedHashes(),
+        recordSynced: recordSyncedHashes,
+        force,
+      }
     );
   } finally {
     await framer.disconnect();

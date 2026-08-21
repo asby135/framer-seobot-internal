@@ -100,3 +100,16 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- What Framer already holds, so a publish pushes only what changed.
+--
+-- Without this every publish re-uploaded the entire corpus: Framer resolves
+-- internal links at ingest, so per-item cost is real work, and at ~6s/item a
+-- 310-article corpus took ~30 minutes and blew the API's 120s per-call timeout.
+-- Rows are advisory — Framer's own item ids remain the authority on existence,
+-- so a wrong or missing hash costs a redundant write, never a lost item.
+CREATE TABLE IF NOT EXISTS framer_sync_state (
+  item_id   TEXT PRIMARY KEY,
+  hash      TEXT NOT NULL,
+  synced_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -114,9 +114,12 @@ describe("syncCollection — the wipe guard measures what is actually removed", 
     const payload = Array.from({ length: 45 }, (_, i) => item(`a${i}`));
     await syncCollection(port, payload, ["ru"], locales, opts);
 
+    // Batches are small on purpose: Framer times out a method call at 120s and
+    // resolves internal links per item at ingest, so a large batch is what
+    // exceeded it. 45 items go out as 9 calls of 5.
     const adds = port.calls.filter((c) => c.startsWith("addItems"));
-    expect(adds.length).toBeGreaterThan(1);
-    expect(adds).toEqual(["addItems(20)", "addItems(20)", "addItems(5)"]);
+    expect(adds.length).toBe(9);
+    expect(new Set(adds)).toEqual(new Set(["addItems(5)"]));
   });
 });
 
@@ -190,5 +193,140 @@ describe("previewSync — see the arithmetic before granting a write", () => {
     const p = previewSync(existing, [item("new")], ["ru"], locales, opts);
     expect(p.staleCount).toBe(100);
     expect(p.staleIds.length).toBeLessThanOrEqual(25);
+  });
+});
+
+/**
+ * Incremental sync.
+ *
+ * Every publish used to re-upload the entire corpus. Framer resolves internal
+ * links at ingest, so per-item cost is real work — at roughly 6s an item a
+ * 310-article corpus ran ~30 minutes and blew the API's 120s per-call timeout,
+ * which is what "addManagedCollectionItems2 timed out after 120000ms" was.
+ */
+function portWith(
+  existingIds: string[],
+  over: { fields?: Array<{ id: string; name: string; type: string }>; failAdd?: boolean } = {}
+): CollectionPort & { added: number[] } {
+  const added: number[] = [];
+  return {
+    added,
+    id: "bound-collection",
+    async getItemIds() {
+      return existingIds;
+    },
+    async getFields() {
+      return (over.fields ?? []) as never;
+    },
+    async setFields() {},
+    async addItems(items) {
+      if (over.failAdd) throw new Error("boom");
+      added.push(items.length);
+    },
+    async removeItems() {},
+    async setPluginData() {},
+  };
+}
+
+const three = [item("a"), item("b"), item("c")];
+
+/** Run one sync and return the fingerprints it recorded. */
+async function syncOnce(
+  port: CollectionPort,
+  known: Map<string, string>,
+  extra: Record<string, unknown> = {}
+): Promise<Map<string, string>> {
+  const recorded = new Map(known);
+  await syncCollection(port, three, ["ru"], locales, {
+    ...opts,
+    syncedHashes: known,
+    recordSynced: (entries) => {
+      for (const [id, hash] of entries) recorded.set(id, hash);
+    },
+    ...extra,
+  });
+  return recorded;
+}
+
+describe("syncCollection — incremental writes", () => {
+  it("writes everything on the first sync, when nothing is known", async () => {
+    const port = portWith(["a", "b", "c"]);
+    await syncOnce(port, new Map());
+    expect(port.added).toEqual([3]);
+  });
+
+  it("writes nothing on a second sync when no content changed", async () => {
+    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const port = portWith(["a", "b", "c"]);
+    await syncOnce(port, known);
+    expect(port.added).toEqual([]);
+  });
+
+  it("writes only the item whose content changed", async () => {
+    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const port = portWith(["a", "b", "c"]);
+    const edited = [item("a"), { ...item("b"), slug: "renamed" }, item("c")];
+    await syncCollection(port, edited, ["ru"], locales, {
+      ...opts,
+      syncedHashes: known,
+      recordSynced: () => {},
+    });
+    expect(port.added).toEqual([1]);
+  });
+
+  it("rewrites an item Framer does not have, even when the fingerprint matches", async () => {
+    // Framer's own item ids are the authority on existence. A hash store that
+    // could suppress a MISSING article would lose it permanently — the whole
+    // point of testing `present` before the fingerprint.
+    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const port = portWith(["a", "b"]); // c deleted in the Framer UI
+    await syncOnce(port, known);
+    expect(port.added).toEqual([1]);
+  });
+
+  it("rewrites everything when force is set", async () => {
+    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const port = portWith(["a", "b", "c"]);
+    await syncOnce(port, known, { force: true });
+    expect(port.added).toEqual([3]);
+  });
+
+  it("rewrites everything when a field is added, since old items lack it", async () => {
+    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const existing = [{ id: "title", name: "Title", type: "string" }];
+    const port = portWith(["a", "b", "c"], { fields: existing });
+    await syncCollection(port, three, ["ru"], locales, {
+      ...opts,
+      fields: [...existing, { id: "summary", name: "Summary", type: "string" }] as never,
+      syncedHashes: known,
+      recordSynced: () => {},
+    });
+    expect(port.added).toEqual([3]);
+  });
+
+  it("records no fingerprints when the write throws", async () => {
+    // Recording before the write landed would mark items synced that Framer
+    // never received, and the next run would skip them forever.
+    const recorded: Array<[string, string]> = [];
+    const port = portWith(["a", "b", "c"], { failAdd: true });
+    await expect(
+      syncCollection(port, three, ["ru"], locales, {
+        ...opts,
+        syncedHashes: new Map(),
+        recordSynced: (e) => recorded.push(...e),
+      })
+    ).rejects.toThrow();
+    expect(recorded).toEqual([]);
+  });
+
+  it("reports the corpus size and the number actually written separately", async () => {
+    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const res = await syncCollection(portWith(["a", "b", "c"]), three, ["ru"], locales, {
+      ...opts,
+      syncedHashes: known,
+      recordSynced: () => {},
+    });
+    expect(res.synced).toBe(3);
+    expect(res.written).toBe(0);
   });
 });
