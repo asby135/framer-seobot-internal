@@ -456,15 +456,55 @@ export async function syncCollection(
 
   if (stale.length > 0) await collection.removeItems(stale);
 
+  const writeBatch = async (batch: CollectionItem[]) => {
+    await collection.addItems(batch);
+    // Recorded per batch, NOT once at the end. Recording at the end meant a
+    // timeout partway through discarded every batch that had already landed,
+    // so a corpus too large to write in a single run could never make
+    // progress — it restarted from zero on every retry, forever.
+    opts.recordSynced?.(batch.map((it) => [it.id, fingerprint(it)] as [string, string]));
+  };
+
   const addAll = async (items: CollectionItem[]) => {
     for (let i = 0; i < items.length; i += CHUNK_SIZE) {
       const batch = items.slice(i, i + CHUNK_SIZE);
-      await collection.addItems(batch);
-      // Recorded per batch, NOT once at the end. Recording at the end meant a
-      // timeout partway through discarded every batch that had already landed,
-      // so a corpus too large to write in a single run could never make
-      // progress — it restarted from zero on every retry, forever.
-      opts.recordSynced?.(batch.map((it) => [it.id, fingerprint(it)] as [string, string]));
+      try {
+        await writeBatch(batch);
+      } catch (e) {
+        const error = e instanceof Error ? e.message : "unknown";
+        if (batch.length === 1) {
+          logger.error(
+            { itemId: batch[0].id, slug: batch[0].slug, error },
+            "Framer rejected this single item — it is what is blocking the sync"
+          );
+          throw e;
+        }
+        // Fall back to one item per call. A batch failure says nothing about
+        // WHICH item Framer choked on, and "addManagedCollectionItems2 timed
+        // out" on a batch of three was indistinguishable from a slow corpus
+        // until the items were separated. This both names the culprit and lets
+        // the healthy items land instead of failing the whole publish.
+        logger.warn(
+          { size: batch.length, slugs: batch.map((b) => b.slug), error },
+          "Batch write failed — retrying one item at a time to isolate it"
+        );
+        for (const one of batch) {
+          try {
+            await writeBatch([one]);
+            logger.info({ itemId: one.id, slug: one.slug }, "Item written on individual retry");
+          } catch (inner) {
+            logger.error(
+              {
+                itemId: one.id,
+                slug: one.slug,
+                error: inner instanceof Error ? inner.message : "unknown",
+              },
+              "Framer rejected this item — it is what is blocking the sync"
+            );
+            throw inner;
+          }
+        }
+      }
     }
   };
 

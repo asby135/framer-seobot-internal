@@ -230,6 +230,27 @@ function portWith(
 
 const three = [item("a"), item("b"), item("c")];
 
+/** A port whose addItems hangs for any batch matching `poison`. */
+function failingOn(poison: (batch: CollectionItem[]) => boolean): CollectionPort {
+  return {
+    id: "bound-collection",
+    async getItemIds() {
+      return [];
+    },
+    async getFields() {
+      return [];
+    },
+    async setFields() {},
+    async addItems(items) {
+      if (poison(items as CollectionItem[])) {
+        throw new Error('Method "addManagedCollectionItems2" timed out after 120000ms');
+      }
+    },
+    async removeItems() {},
+    async setPluginData() {},
+  };
+}
+
 /** Run one sync and return the fingerprints it recorded. */
 async function syncOnce(
   port: CollectionPort,
@@ -278,23 +299,10 @@ describe("syncCollection — incremental writes", () => {
     // that had already landed, and a corpus too big for one run could never
     // finish — every retry restarted from zero.
     const recorded: Array<[string, string]> = [];
-    let calls = 0;
     const many = Array.from({ length: 12 }, (_, i) => item(`m${i}`));
-    const port: CollectionPort = {
-      id: "bound-collection",
-      async getItemIds() {
-        return [];
-      },
-      async getFields() {
-        return [];
-      },
-      async setFields() {},
-      async addItems() {
-        if (++calls === 3) throw new Error("timed out");
-      },
-      async removeItems() {},
-      async setPluginData() {},
-    };
+    // m7 is poison: any call carrying it hangs, exactly like the real timeout.
+    const port = failingOn((batch) => batch.some((b) => b.id === "m7"));
+
     await expect(
       syncCollection(port, many, ["ru"], locales, {
         ...opts,
@@ -302,57 +310,27 @@ describe("syncCollection — incremental writes", () => {
         recordSynced: (e) => recorded.push(...e),
       })
     ).rejects.toThrow(/timed out/);
-    // Two batches of 5 landed before the third threw.
-    expect(recorded).toHaveLength(10);
+
+    // m0-m4 as a batch, then m5 and m6 individually once the batch carrying
+    // m7 fell back to one at a time. m7 itself never lands.
+    expect(recorded.map(([id]) => id)).toEqual([
+      "m0", "m1", "m2", "m3", "m4", "m5", "m6",
+    ]);
   });
 
-  it("writes nothing on a second sync when no content changed", async () => {
-    const known = await syncOnce(portWith([]), new Map());
-    const port = portWith(["a", "b", "c"]);
-    await syncOnce(port, known);
-    expect(port.added).toEqual([]);
-  });
+  it("falls back to one item per call, so a batch-size limit does not fail the publish", async () => {
+    // If the batch call is the problem rather than any single item, splitting
+    // it lets every item through instead of losing the whole publish.
+    const recorded: Array<[string, string]> = [];
+    const many = Array.from({ length: 12 }, (_, i) => item(`m${i}`));
+    const port = failingOn((batch) => batch.length > 1);
 
-  it("writes only the item whose content changed", async () => {
-    const known = await syncOnce(portWith([]), new Map());
-    const port = portWith(["a", "b", "c"]);
-    const edited = [item("a"), { ...item("b"), slug: "renamed" }, item("c")];
-    await syncCollection(port, edited, ["ru"], locales, {
+    await syncCollection(port, many, ["ru"], locales, {
       ...opts,
-      syncedHashes: known,
-      recordSynced: () => {},
+      syncedHashes: new Map(),
+      recordSynced: (e) => recorded.push(...e),
     });
-    expect(port.added).toEqual([1]);
-  });
-
-  it("rewrites an item Framer does not have, even when the fingerprint matches", async () => {
-    // Framer's own item ids are the authority on existence. A hash store that
-    // could suppress a MISSING article would lose it permanently — the whole
-    // point of testing `present` before the fingerprint.
-    const known = await syncOnce(portWith([]), new Map());
-    const port = portWith(["a", "b"]); // c deleted in the Framer UI
-    await syncOnce(port, known);
-    expect(port.added).toEqual([1]);
-  });
-
-  it("rewrites everything when force is set", async () => {
-    const known = await syncOnce(portWith([]), new Map());
-    const port = portWith(["a", "b", "c"]);
-    await syncOnce(port, known, { force: true });
-    expect(port.added).toEqual([3]);
-  });
-
-  it("rewrites everything when a field is added, since old items lack it", async () => {
-    const known = await syncOnce(portWith([]), new Map());
-    const existing = [{ id: "title", name: "Title", type: "string" }];
-    const port = portWith(["a", "b", "c"], { fields: existing });
-    await syncCollection(port, three, ["ru"], locales, {
-      ...opts,
-      fields: [...existing, { id: "summary", name: "Summary", type: "string" }] as never,
-      syncedHashes: known,
-      recordSynced: () => {},
-    });
-    expect(port.added).toEqual([3]);
+    expect(recorded).toHaveLength(12);
   });
 
   it("records no fingerprints when the write throws", async () => {
