@@ -154,7 +154,13 @@ export function buildTelegramRoute(config: RouteConfig): Hono {
     // still running — two concurrent syncs against one collection, interleaving
     // removeItems and addItems. syncToFramer holds a single-flight lock for the
     // same reason.
-    await answerCallback(cb.id);
+    // cq.id, NOT cb.id. cb.id is the article/keyword id parsed out of
+    // callback_data; the callback QUERY id is Telegram's own and lives on the
+    // update. Answering with the wrong one made Telegram reject every single
+    // button press with "query is too old and response timeout expired" — its
+    // generic reply to an unrecognised callback query id — so the button's
+    // spinner never cleared and the update was never acknowledged.
+    await answerCallback(cq.id);
 
     if (config.awaitHandler) await runHandler();
     else void runHandler();

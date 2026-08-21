@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseCallback, isAuthorized, buildTelegramRoute, type CallbackHandlers } from "./telegram.js";
+
+const answerCallback = vi.fn(async () => {});
+vi.mock("../services/notify.js", () => ({
+  answerCallback: (id: string, text?: string) => answerCallback(id, text),
+  alert: vi.fn(async () => {}),
+}));
+
+const { parseCallback, isAuthorized, buildTelegramRoute } = await import("./telegram.js");
+type CallbackHandlers = Parameters<typeof buildTelegramRoute>[0]["handlers"];
 
 describe("parseCallback", () => {
   it("splits action and id", () => {
@@ -75,6 +83,7 @@ describe("webhook route", () => {
   });
 
   beforeEach(() => {
+    answerCallback.mockClear();
     handlers = {
       onApproveTitle: vi.fn(async () => {}),
       onRerollTitle: vi.fn(async () => {}),
@@ -137,5 +146,57 @@ describe("webhook route", () => {
     });
     const res = await post(callback("pub:art1"));
     expect(res.status).toBe(200);
+  });
+});
+
+describe("acknowledging the callback", () => {
+  const SECRET = "s3cret";
+  const CHAT = "42";
+
+  const post = (data: string) =>
+    buildTelegramRoute({
+      secret: SECRET,
+      chatId: CHAT,
+      awaitHandler: true,
+      handlers: {
+        onApproveTitle: vi.fn(async () => {}),
+        onRerollTitle: vi.fn(async () => {}),
+        onRejectTopic: vi.fn(async () => {}),
+        onPublish: vi.fn(async () => {}),
+        onRegenerate: vi.fn(async () => {}),
+        onDelete: vi.fn(async () => {}),
+        onApproveAll: vi.fn(async () => {}),
+        onPublishAll: vi.fn(async () => {}),
+      },
+    }).request("/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Telegram-Bot-Api-Secret-Token": SECRET,
+      },
+      body: JSON.stringify({
+        callback_query: {
+          id: "tg-query-id",
+          data,
+          message: { message_id: 7, chat: { id: 42 } },
+        },
+      }),
+    });
+
+  beforeEach(() => answerCallback.mockClear());
+
+  it("answers with the callback QUERY id, not the id inside callback_data", async () => {
+    // Answering with the article id made Telegram reject every button press
+    // with "query is too old and response timeout expired" — its generic reply
+    // to an unrecognised callback query id — so the button spinner never
+    // cleared and the update went unacknowledged.
+    await post("pub:article-abc");
+    expect(answerCallback).toHaveBeenCalledWith("tg-query-id", undefined);
+    expect(answerCallback).not.toHaveBeenCalledWith("article-abc", undefined);
+  });
+
+  it("answers bulk actions with the query id too", async () => {
+    await post("puball:");
+    expect(answerCallback).toHaveBeenCalledWith("tg-query-id", undefined);
   });
 });

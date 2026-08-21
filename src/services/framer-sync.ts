@@ -390,6 +390,31 @@ export interface SyncOptions {
  * by buildItem in a fixed key order, which is what makes JSON.stringify
  * deterministic here.
  */
+/**
+ * What about an item might make Framer's ingest hang.
+ *
+ * A single-item write timing out after 120s rules out payload volume, so the
+ * cause is something Framer does per item at ingest: resolving internal links
+ * into CMS references, and fetching the thumbnail. Both involve work we cannot
+ * see from here, and neither is visible in a timeout message — so measure them
+ * and put them in the log next to the item that failed.
+ */
+export function itemShape(item: CollectionItem): Record<string, number | boolean> {
+  const values = Object.values(item.fieldData ?? {});
+  const text = JSON.stringify(values);
+  const localised = values.filter(
+    (v) => v && typeof v === "object" && "valueByLocale" in (v as object)
+  ).length;
+  return {
+    bytes: text.length,
+    slugLength: item.slug?.length ?? 0,
+    internalLinks: (text.match(/href=\\?"\//g) ?? []).length,
+    externalLinks: (text.match(/href=\\?"https?:/g) ?? []).length,
+    images: (text.match(/<img/g) ?? []).length,
+    localisedFields: localised,
+  };
+}
+
 export function fingerprint(item: CollectionItem): string {
   return createHash("sha1").update(JSON.stringify(item)).digest("hex");
 }
@@ -497,6 +522,7 @@ export async function syncCollection(
               {
                 itemId: one.id,
                 slug: one.slug,
+                ...itemShape(one),
                 error: inner instanceof Error ? inner.message : "unknown",
               },
               "Framer rejected this item — it is what is blocking the sync"
