@@ -25,6 +25,50 @@ export interface TitleClient {
   propose(req: TitleRequest): Promise<string>;
 }
 
+/** Words too common to count as keyword overlap. */
+const STOPWORDS = new Set([
+  "how", "the", "and", "for", "with", "your", "you", "that", "this", "from",
+  "into", "before", "after", "when", "what", "why", "not", "but", "are", "was",
+  "its", "their", "them", "they", "have", "has", "had", "can", "will", "just",
+  "who", "which", "then", "than", "over", "out", "off", "way", "get", "got",
+]);
+
+/**
+ * Substantive words in a phrase — the ones that carry the keyword.
+ * Short words and stopwords are dropped so "how to" and "before a" cannot
+ * masquerade as overlap.
+ */
+export function contentWords(phrase: string): string[] {
+  return phrase
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !STOPWORDS.has(w));
+}
+
+/**
+ * Does the headline still carry its keyword?
+ *
+ * TITLE CRAFT rule 1 is two-sided: "the target keyword MUST appear (Google
+ * still ranks on it), BUT reframe it". proposeTitle originally shipped only the
+ * reframe half, and titles drifted until the topic was unrecognisable — "How to
+ * research startup founders before a VC intro call" became "You Get 15 Minutes
+ * With a Founder", which shares nothing a searcher would type.
+ *
+ * Two content words is the bar: one is coincidence ("founders" appears in half
+ * the corpus), two means the headline is about the same thing. A topic with
+ * only one content word is satisfied by that word alone.
+ */
+export function sharesKeyword(title: string, topic: string): boolean {
+  const topicWords = contentWords(topic);
+  if (topicWords.length === 0) return true;
+
+  const titleWords = new Set(contentWords(title));
+  const overlap = topicWords.filter((w) => titleWords.has(w)).length;
+
+  return overlap >= Math.min(2, topicWords.length);
+}
+
 const MAX_ATTEMPTS = 2;
 
 /**
@@ -47,10 +91,14 @@ export async function proposeTitle(
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const title = (await client.propose({ topic, recentTitles, rejected: excluded })).trim();
     const tics = findTitleTics(title);
+    const keptKeyword = sharesKeyword(title, topic);
 
-    if (tics.length === 0) return title;
+    if (tics.length === 0 && keptKeyword) return title;
 
-    logger.warn({ title, tics, attempt }, "Proposed title contains banned tics");
+    logger.warn(
+      { title, topic, tics, keptKeyword, attempt },
+      keptKeyword ? "Proposed title contains banned tics" : "Proposed title lost its keyword"
+    );
     if (attempt === MAX_ATTEMPTS) return title;
 
     excluded = [...excluded, title];
