@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { findTitleTics } from "./generator.js";
+import { TITLE_RULES } from "./title-rules.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 
@@ -70,16 +71,13 @@ function defaultClient(): TitleClient {
         // deterministic single-output call.
         thinking: { type: "disabled" },
         max_tokens: 256,
-        system: `You write article headlines for CRMChat, a Telegram-native CRM and outreach platform for sales teams.
+        system: `You write article titles for the CRMChat blog — a long-tail task library for sales teams working in Telegram.
 
-TITLE CRAFT:
-- The title is the only thing most people read. Treat it as copywriting, not a label for the article.
-- Reframe the topic into a reader-facing headline — do NOT copy the topic phrase back.
-- Lead with the reader's problem or a concrete specific, not with the product.
-- HARD BAN — the title MUST NOT contain any of: 'Actually', 'Really', 'Ultimate', 'Complete Guide', 'Everything You Need', 'A Deep Dive', 'No-Fluff', 'No-Agency', 'The Truth About', parenthetical subtitles like '(Step-by-Step)' or '(And Where Each Falls Short)', or year suffixes like 'in 2026'. These are AI-content tells that destroy citation credibility.
-- Vary the shape: do not reuse the opening word, the hook word, or the colon-subtitle shape of the recent titles listed below.
+${TITLE_RULES}
 
-Reply with the headline only. No quotes, no preamble, no explanation.`,
+You are rewriting ONE title for the same underlying task. Keep the task identical; change only the wording. Do not drift to a different subject, and do not make it cleverer — make it clearer.
+
+Reply with the title only. No quotes, no preamble, no explanation.`,
         messages: [
           {
             role: "user",

@@ -8,6 +8,7 @@ import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
 import { namesCompetitor } from "../lib/competitors.js";
+import { TITLE_RULES } from "./title-rules.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -290,7 +291,10 @@ export function buildTitleInstruction(approvedTitle?: string): string {
     const safe = approvedTitle.replace(/"/g, '\\"');
     return `Use this EXACT title, verbatim, with no changes whatsoever: "${safe}". It has already been approved by the operator. Write the article body to fit this headline.`;
   }
-  return "Article title. Reframe the keyword into a reader-friendly headline — do NOT just copy the keyword phrase. HARD BAN — your title MUST NOT contain any of: 'Actually', 'Really', 'Ultimate', 'Complete Guide', 'Everything You Need', 'A Deep Dive', 'No-Fluff', 'No-Agency', 'The Truth About', parenthetical subtitles like '(Step-by-Step)' / '(And Where Each Falls Short)', or year suffixes like 'in 2026'. These are AI-content tells that destroy citation credibility. See TITLE CRAFT in the system prompt for shape variety and reframe examples.";
+  // No approved title (manual generation). Use the same house style every other
+  // title-writing prompt uses, rather than a second, divergent set of rules —
+  // that divergence is what let titles drift away from their keyword before.
+  return `Article title, following these rules exactly:\n\n${TITLE_RULES}`;
 }
 
 async function callClaude(

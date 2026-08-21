@@ -19,15 +19,14 @@ const autopilot = new Hono();
 /**
  * POST /api/autopilot/run?dry_run=1
  *
- * dry_run skips persisting the proposed titles and the digest message id, so
- * the digest's approve buttons will not find a pinned title and do nothing.
+ * dry_run seeds and selects as normal but returns the titles in the response
+ * instead of sending the digest — so the pipeline can be exercised without
+ * messaging the group.
  *
- * It does NOT skip topic seeding or the rotation cursor advance. Those run
- * either way, because a dry run against an empty pool would have nothing to
- * propose and would prove nothing. So a dry run can still cost one Claude call
- * for seeding, plus one per proposed title.
+ * It does NOT skip topic seeding or the rotation cursor advance. Those are real
+ * either way, because a rehearsal against an empty pool would prove nothing.
  *
- * Without dry_run the digest is live: approving a title spends a full
+ * Without dry_run the digest is sent and approving a title spends a full
  * generation.
  */
 autopilot.post("/run", async (c) => {
@@ -42,13 +41,14 @@ autopilot.post("/run", async (c) => {
       return c.json({ error: "a nightly run is already in progress" }, 409);
     }
 
-    logger.info({ dryRun }, "Manual autopilot run complete");
+    logger.info({ dryRun, proposed: result.proposals?.length ?? 0 }, "Manual autopilot run complete");
     return c.json({
       success: true,
       dryRun,
+      titles: result.proposals?.map((p) => p.title) ?? [],
       note: dryRun
-        ? "Digest sent. Titles were not persisted, so approving from this digest will not generate. Topics may have been seeded and the rotation cursor advanced — those are real."
-        : "Digest sent. Approving a title will start a real generation.",
+        ? "Rehearsal: no digest was sent. The titles below are what would have been proposed. Seeding and the rotation cursor advance are real."
+        : "Digest sent. Approving a title starts a real generation.",
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

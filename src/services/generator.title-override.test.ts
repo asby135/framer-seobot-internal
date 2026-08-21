@@ -18,14 +18,17 @@ describe("buildTitleInstruction", () => {
     expect(buildTitleInstruction("Ultimate Headline")).not.toContain("HARD BAN");
   });
 
-  it("falls back to the full craft rules when no title is pinned", () => {
+  it("falls back to the shared house rules when no title is pinned", () => {
+    // One source of truth: manual generation must not get a second, divergent
+    // rule set — that divergence is what let titles drift off their keyword.
     const out = buildTitleInstruction(undefined);
-    expect(out).toContain("HARD BAN");
+    expect(out).toContain("TITLE RULES");
+    expect(out).toMatch(/the title IS the search query/i);
     expect(out).not.toMatch(/verbatim/i);
   });
 
   it("treats an empty string as no pinned title", () => {
-    expect(buildTitleInstruction("")).toContain("HARD BAN");
+    expect(buildTitleInstruction("")).toContain("TITLE RULES");
   });
 
   it("escapes a quote in the approved title so the instruction stays parseable", () => {

@@ -11,10 +11,17 @@ const base: SeederPromptInput = {
 };
 
 describe("buildSeederPrompt", () => {
-  it("states the angle as a constraint on every topic", () => {
+  it("states the article type as a constraint on every title", () => {
     const p = buildSeederPrompt(base);
     expect(p).toContain("migration");
-    expect(p).toMatch(/every topic must take this angle/i);
+    expect(p).toMatch(/every title must be this type/i);
+  });
+
+  it("carries the required title shape for the type", () => {
+    // The angle word alone does not tell the model what the title should look
+    // like: "what-is" has to become "What Is X", not a clever reframe.
+    expect(buildSeederPrompt({ ...base, angle: "what-is" })).toMatch(/REQUIRED TITLE SHAPE/);
+    expect(buildSeederPrompt({ ...base, angle: "what-is" })).toContain("What Is");
   });
 
   it("narrows to the subniche", () => {
