@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
+import { faqVerdict } from "../lib/jsonld.js";
 import { buildGateHandlers } from "../services/bootstrap.js";
 import {
   enqueueGeneration,
@@ -73,6 +74,67 @@ articles.get("/translate-status", (c) => {
 });
 
 // Get full article with assets
+/**
+ * Schema + FAQ coverage across published articles.
+ *
+ * Registered BEFORE /:id — Hono matches in registration order, so a literal
+ * route declared after a parameterized one is never reached.
+ *
+ * A generation whose schema retry fails still publishes: an article without
+ * rich data beats no article. That makes missing schema silent by design, so
+ * it has to be audited rather than waited for.
+ */
+articles.get("/schema-audit", (c) => {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT id, title, slug, schema_jsonld FROM articles
+       WHERE status = 'published' ORDER BY published_at DESC`
+    )
+    .all() as Array<{ id: string; title: string; slug: string; schema_jsonld: string | null }>;
+
+  const ru = new Map(
+    (
+      db
+        .prepare(
+          `SELECT t.article_id, t.schema_jsonld FROM article_translations t
+           JOIN articles a ON a.id = t.article_id
+           WHERE a.status = 'published' AND t.locale = 'ru'`
+        )
+        .all() as Array<{ article_id: string; schema_jsonld: string | null }>
+    ).map((r) => [r.article_id, r.schema_jsonld])
+  );
+
+  const buckets: Record<string, Array<{ id: string; title: string; slug: string }>> = {
+    missing: [],
+    invalid: [],
+    "not-faq": [],
+    thin: [],
+    "ru-missing": [],
+  };
+
+  let ok = 0;
+  for (const r of rows) {
+    const verdict = faqVerdict(r.schema_jsonld);
+    if (verdict === "ok") ok++;
+    else buckets[verdict].push({ id: r.id, title: r.title, slug: r.slug });
+
+    // RU pages carry their own schema; an untranslated one is not a gap, an
+    // empty one on a translated article is.
+    if (ru.has(r.id) && faqVerdict(ru.get(r.id)) !== "ok") {
+      buckets["ru-missing"].push({ id: r.id, title: r.title, slug: r.slug });
+    }
+  }
+
+  return c.json({
+    published: rows.length,
+    ok,
+    counts: Object.fromEntries(Object.entries(buckets).map(([k, v]) => [k, v.length])),
+    // Capped: this is a worklist to act on, not a data dump.
+    articles: Object.fromEntries(Object.entries(buckets).map(([k, v]) => [k, v.slice(0, 50)])),
+  });
+});
+
 articles.get("/:id", (c) => {
   const db = getDb();
   const { id } = c.req.param();

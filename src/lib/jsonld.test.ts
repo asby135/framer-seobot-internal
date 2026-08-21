@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isValidJsonLd, sanitizeJsonLd } from "./jsonld.js";
+import { isValidJsonLd, sanitizeJsonLd, faqVerdict } from "./jsonld.js";
 
 describe("isValidJsonLd", () => {
   it("accepts a BlogPosting + FAQPage @graph", () => {
@@ -132,5 +132,69 @@ describe("sanitizeJsonLd", () => {
     expect(sanitizeJsonLd("not json")).toBeNull();
     expect(sanitizeJsonLd('{"@context":"https://wrong.org","@type":"X"}')).toBeNull();
     expect(sanitizeJsonLd('{"@context":"https://schema.org"}')).toBeNull();
+  });
+});
+
+describe("faqVerdict", () => {
+  const faq = (pairs: number) =>
+    JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: Array.from({ length: pairs }, (_, i) => ({
+        "@type": "Question",
+        name: `Q${i}?`,
+        acceptedAnswer: { "@type": "Answer", text: `A${i}` },
+      })),
+    });
+
+  it("passes a well-formed FAQPage", () => {
+    expect(faqVerdict(faq(3))).toBe("ok");
+  });
+
+  it("reports an empty or absent value as missing", () => {
+    expect(faqVerdict(null)).toBe("missing");
+    expect(faqVerdict("")).toBe("missing");
+    expect(faqVerdict("   ")).toBe("missing");
+  });
+
+  it("reports unparseable JSON as invalid", () => {
+    expect(faqVerdict("{oops")).toBe("invalid");
+  });
+
+  it("reports valid JSON-LD that is not a FAQPage", () => {
+    // Framer emits BlogPosting itself; a BlogPosting here means the model
+    // produced the one node it was told not to.
+    expect(
+      faqVerdict(JSON.stringify({ "@context": "https://schema.org", "@type": "BlogPosting" }))
+    ).toBe("not-faq");
+  });
+
+  it("finds a FAQPage nested in an @graph", () => {
+    expect(
+      faqVerdict(
+        JSON.stringify({
+          "@context": "https://schema.org",
+          "@graph": [{ "@type": "BlogPosting" }, JSON.parse(faq(2))],
+        })
+      )
+    ).toBe("ok");
+  });
+
+  it("reports a single-pair FAQ as thin", () => {
+    // Parses and validates, but the prompt asks for 2-6 — one pair is the
+    // shape a truncated or retried generation leaves behind.
+    expect(faqVerdict(faq(1))).toBe("thin");
+  });
+
+  it("does not count a Question with no answer text", () => {
+    const half = JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: [
+        { "@type": "Question", name: "Q1?", acceptedAnswer: { "@type": "Answer", text: "A1" } },
+        { "@type": "Question", name: "Q2?" },
+      ],
+    });
+    expect(faqVerdict(half)).toBe("thin");
   });
 });
