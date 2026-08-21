@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSeederPrompt, MAX_COVERED, type SeederPromptInput } from "./seeder.js";
+import { buildSeederPrompt, buildSeederSystemPrompt, MAX_COVERED, type SeederPromptInput } from "./seeder.js";
 
 const base: SeederPromptInput = {
   audience: "Web3 BD leads at DeFi protocols",
@@ -61,5 +61,35 @@ describe("buildSeederPrompt", () => {
   it("falls back to a general-positioning note when no KB matched", () => {
     const p = buildSeederPrompt({ ...base, kbContext: "" });
     expect(p).toMatch(/no specific kb context/i);
+  });
+});
+
+describe("buildSeederSystemPrompt", () => {
+  it("states the audience is small teams, not enterprise", () => {
+    const p = buildSeederSystemPrompt(10);
+    expect(p).toMatch(/SMB SCALE/);
+    expect(p).toMatch(/small sales teams/i);
+  });
+
+  it("names the upmarket framings that leaked through a subniche label", () => {
+    // "enterprise GTM firms" produced a whole batch of "Enterprise Telegram
+    // Outreach" / "Account-Based" / "Multi-Touch Sequence" titles aimed at a
+    // reader CRMChat does not sell to.
+    const p = buildSeederSystemPrompt(10);
+    for (const tell of ["enterprise", "account-based", "multi-touch sequence"]) {
+      expect(p.toLowerCase()).toContain(tell);
+    }
+  });
+
+  it("says a market-segment subniche describes who the reader sells TO", () => {
+    expect(buildSeederSystemPrompt(10)).toMatch(/never the size of the reader's own team/);
+  });
+
+  it("still forbids product-led topics", () => {
+    expect(buildSeederSystemPrompt(10)).toMatch(/must NOT be about CRMChat/);
+  });
+
+  it("asks for the requested count", () => {
+    expect(buildSeederSystemPrompt(7)).toContain("exactly 7 titles");
   });
 });

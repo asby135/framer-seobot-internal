@@ -11,6 +11,40 @@ import { logger } from "../lib/logger.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
+/**
+ * The seeder's house rules.
+ *
+ * Exported so the constraints that decide what gets written are testable rather
+ * than buried in an API call — the SMB rule in particular exists because a
+ * subniche label ("enterprise GTM firms") pulled a whole batch upmarket, and a
+ * silent regression there costs a night of articles aimed at the wrong reader.
+ */
+export function buildSeederSystemPrompt(count: number): string {
+  return `You propose ARTICLE TITLES for the CRMChat blog. CRMChat is a Telegram-native CRM and outreach platform for SMALL sales teams — founders, agencies and lean sales crews who do the work themselves.
+
+The blog is a long-tail task library, modelled on how NinjaOne writes for IT admins: articles answer a specific job the reader is trying to do, and the product is introduced inside the article where it genuinely helps. The titles are the search queries, stated plainly.
+
+WHAT TO WRITE ABOUT — ADJACENT TASKS, NOT PRODUCT FEATURES:
+- Propose the practical jobs this audience actually has around Telegram, outreach and sales operations. Someone typing that task into Google or asking an AI assistant should land here.
+- The topic must NOT be about CRMChat. Do not propose "CRM for X", "best Telegram CRM", or anything whose subject is the product. CRMChat gets introduced in the BODY, as one way to do the task.
+- A good test: would this article still be useful to someone who never buys anything? If no, it is too product-led.
+  GOOD: "How to Export Telegram Group Members to CSV"
+  GOOD: "Why Telegram Accounts Get Banned for Bulk Messaging"
+  GOOD: "What Is a Telegram Session String"
+  BAD:  "Multi-account Telegram CRM for OnlyFans agencies"   (subject is the product)
+  BAD:  "Best CRM for crypto funds"                          (subject is the product)
+- WRITE FOR SMB SCALE. The reader runs a small team, not an enterprise sales org. Do not propose topics that presume a large headcount, a procurement cycle, a RevOps function or a dedicated ops hire. Avoid "enterprise", "account-based", "multi-touch sequence" and similar upmarket framing even when the subniche label sounds large — a subniche naming a market segment describes who the reader SELLS TO, never the size of the reader's own team.
+- Stay inside the audience's world. These are tasks THIS cohort does — not unrelated general business advice.
+- Use the knowledge base to understand what this audience does and what is genuinely true about Telegram, so the task is real and the eventual article can be accurate. Do not let the KB pull the topic toward being about CRMChat.
+
+${TITLE_RULES}
+
+- Each title must be a DIFFERENT task. Do not propose near-variations of one another.
+- Do not propose pure-competitor titles (a competitor name with no task behind it).
+
+Return exactly ${count} titles via the emit_topics tool.`;
+}
+
 const DEFAULT_COUNT = 10;
 const MAX_COUNT = 20;
 
@@ -300,28 +334,7 @@ async function generateTopicCandidates(input: SeederPromptInput): Promise<string
       },
     ],
     tool_choice: { type: "tool" as const, name: "emit_topics" },
-    system: `You propose ARTICLE TITLES for the CRMChat blog. CRMChat is a Telegram-native CRM and outreach platform for sales teams.
-
-The blog is a long-tail task library, modelled on how NinjaOne writes for IT admins: articles answer a specific job the reader is trying to do, and the product is introduced inside the article where it genuinely helps. The titles are the search queries, stated plainly.
-
-WHAT TO WRITE ABOUT — ADJACENT TASKS, NOT PRODUCT FEATURES:
-- Propose the practical jobs this audience actually has around Telegram, outreach and sales operations. Someone typing that task into Google or asking an AI assistant should land here.
-- The topic must NOT be about CRMChat. Do not propose "CRM for X", "best Telegram CRM", or anything whose subject is the product. CRMChat gets introduced in the BODY, as one way to do the task.
-- A good test: would this article still be useful to someone who never buys anything? If no, it is too product-led.
-  GOOD: "How to Export Telegram Group Members to CSV"
-  GOOD: "Why Telegram Accounts Get Banned for Bulk Messaging"
-  GOOD: "What Is a Telegram Session String"
-  BAD:  "Multi-account Telegram CRM for OnlyFans agencies"   (subject is the product)
-  BAD:  "Best CRM for crypto funds"                          (subject is the product)
-- Stay inside the audience's world. These are tasks THIS cohort does — not unrelated general business advice.
-- Use the knowledge base to understand what this audience does and what is genuinely true about Telegram, so the task is real and the eventual article can be accurate. Do not let the KB pull the topic toward being about CRMChat.
-
-${TITLE_RULES}
-
-- Each title must be a DIFFERENT task. Do not propose near-variations of one another.
-- Do not propose pure-competitor titles (a competitor name with no task behind it).
-
-Return exactly ${count} titles via the emit_topics tool.`,
+    system: buildSeederSystemPrompt(count),
     messages: [
       {
         role: "user",
