@@ -6,10 +6,6 @@ export const env = {
 
   // API keys (set via POST /api/setup, stored in DB)
 
-  // Era / OhMyGEO — AEO keyword source (replaces GSC)
-  ERA_AI_API_KEY: process.env.ERA_AI_API_KEY || "",
-  ERA_AI_BRAND_ID: process.env.ERA_AI_BRAND_ID || "",
-
   // Claude
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || "",
 

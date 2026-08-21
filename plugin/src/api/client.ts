@@ -119,20 +119,6 @@ class ApiClient {
     return result;
   }
 
-  // Research. gap=true runs competitor-gap mode: only topics where competitors
-  // are cited in AI answers and CRMChat is not.
-  async runResearch(gap: boolean = false) {
-    return this.request<{
-      status: string;
-      mode: "era" | "era-gap";
-      discovered: number;
-      skipped: number;
-    }>("/api/research", {
-      method: "POST",
-      body: JSON.stringify({ gap }),
-    });
-  }
-
   async seedTopics(audience: string, count: number = 10) {
     return this.request<{
       status: string;

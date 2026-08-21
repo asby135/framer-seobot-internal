@@ -4,7 +4,7 @@ import { getDb } from "../db/index.js";
 import { searchKB, getKBArticle } from "./kb.js";
 import { ANGLE_GUIDANCE } from "./taxonomy.js";
 import { TITLE_RULES, TITLE_SHAPE_BY_ANGLE } from "./title-rules.js";
-import { isPureCompetitorTopic } from "./research.js";
+import { isPureCompetitorTopic } from "../lib/competitors.js";
 import { queryToSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
