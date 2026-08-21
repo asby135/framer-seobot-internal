@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
+import { buildGateHandlers } from "../services/bootstrap.js";
 import {
   enqueueGeneration,
   enqueueTranslation,
@@ -96,22 +97,36 @@ articles.get("/:id", (c) => {
 });
 
 // Mark article as published
-articles.post("/:id/publish", (c) => {
+articles.post("/:id/publish", async (c) => {
   const db = getDb();
   const { id } = c.req.param();
 
-  const result = db
-    .prepare(
-      `UPDATE articles
-       SET status = 'published', published_at = datetime('now'), updated_at = datetime('now')
-       WHERE id = ? AND status IN ('draft', 'review')`
-    )
-    .run(id);
+  const before = db.prepare("SELECT status FROM articles WHERE id = ?").get(id) as
+    | { status: string }
+    | undefined;
+  if (!before || !["draft", "review"].includes(before.status)) {
+    return c.json({ error: "Article not found or not in draft/review status" }, 404);
+  }
 
-  if (result.changes === 0) {
+  // Publishing means REACHING THE SITE, not flipping a column.
+  //
+  // This route used to only mark the row published. Articles then read as
+  // "Published" in the plugin while Framer had never received them, and the
+  // divergence was invisible from either side. Delegating to the Telegram
+  // gate's handler — mark published, sync to Framer, roll back if the sync
+  // fails — means both entry points publish the same way by construction
+  // rather than by two implementations agreeing.
+  await buildGateHandlers().onPublish(id, 0);
+
+  // onPublish reverts to 'review' when the sync fails, so the row is the
+  // verdict. It reports failure over Telegram; the HTTP caller needs it too.
+  const after = db.prepare("SELECT status FROM articles WHERE id = ?").get(id) as {
+    status: string;
+  };
+  if (after.status !== "published") {
     return c.json(
-      { error: "Article not found or not in draft/review status" },
-      404
+      { error: "Framer sync failed — publish reverted, retry once the sync issue clears" },
+      502
     );
   }
 
