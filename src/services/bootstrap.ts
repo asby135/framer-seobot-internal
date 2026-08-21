@@ -90,10 +90,34 @@ export async function publishSiteNow(): Promise<void> {
   await debouncer.flushNow();
 }
 
+/**
+ * Has an owed publish already waited out its debounce window?
+ *
+ * Re-arming on boot RESTARTS the countdown. A process redeploying more often
+ * than the window would therefore never deploy at all: every boot pushes the
+ * deadline out again, silently, while changes pile up in Framer as pending. A
+ * publish owed for longer than the window has already served its debounce.
+ */
+export function publishIsOverdue(pendingSince: string, now: number, windowMs: number): boolean {
+  const owedMs = now - new Date(pendingSince).getTime();
+  // A corrupt timestamp yields NaN; re-arm rather than deploy on garbage.
+  return Number.isFinite(owedMs) && owedMs >= windowMs;
+}
+
 /** On boot, re-arm a deploy that was owed when the process last stopped. */
 export function recoverPendingPublish(): void {
   const pending = getSetting<string | null>("publishPendingSince", null);
   if (pending === null) return;
+
+  if (publishIsOverdue(pending, Date.now(), PUBLISH_DEBOUNCE_MS)) {
+    logger.warn(
+      { pendingSince: pending },
+      "Publish owed longer than the debounce window — deploying now instead of re-arming"
+    );
+    void publishSiteNow();
+    return;
+  }
+
   logger.warn({ pendingSince: pending }, "Publish was owed at shutdown — re-arming");
   debouncer.schedule();
 }

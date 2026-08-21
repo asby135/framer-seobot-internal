@@ -16,6 +16,7 @@ import { join } from "node:path";
 
 let buildGateHandlers: typeof import("./bootstrap.js").buildGateHandlers;
 let getDb: typeof import("../db/index.js").getDb;
+let publishIsOverdue: typeof import("./bootstrap.js").publishIsOverdue;
 
 beforeAll(async () => {
   // env.ts snapshots process.env at import time, so this must be set before
@@ -24,7 +25,7 @@ beforeAll(async () => {
   const dbMod = await import("../db/index.js");
   dbMod.initDb();
   getDb = dbMod.getDb;
-  ({ buildGateHandlers } = await import("./bootstrap.js"));
+  ({ buildGateHandlers, publishIsOverdue } = await import("./bootstrap.js"));
 });
 
 beforeEach(() => {
@@ -85,5 +86,29 @@ describe("regenerateArticle", () => {
 
     const kw = getDb().prepare("SELECT status FROM keywords WHERE id = 'k1'").get() as { status: string };
     expect(kw.status).toBe("approved");
+  });
+});
+
+describe("publishIsOverdue", () => {
+  const WINDOW = 5 * 60 * 1000;
+  const now = new Date("2026-08-21T16:40:00Z").getTime();
+
+  it("is false while the publish is still inside its debounce window", () => {
+    expect(publishIsOverdue("2026-08-21T16:38:00Z", now, WINDOW)).toBe(false);
+  });
+
+  it("is true once it has waited longer than the window", () => {
+    // Re-arming restarts the countdown, so a service redeploying every couple
+    // of minutes would never deploy — each boot pushes the deadline out again
+    // while changes pile up in Framer as pending.
+    expect(publishIsOverdue("2026-08-21T16:30:00Z", now, WINDOW)).toBe(true);
+  });
+
+  it("is true exactly at the boundary", () => {
+    expect(publishIsOverdue("2026-08-21T16:35:00Z", now, WINDOW)).toBe(true);
+  });
+
+  it("re-arms rather than deploying on a corrupt timestamp", () => {
+    expect(publishIsOverdue("not-a-date", now, WINDOW)).toBe(false);
   });
 });
