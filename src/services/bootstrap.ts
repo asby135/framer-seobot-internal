@@ -120,8 +120,8 @@ async function publishFramerSite(): Promise<void> {
  * alone does not resolve — crmchat.ai/<slug> is a 404 and /articles/<slug>
  * 308s to /blog/<slug>.
  */
-export function articleUrl(slug: string): string {
-  const base = env.SITE_URL.replace(/\/+$/, "");
+export function articleUrl(slug: string, siteUrl: string = env.SITE_URL): string {
+  const base = siteUrl.replace(/\/+$/, "");
   return base ? `${base}/${slug}` : `/${slug}`;
 }
 

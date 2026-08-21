@@ -146,8 +146,33 @@ describe("articlesPublishedSince", () => {
 });
 
 describe("articleUrl", () => {
+  const SITE = "https://crmchat.ai/blog";
+
   it("falls back to the bare slug when SITE_URL is unset", () => {
-    // The tests run without SITE_URL set.
-    expect(articleUrl("some-slug")).toBe("/some-slug");
+    expect(articleUrl("some-slug", "")).toBe("/some-slug");
+  });
+
+  it("joins the base and the slug with exactly one separator", () => {
+    expect(articleUrl("telegram-vs-signal", SITE)).toBe(
+      "https://crmchat.ai/blog/telegram-vs-signal"
+    );
+  });
+
+  it("does NOT double the path prefix", () => {
+    // SITE_URL carries /blog and the slug never does — they are built in
+    // different places (this helper vs the generator's hardcoded
+    // <a href="/blog/slug"> body links) and never concatenated with each other.
+    expect(articleUrl("telegram-vs-signal", SITE)).not.toContain("/blog/blog");
+  });
+
+  it("tolerates a trailing slash on the base", () => {
+    expect(articleUrl("x", "https://crmchat.ai/blog/")).toBe("https://crmchat.ai/blog/x");
+    expect(articleUrl("x", "https://crmchat.ai/blog///")).toBe("https://crmchat.ai/blog/x");
+  });
+
+  it("keeps a slug that legitimately starts with the word blog", () => {
+    // A title beginning "Blog…" yields such a slug. /blog/blog-post-ideas is
+    // the correct URL, not a duplicated prefix.
+    expect(articleUrl("blog-post-ideas", SITE)).toBe("https://crmchat.ai/blog/blog-post-ideas");
   });
 });
