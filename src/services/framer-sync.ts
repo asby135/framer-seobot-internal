@@ -458,13 +458,29 @@ export async function syncCollection(
 
   const addAll = async (items: CollectionItem[]) => {
     for (let i = 0; i < items.length; i += CHUNK_SIZE) {
-      await collection.addItems(items.slice(i, i + CHUNK_SIZE));
+      const batch = items.slice(i, i + CHUNK_SIZE);
+      await collection.addItems(batch);
+      // Recorded per batch, NOT once at the end. Recording at the end meant a
+      // timeout partway through discarded every batch that had already landed,
+      // so a corpus too large to write in a single run could never make
+      // progress — it restarted from zero on every retry, forever.
+      opts.recordSynced?.(batch.map((it) => [it.id, fingerprint(it)] as [string, string]));
     }
   };
 
   const present = new Set(existingIds);
   const known = opts.syncedHashes ?? new Map<string, string>();
-  const fullPass = opts.force === true || fieldsChanged || known.size === 0;
+  const fullPass = opts.force === true || fieldsChanged;
+  /**
+   * First run against a collection Framer already holds.
+   *
+   * Rewriting the whole corpus just to learn what is in it costs ~6s an item —
+   * half an hour for 310 articles, and past the per-call timeout. The items are
+   * already there and were written from this same payload, so record what they
+   * should hash to and write only what is missing. If that assumption is ever
+   * wrong the content is stale, never lost, and ?force=1 rewrites it.
+   */
+  const adopting = !fullPass && known.size === 0 && present.size > 0;
 
   /**
    * Write the items Framer does not already have in this exact form.
@@ -475,9 +491,18 @@ export async function syncCollection(
    * hash can do is skip an update, which the next content change repairs.
    */
   const writeChanged = async (all: CollectionItem[]): Promise<number> => {
+    if (adopting) {
+      const already = all.filter((i) => present.has(i.id));
+      opts.recordSynced?.(already.map((i) => [i.id, fingerprint(i)] as [string, string]));
+      logger.info(
+        { adopted: already.length },
+        "Framer sync: adopting items Framer already holds instead of rewriting them"
+      );
+    }
+
     const changed = fullPass
       ? all
-      : all.filter((i) => !present.has(i.id) || known.get(i.id) !== fingerprint(i));
+      : all.filter((i) => !present.has(i.id) || (!adopting && known.get(i.id) !== fingerprint(i)));
 
     if (changed.length === 0) {
       logger.info({ total: all.length }, "Framer sync: nothing changed, no items written");
@@ -488,9 +513,6 @@ export async function syncCollection(
       "Framer sync: writing changed items"
     );
     await addAll(changed);
-    // Recorded only after the write lands. A throw above leaves the old
-    // fingerprints in place, so the next run retries these items.
-    opts.recordSynced?.(changed.map((i) => [i.id, fingerprint(i)] as [string, string]));
     return changed.length;
   };
 
@@ -513,7 +535,6 @@ export async function syncCollection(
     // rewrite by construction.
     const plain = buildItems(payload, localeMap, { includeLocales: false });
     await addAll(plain);
-    opts.recordSynced?.(plain.map((i) => [i.id, fingerprint(i)] as [string, string]));
     written = plain.length;
   }
 

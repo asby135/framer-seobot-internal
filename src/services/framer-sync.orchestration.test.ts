@@ -249,21 +249,72 @@ async function syncOnce(
 }
 
 describe("syncCollection — incremental writes", () => {
-  it("writes everything on the first sync, when nothing is known", async () => {
-    const port = portWith(["a", "b", "c"]);
+  it("writes everything into a collection Framer holds nothing in", async () => {
+    const port = portWith([]);
     await syncOnce(port, new Map());
     expect(port.added).toEqual([3]);
   });
 
+  it("ADOPTS items Framer already holds rather than rewriting them", async () => {
+    // The first run after this feature shipped would otherwise rewrite the
+    // whole corpus to learn what is in it — ~6s an item, half an hour for 310,
+    // past the per-call timeout. The items are already there.
+    const port = portWith(["a", "b", "c"]);
+    const known = await syncOnce(port, new Map());
+    expect(port.added).toEqual([]);
+    expect(known.size).toBe(3);
+  });
+
+  it("still writes what Framer is missing while adopting the rest", async () => {
+    // Exactly the divergence a reverted publish leaves behind: the backend says
+    // published, Framer never received the item.
+    const port = portWith(["a", "b"]);
+    await syncOnce(port, new Map());
+    expect(port.added).toEqual([1]);
+  });
+
+  it("records each batch as it lands, so a timeout keeps the progress made", async () => {
+    // Recording once at the end meant a partial failure discarded every batch
+    // that had already landed, and a corpus too big for one run could never
+    // finish — every retry restarted from zero.
+    const recorded: Array<[string, string]> = [];
+    let calls = 0;
+    const many = Array.from({ length: 12 }, (_, i) => item(`m${i}`));
+    const port: CollectionPort = {
+      id: "bound-collection",
+      async getItemIds() {
+        return [];
+      },
+      async getFields() {
+        return [];
+      },
+      async setFields() {},
+      async addItems() {
+        if (++calls === 3) throw new Error("timed out");
+      },
+      async removeItems() {},
+      async setPluginData() {},
+    };
+    await expect(
+      syncCollection(port, many, ["ru"], locales, {
+        ...opts,
+        syncedHashes: new Map(),
+        recordSynced: (e) => recorded.push(...e),
+      })
+    ).rejects.toThrow(/timed out/);
+    // Two batches of 5 landed before the third threw.
+    expect(recorded).toHaveLength(10);
+  });
+
   it("writes nothing on a second sync when no content changed", async () => {
-    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const known = await syncOnce(portWith([]), new Map());
     const port = portWith(["a", "b", "c"]);
     await syncOnce(port, known);
     expect(port.added).toEqual([]);
   });
 
   it("writes only the item whose content changed", async () => {
-    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const known = await syncOnce(portWith([]), new Map());
     const port = portWith(["a", "b", "c"]);
     const edited = [item("a"), { ...item("b"), slug: "renamed" }, item("c")];
     await syncCollection(port, edited, ["ru"], locales, {
@@ -278,21 +329,21 @@ describe("syncCollection — incremental writes", () => {
     // Framer's own item ids are the authority on existence. A hash store that
     // could suppress a MISSING article would lose it permanently — the whole
     // point of testing `present` before the fingerprint.
-    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const known = await syncOnce(portWith([]), new Map());
     const port = portWith(["a", "b"]); // c deleted in the Framer UI
     await syncOnce(port, known);
     expect(port.added).toEqual([1]);
   });
 
   it("rewrites everything when force is set", async () => {
-    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const known = await syncOnce(portWith([]), new Map());
     const port = portWith(["a", "b", "c"]);
     await syncOnce(port, known, { force: true });
     expect(port.added).toEqual([3]);
   });
 
   it("rewrites everything when a field is added, since old items lack it", async () => {
-    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const known = await syncOnce(portWith([]), new Map());
     const existing = [{ id: "title", name: "Title", type: "string" }];
     const port = portWith(["a", "b", "c"], { fields: existing });
     await syncCollection(port, three, ["ru"], locales, {
@@ -308,7 +359,7 @@ describe("syncCollection — incremental writes", () => {
     // Recording before the write landed would mark items synced that Framer
     // never received, and the next run would skip them forever.
     const recorded: Array<[string, string]> = [];
-    const port = portWith(["a", "b", "c"], { failAdd: true });
+    const port = portWith([], { failAdd: true }); // empty, so nothing is adopted
     await expect(
       syncCollection(port, three, ["ru"], locales, {
         ...opts,
@@ -320,7 +371,7 @@ describe("syncCollection — incremental writes", () => {
   });
 
   it("reports the corpus size and the number actually written separately", async () => {
-    const known = await syncOnce(portWith(["a", "b", "c"]), new Map());
+    const known = await syncOnce(portWith([]), new Map());
     const res = await syncCollection(portWith(["a", "b", "c"]), three, ["ru"], locales, {
       ...opts,
       syncedHashes: known,
