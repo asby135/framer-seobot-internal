@@ -18,6 +18,7 @@ let buildGateHandlers: typeof import("./bootstrap.js").buildGateHandlers;
 let getDb: typeof import("../db/index.js").getDb;
 let publishIsOverdue: typeof import("./bootstrap.js").publishIsOverdue;
 let articlesPublishedSince: typeof import("./bootstrap.js").articlesPublishedSince;
+let articleUrl: typeof import("./bootstrap.js").articleUrl;
 
 beforeAll(async () => {
   // env.ts snapshots process.env at import time, so this must be set before
@@ -26,7 +27,7 @@ beforeAll(async () => {
   const dbMod = await import("../db/index.js");
   dbMod.initDb();
   getDb = dbMod.getDb;
-  ({ buildGateHandlers, publishIsOverdue, articlesPublishedSince } = await import(
+  ({ buildGateHandlers, publishIsOverdue, articlesPublishedSince, articleUrl } = await import(
     "./bootstrap.js"
   ));
 });
@@ -141,5 +142,12 @@ describe("articlesPublishedSince", () => {
 
     const found = articlesPublishedSince("2026-08-21T15:29:12.801Z");
     expect(found.map((a) => a.slug)).not.toContain("yesterday");
+  });
+});
+
+describe("articleUrl", () => {
+  it("falls back to the bare slug when SITE_URL is unset", () => {
+    // The tests run without SITE_URL set.
+    expect(articleUrl("some-slug")).toBe("/some-slug");
   });
 });

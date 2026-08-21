@@ -32,9 +32,12 @@ export const env = {
   FRAMER_API_KEY: process.env.FRAMER_API_KEY || "",
   FRAMER_PROJECT_URL: process.env.FRAMER_PROJECT_URL || "",
 
-  // Public site origin, e.g. https://true-leaders-745133.framer.app. Optional:
-  // used to turn a slug into a clickable link in the publish notification.
-  // Without it the notification shows the path alone.
+  // Where articles live publicly, INCLUDING the path prefix — for CRMChat that
+  // is https://crmchat.ai/blog, not the bare domain and not the framer.app
+  // preview URL. Articles resolve at <SITE_URL>/<slug>; crmchat.ai/<slug> is a
+  // 404 and /articles/<slug> 308s to /blog/<slug>.
+  //
+  // Optional: without it, notifications show the slug alone rather than a link.
   SITE_URL: process.env.SITE_URL || "",
   // The collection bound to the article CMS page. Syncing into any other
   // collection silently destroys every internal link — see framer-sync.ts.

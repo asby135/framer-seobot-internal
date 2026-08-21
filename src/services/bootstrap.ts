@@ -114,6 +114,18 @@ async function publishFramerSite(): Promise<void> {
 }
 
 /**
+ * The public URL of an article, or its bare slug when SITE_URL is unset.
+ *
+ * SITE_URL carries the path prefix (https://crmchat.ai/blog), because the slug
+ * alone does not resolve — crmchat.ai/<slug> is a 404 and /articles/<slug>
+ * 308s to /blog/<slug>.
+ */
+export function articleUrl(slug: string): string {
+  const base = env.SITE_URL.replace(/\/+$/, "");
+  return base ? `${base}/${slug}` : `/${slug}`;
+}
+
+/**
  * Which articles went live in this deploy.
  *
  * The deploy is armed by the first publish of a batch, so everything published
@@ -137,7 +149,6 @@ export function articlesPublishedSince(armedAt: string): Array<{ title: string; 
 /** Tell the operator the site is live, and with what. */
 async function announceSitePublished(armedAt: string | null): Promise<void> {
   const shipped = armedAt ? articlesPublishedSince(armedAt) : [];
-  const base = env.SITE_URL.replace(/\/$/, "");
 
   if (shipped.length === 0) {
     await sendMessage("🚀 <b>Site published</b>");
@@ -145,10 +156,9 @@ async function announceSitePublished(armedAt: string | null): Promise<void> {
   }
 
   const shown = shipped.slice(0, 10);
-  const lines = shown.map((a) => {
-    const where = base ? `${base}/${a.slug}` : `/${a.slug}`;
-    return `• ${escapeHtml(a.title)}\n  ${escapeHtml(where)}`;
-  });
+  const lines = shown.map(
+    (a) => `• ${escapeHtml(a.title)}\n  ${escapeHtml(articleUrl(a.slug))}`
+  );
   if (shipped.length > shown.length) {
     lines.push(`…and ${shipped.length - shown.length} more`);
   }
@@ -471,7 +481,7 @@ export async function sendArticleReadyDigest(articleId: string): Promise<void> {
     "",
     escapeHtml(article.summary ?? ""),
     "",
-    `<i>${words} words · /${escapeHtml(article.slug)}</i>`,
+    `<i>${words} words · ${escapeHtml(articleUrl(article.slug))}</i>`,
     flags.length > 0 ? `\n${flags.join("\n")}` : "",
   ]
     .filter((line) => line !== "")
