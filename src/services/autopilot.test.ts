@@ -38,6 +38,7 @@ function deps(over: Partial<AutopilotDeps> = {}): AutopilotDeps {
     poolThreshold: 10,
     articlesPerNight: () => 2,
     seed: vi.fn(async () => {}),
+    recordProposals: vi.fn(),
     getCovered: () => ["covered one"],
     sendTitleDigest: vi.fn(async () => 101),
     saveDigestMessageId: vi.fn(),
@@ -195,5 +196,46 @@ describe("runNightly — title variety", () => {
     const d = deps({ articlesPerNight: () => 3 });
     const proposals = await runNightly(d);
     expect(new Set(proposals.map((p) => p.title)).size).toBe(proposals.length);
+  });
+});
+
+describe("recording the proposed titles", () => {
+  it("records every proposal before the digest is sent", async () => {
+    // Approve All selects tonight's topics by proposed_title, and approving a
+    // title pins it as the article's headline. Both read a column that stopped
+    // being written when the topic-to-title conversion was removed: Approve All
+    // silently matched nothing, and generation invented its own title over the
+    // one the operator approved.
+    const order: string[] = [];
+    const pool = growingPool(20, 0);
+    const d = deps({
+      getPending: pool.getPending,
+      recordProposals: vi.fn(() => {
+        order.push("record");
+      }),
+      sendTitleDigest: vi.fn(async () => {
+        order.push("digest");
+        return 1;
+      }),
+    });
+    await runNightly(d);
+
+    expect(order).toEqual(["record", "digest"]);
+    const recorded = (d.recordProposals as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(recorded.length).toBeGreaterThan(0);
+    for (const p of recorded) expect(p.title).toBe(p.query);
+  });
+
+  it("records nothing on a dry run, which sends no digest to act on", async () => {
+    const pool = growingPool(20, 0);
+    const d = deps({ getPending: pool.getPending, dryRun: true });
+    await runNightly(d);
+    expect(d.recordProposals).not.toHaveBeenCalled();
+  });
+
+  it("records nothing when there was nothing to propose", async () => {
+    const d = deps({ getPending: () => [] });
+    await runNightly(d);
+    expect(d.recordProposals).not.toHaveBeenCalled();
   });
 });

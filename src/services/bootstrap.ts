@@ -579,6 +579,15 @@ export async function runNightlyJob(dryRun: boolean): Promise<TitleProposal[]> {
         },
         getCovered: () => getCoveredTopics(),
 
+        recordProposals: (proposals) => {
+          const stmt = getDb().prepare(
+            "UPDATE keywords SET proposed_title = ?, updated_at = datetime('now') WHERE id = ?"
+          );
+          getDb().transaction((rows: TitleProposal[]) => {
+            for (const p of rows) stmt.run(p.title, p.keywordId);
+          })(proposals);
+        },
+
         sendTitleDigest,
         saveDigestMessageId: (id) => setSetting("lastDigestMessageId", id),
 

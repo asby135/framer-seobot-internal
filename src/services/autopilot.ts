@@ -38,6 +38,16 @@ export interface AutopilotDeps {
   seed(req: SeedRequest): Promise<void>;
   getCovered(): string[];
 
+  /**
+   * Persist the headline shown at gate 1.
+   *
+   * Two things depend on it, and both broke silently when the topic-to-title
+   * conversion was removed and proposed_title stopped being written: Approve
+   * All finds tonight's topics by it, and approving pins it as the generated
+   * article's title.
+   */
+  recordProposals(proposals: TitleProposal[]): void;
+
   sendTitleDigest(proposals: TitleProposal[]): Promise<number>;
   saveDigestMessageId(messageId: number): void;
 
@@ -139,6 +149,10 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
     logger.info({ proposed: proposals.length }, "Dry run — digest not sent");
     return proposals;
   }
+
+  // Record before sending: the digest's buttons act on these rows, so a
+  // digest the operator can see but not act on is worse than no digest.
+  deps.recordProposals(proposals);
 
   const messageId = await deps.sendTitleDigest(proposals);
   deps.saveDigestMessageId(messageId);
