@@ -367,14 +367,21 @@ export function buildGateHandlers(): CallbackHandlers {
         .run(id);
     },
 
-    pendingProposedKeywordIds: () =>
-      (
+    /**
+     * The topics from the most recent digest that are still awaiting a
+     * decision. Approving one, rejecting it, or generating from it drops it out
+     * of the list, so Approve All stays idempotent under a double tap.
+     */
+    pendingProposedKeywordIds: () => {
+      const ids = getSetting<string[]>("lastDigestKeywordIds", []);
+      if (ids.length === 0) return [];
+      const placeholders = ids.map(() => "?").join(",");
+      return (
         db()
-          .prepare(
-            "SELECT id FROM keywords WHERE status = 'pending' AND proposed_title IS NOT NULL"
-          )
-          .all() as { id: string }[]
-      ).map((r) => r.id),
+          .prepare(`SELECT id FROM keywords WHERE id IN (${placeholders}) AND status = 'pending'`)
+          .all(...ids) as { id: string }[]
+      ).map((r) => r.id);
+    },
 
     reviewArticleIds: () =>
       (
@@ -586,6 +593,14 @@ export async function runNightlyJob(dryRun: boolean): Promise<TitleProposal[]> {
           getDb().transaction((rows: TitleProposal[]) => {
             for (const p of rows) stmt.run(p.title, p.keywordId);
           })(proposals);
+          // Scope Approve All to THIS digest. Matching on "pending with a
+          // proposed title" instead would grow: topics from earlier digests
+          // that were never approved or rejected accumulate, and one tap weeks
+          // later would approve a backlog the operator has forgotten, at cost.
+          setSetting(
+            "lastDigestKeywordIds",
+            proposals.map((p) => p.keywordId)
+          );
         },
 
         sendTitleDigest,

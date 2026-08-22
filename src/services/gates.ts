@@ -151,6 +151,15 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
     async onApproveAll() {
       const ids = deps.pendingProposedKeywordIds();
       logger.info({ count: ids.length }, "Approve-all requested");
+      // A bulk button that quietly does nothing reads as a broken bot. Say why:
+      // an empty list means every title in the digest has already been decided,
+      // or the digest predates the code that records them.
+      if (ids.length === 0) {
+        await deps.alert(
+          "Approve all: nothing left to approve in the latest digest. Either every title has already been approved or rejected, or this digest predates title recording — approve them individually."
+        );
+        return;
+      }
       for (const id of ids) {
         // Reuse the single-item path so the same idempotency and pinning rules
         // apply. A bulk button that took a different code path would drift.
@@ -161,6 +170,10 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
     async onPublishAll() {
       const ids = deps.reviewArticleIds();
       logger.info({ count: ids.length }, "Publish-all requested");
+      if (ids.length === 0) {
+        await deps.alert("Publish all: no articles are waiting in review.");
+        return;
+      }
       for (const id of ids) {
         await handlers.onPublish(id, 0);
       }

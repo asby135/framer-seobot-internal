@@ -192,3 +192,21 @@ describe("onDelete / onRegenerate", () => {
     expect(d.deleteArticle).not.toHaveBeenCalled();
   });
 });
+
+describe("bulk actions with nothing to act on", () => {
+  it("says so rather than silently doing nothing on approve-all", async () => {
+    // "Approve-all requested count: 0" and no other feedback reads as a broken
+    // bot — the operator taps again and gets the same silence.
+    const d = deps({ pendingProposedKeywordIds: () => [] });
+    const h = createGateHandlers(d);
+    await h.onApproveAll(0);
+    expect(d.alert).toHaveBeenCalledWith(expect.stringMatching(/nothing left to approve/i));
+  });
+
+  it("says so on publish-all too", async () => {
+    const d = deps({ reviewArticleIds: () => [] });
+    const h = createGateHandlers(d);
+    await h.onPublishAll(0);
+    expect(d.alert).toHaveBeenCalledWith(expect.stringMatching(/no articles are waiting/i));
+  });
+});
