@@ -17,7 +17,8 @@ import { join } from "node:path";
 let buildGateHandlers: typeof import("./bootstrap.js").buildGateHandlers;
 let getDb: typeof import("../db/index.js").getDb;
 let publishIsOverdue: typeof import("./bootstrap.js").publishIsOverdue;
-let articlesPublishedSince: typeof import("./bootstrap.js").articlesPublishedSince;
+let articlesAwaitingAnnouncement: typeof import("./bootstrap.js").articlesAwaitingAnnouncement;
+let markAnnounced: typeof import("./bootstrap.js").markAnnounced;
 let articleUrl: typeof import("./bootstrap.js").articleUrl;
 
 beforeAll(async () => {
@@ -27,9 +28,8 @@ beforeAll(async () => {
   const dbMod = await import("../db/index.js");
   dbMod.initDb();
   getDb = dbMod.getDb;
-  ({ buildGateHandlers, publishIsOverdue, articlesPublishedSince, articleUrl } = await import(
-    "./bootstrap.js"
-  ));
+  ({ buildGateHandlers, publishIsOverdue, articlesAwaitingAnnouncement, markAnnounced, articleUrl } =
+    await import("./bootstrap.js"));
 });
 
 beforeEach(() => {
@@ -117,31 +117,48 @@ describe("publishIsOverdue", () => {
   });
 });
 
-describe("articlesPublishedSince", () => {
-  it("matches rows despite the ISO / SQLite timestamp mismatch", () => {
-    // publishPendingSince is '2026-08-21T15:29:12.801Z'; published_at is
-    // '2026-08-21 16:29:14'. Compared as strings, 'T' sorts AFTER ' ', so every
-    // row from the same day reads as older than the cursor and the notification
-    // would silently list nothing.
-    const db = getDb();
-    db.prepare(
-      `INSERT INTO articles (id, keyword_id, title, slug, content, status, published_at)
-       VALUES ('a1', NULL, 'Shipped Today', 'shipped-today', '<p>x</p>', 'published', '2026-08-21 16:29:14')`
-    ).run();
-
-    const found = articlesPublishedSince("2026-08-21T15:29:12.801Z");
-    expect(found.map((a) => a.slug)).toContain("shipped-today");
+describe("articlesAwaitingAnnouncement", () => {
+  it("returns published articles that have not been announced", () => {
+    getDb()
+      .prepare(
+        `INSERT INTO articles (id, keyword_id, title, slug, content, status, published_at)
+         VALUES ('a1', NULL, 'Fresh', 'fresh', '<p>x</p>', 'published', '2026-08-24 16:29:14')`
+      )
+      .run();
+    expect(articlesAwaitingAnnouncement().map((a) => a.slug)).toContain("fresh");
   });
 
-  it("excludes articles published before the deploy was armed", () => {
+  it("does not return an article once it has been announced", () => {
     const db = getDb();
     db.prepare(
       `INSERT INTO articles (id, keyword_id, title, slug, content, status, published_at)
-       VALUES ('a2', NULL, 'Yesterday', 'yesterday', '<p>x</p>', 'published', '2026-08-20 09:00:00')`
+       VALUES ('a2', NULL, 'Told', 'told', '<p>x</p>', 'published', '2026-08-24 16:29:14')`
     ).run();
+    markAnnounced(["a2"]);
+    expect(articlesAwaitingAnnouncement().map((a) => a.slug)).not.toContain("told");
+  });
 
-    const found = articlesPublishedSince("2026-08-21T15:29:12.801Z");
-    expect(found.map((a) => a.slug)).not.toContain("yesterday");
+  it("re-offers an article that a previous deploy failed to announce", () => {
+    // The timestamp version could not do this: a deploy firing between two
+    // publishes moved the window past an article, and it was never mentioned
+    // again. The flag makes a miss self-healing.
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO articles (id, keyword_id, title, slug, content, status, published_at)
+       VALUES ('a3', NULL, 'Missed', 'missed', '<p>x</p>', 'published', '2026-08-20 09:00:00')`
+    ).run();
+    expect(articlesAwaitingAnnouncement().map((a) => a.slug)).toContain("missed");
+    expect(articlesAwaitingAnnouncement().map((a) => a.slug)).toContain("missed");
+  });
+
+  it("ignores articles that are not published", () => {
+    getDb()
+      .prepare(
+        `INSERT INTO articles (id, keyword_id, title, slug, content, status)
+         VALUES ('a4', NULL, 'Draft', 'draft-one', '<p>x</p>', 'review')`
+      )
+      .run();
+    expect(articlesAwaitingAnnouncement().map((a) => a.slug)).not.toContain("draft-one");
   });
 });
 

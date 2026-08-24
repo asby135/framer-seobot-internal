@@ -126,29 +126,43 @@ export function articleUrl(slug: string, siteUrl: string = env.SITE_URL): string
 }
 
 /**
- * Which articles went live in this deploy.
+ * Published articles the operator has not been told about yet.
  *
- * The deploy is armed by the first publish of a batch, so everything published
- * at or after that moment is what this build shipped.
+ * Derived from a per-article flag rather than "published since the deploy was
+ * armed". The timestamp version under-reported: a deploy that fires between
+ * two publishes resets the window, and anything on the wrong side of it was
+ * never mentioned again. A flag is self-healing — an article missed by one
+ * deploy is announced by the next instead of being lost.
  */
-export function articlesPublishedSince(armedAt: string): Array<{ title: string; slug: string }> {
-  // publishPendingSince is an ISO timestamp ('2026-08-21T15:29:12.801Z');
-  // published_at is SQLite's 'YYYY-MM-DD HH:MM:SS'. Comparing the two as
-  // strings silently matches NOTHING — 'T' sorts after ' ', so every row from
-  // the same day looks older than the cursor.
-  const since = armedAt.replace("T", " ").slice(0, 19);
+export function articlesAwaitingAnnouncement(): Array<{
+  id: string;
+  title: string;
+  slug: string;
+}> {
   return getDb()
     .prepare(
-      `SELECT title, slug FROM articles
-       WHERE status = 'published' AND published_at >= ?
+      `SELECT id, title, slug FROM articles
+       WHERE status = 'published' AND announced_at IS NULL
        ORDER BY published_at`
     )
-    .all(since) as Array<{ title: string; slug: string }>;
+    .all() as Array<{ id: string; title: string; slug: string }>;
+}
+
+/** Stamp articles as announced, once the message has actually been sent. */
+export function markAnnounced(ids: string[]): void {
+  if (ids.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare(
+    "UPDATE articles SET announced_at = datetime('now') WHERE id = ?"
+  );
+  db.transaction((rows: string[]) => {
+    for (const id of rows) stmt.run(id);
+  })(ids);
 }
 
 /** Tell the operator the site is live, and with what. */
-async function announceSitePublished(armedAt: string | null): Promise<void> {
-  const shipped = armedAt ? articlesPublishedSince(armedAt) : [];
+async function announceSitePublished(): Promise<void> {
+  const shipped = articlesAwaitingAnnouncement();
 
   if (shipped.length === 0) {
     await sendMessage("🚀 <b>Site published</b>");
@@ -166,16 +180,17 @@ async function announceSitePublished(armedAt: string | null): Promise<void> {
   await sendMessage(
     `🚀 <b>Site published</b> — ${shipped.length} article${shipped.length === 1 ? "" : "s"} live\n\n${lines.join("\n")}`
   );
+  // Stamped only after the send succeeds: a failed message must not silence
+  // these articles forever.
+  markAnnounced(shipped.map((a) => a.id));
 }
 
 const debouncer = createPublishDebouncer({
   delayMs: PUBLISH_DEBOUNCE_MS,
   publish: async () => {
-    // Read BEFORE publishing: the success path clears it.
-    const armedAt = getSetting<string | null>("publishPendingSince", null);
     await publishFramerSite();
     setSetting("publishPendingSince", null);
-    await announceSitePublished(armedAt);
+    await announceSitePublished();
   },
   onError: async (message) => {
     // Leave publishPendingSince set so the next boot retries rather than
@@ -400,6 +415,12 @@ export function buildGateHandlers(): CallbackHandlers {
 
     editMessage,
     alert,
+
+    // Plain, not alert(): an acknowledgement should not arrive wearing a
+    // warning triangle.
+    progress: async (message) => {
+      await sendMessage(escapeHtml(message));
+    },
   });
 }
 

@@ -37,9 +37,13 @@ export function initDb(): Database.Database {
   // genuine failure (locked DB, disk error, corruption) still throws — booting
   // against a half-migrated schema would surface as confusing "no such column"
   // errors at query time instead.
-  const addColumn = (sql: string) => {
+  const addColumn = (sql: string, onFirstAdd?: string) => {
     try {
       db.exec(sql);
+      // Runs ONLY when the ALTER actually succeeded, i.e. the first time this
+      // migration is applied. Putting a backfill outside this block would
+      // re-run it on every boot.
+      if (onFirstAdd) db.exec(onFirstAdd);
     } catch (e) {
       if (!String(e).includes("duplicate column name")) throw e;
       // Column already exists — migration already applied.
@@ -53,6 +57,13 @@ export function initDb(): Database.Database {
   addColumn("ALTER TABLE keywords ADD COLUMN bot_message_id INTEGER");
   addColumn("ALTER TABLE api_keys ADD COLUMN label TEXT NOT NULL DEFAULT 'default'");
   addColumn("ALTER TABLE api_keys ADD COLUMN last_used_at TEXT");
+  addColumn(
+    "ALTER TABLE articles ADD COLUMN announced_at TEXT",
+    // Everything already live has effectively been announced. Without this
+    // backfill the first deploy after the migration would announce the entire
+    // back catalogue.
+    "UPDATE articles SET announced_at = published_at WHERE status = 'published'"
+  );
 
   logger.info({ path: dbPath }, "Database initialized");
   return db;

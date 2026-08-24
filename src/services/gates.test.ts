@@ -21,6 +21,7 @@ function deps(over: Partial<GateDeps> = {}): GateDeps {
     saveProposedTitle: vi.fn(),
     editMessage: vi.fn(async () => {}),
     alert: vi.fn(async () => {}),
+    progress: vi.fn(async () => {}),
     ...over,
   };
 }
@@ -208,5 +209,58 @@ describe("bulk actions with nothing to act on", () => {
     const h = createGateHandlers(d);
     await h.onPublishAll(0);
     expect(d.alert).toHaveBeenCalledWith(expect.stringMatching(/no articles are waiting/i));
+  });
+});
+
+describe("acknowledging a tapped button", () => {
+  const msgs = (d: ReturnType<typeof deps>) =>
+    (d.progress as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+
+  it("says generation has started when a title is approved", async () => {
+    // Generation takes minutes. Without this the operator taps and sees nothing
+    // until the draft lands, which is indistinguishable from a dead button.
+    const d = deps();
+    await createGateHandlers(d).onApproveTitle("k1", 0);
+    expect(msgs(d).join(" ")).toMatch(/approved/i);
+  });
+
+  it("says nothing when the approval was a no-op", async () => {
+    const d = deps({ getKeyword: () => ({ id: "k1", query: "q", status: "approved", proposed_title: null }) });
+    await createGateHandlers(d).onApproveTitle("k1", 0);
+    expect(d.progress).not.toHaveBeenCalled();
+  });
+
+  it("sends ONE summary for approve-all, not one message per title", async () => {
+    const d = deps({ pendingProposedKeywordIds: () => ["k1", "k2", "k3"] });
+    await createGateHandlers(d).onApproveAll(0);
+    expect(msgs(d)).toHaveLength(1);
+    expect(msgs(d)[0]).toMatch(/3 titles/);
+  });
+
+  it("sends ONE summary for publish-all", async () => {
+    const d = deps({ reviewArticleIds: () => ["a1", "a2"] });
+    await createGateHandlers(d).onPublishAll(0);
+    expect(msgs(d)).toHaveLength(1);
+    expect(msgs(d)[0]).toMatch(/2 articles/);
+  });
+
+  it("reports the rerolled title, which previously only reached the log", async () => {
+    // A silent reroll changed what would be written, so the operator approved a
+    // headline they had never seen.
+    const d = deps({ proposeTitle: vi.fn(async () => "A Clearer Title") });
+    await createGateHandlers(d).onRerollTitle("k1", 0);
+    expect(msgs(d).join(" ")).toContain("A Clearer Title");
+  });
+
+  it("confirms a rejection", async () => {
+    const d = deps();
+    await createGateHandlers(d).onRejectTopic("k1", 0);
+    expect(msgs(d).join(" ")).toMatch(/rejected/i);
+  });
+
+  it("says the sync has started when publishing one article", async () => {
+    const d = deps();
+    await createGateHandlers(d).onPublish("a1", 0);
+    expect(msgs(d).join(" ")).toMatch(/publishing/i);
   });
 });
