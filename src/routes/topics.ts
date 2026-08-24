@@ -19,7 +19,7 @@ topics.get("/", (c) => {
 
   const rows = db
     .prepare(
-      `SELECT k.id, k.query, k.source, k.impressions, k.clicks, k.ctr, k.position,
+      `SELECT k.id, k.query, k.source, k.niche, k.impressions, k.clicks, k.ctr, k.position,
               k.search_volume, k.opportunity_score, k.status, k.created_at
        FROM keywords k
        ${whereClause}

@@ -187,6 +187,14 @@ export function TopicQueue() {
                     ◎ GAP
                   </span>
                 )}
+                {t.niche && (
+                  <span
+                    style={styles.nicheBadge}
+                    title="Seeding niche. Topics from a niche on probation are never selected automatically — approve them by hand."
+                  >
+                    {t.niche}
+                  </span>
+                )}
                 {t.opportunity_score?.toFixed(0)} pts
               </div>
             </div>
@@ -288,6 +296,14 @@ const styles: Record<string, React.CSSProperties> = {
   rowContent: { flex: 1, minWidth: 0 },
   query: { color: "#e0e0e0", fontWeight: 500, lineHeight: 1.35, overflowWrap: "anywhere" },
   meta: { color: "#888", fontSize: 12, marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
+  nicheBadge: {
+    fontSize: 10,
+    padding: "1px 5px",
+    borderRadius: 3,
+    background: "#2a2a35",
+    color: "#9a9aa8",
+    marginRight: 6,
+  },
   seedBadge: { background: "#3a2a5a", color: "#b9f", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   customBadge: { background: "#3a3a1a", color: "#fa0", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   gapBadge: { background: "#5a1a2a", color: "#f9a", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },

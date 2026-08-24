@@ -2,6 +2,8 @@ export interface Topic {
   id: string;
   query: string;
   source: string;
+  /** Seeding niche. Probationary niches are never picked automatically. */
+  niche?: string | null;
   impressions: number;
   clicks: number;
   ctr: number;
