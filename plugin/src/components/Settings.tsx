@@ -13,7 +13,7 @@ export function Settings({ onBack }: Props) {
   const [copied, setCopied] = useState(false);
   const [gen, setGen] = useState<GeneratorSettings | null>(null);
   const [genStatus, setGenStatus] = useState("");
-  const [openNiche, setOpenNiche] = useState<string | null>(null);
+  const [openNiche, setOpenNiche] = useState<number | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -38,6 +38,24 @@ export function Settings({ onBack }: Props) {
     if (!gen) return;
     const niches = gen.niches.map((n, i) => (i === index ? { ...n, ...patch } : n));
     setGen({ ...gen, niches });
+  }
+
+  function addNiche() {
+    if (!gen) return;
+    // New niches start on probation: an unproven audience should be seeded and
+    // read before it can generate unattended.
+    const niches = [
+      ...gen.niches,
+      { name: "", persona: "", subniches: [], kb_hints: [], probation: true },
+    ];
+    setGen({ ...gen, niches });
+    setOpenNiche(niches.length - 1);
+  }
+
+  function removeNiche(index: number) {
+    if (!gen) return;
+    setGen({ ...gen, niches: gen.niches.filter((_, i) => i !== index) });
+    setOpenNiche(null);
   }
 
   async function loadSettings() {
@@ -149,30 +167,47 @@ export function Settings({ onBack }: Props) {
           </p>
 
           {gen.niches.map((n, i) => (
-            <div key={n.name} style={styles.nicheRow}>
+            <div key={i} style={styles.nicheRow}>
               <div style={styles.nicheHead}>
                 <button
-                  onClick={() => setOpenNiche(openNiche === n.name ? null : n.name)}
+                  onClick={() => setOpenNiche(openNiche === i ? null : i)}
                   style={styles.nicheToggle}
                 >
-                  {openNiche === n.name ? "▾" : "▸"} {n.name}
+                  {openNiche === i ? "▾" : "▸"} {n.name || "(untitled niche)"}
+                  <span style={styles.nicheCount}> · {n.subniches.length}</span>
                 </button>
-                <label style={styles.probationLabel}>
-                  <input
-                    type="checkbox"
-                    checked={n.probation}
-                    onChange={(e) => updateNiche(i, { probation: e.target.checked })}
-                  />
-                  probation
-                </label>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <label style={styles.probationLabel}>
+                    <input
+                      type="checkbox"
+                      checked={n.probation}
+                      onChange={(e) => updateNiche(i, { probation: e.target.checked })}
+                    />
+                    probation
+                  </label>
+                  <button
+                    onClick={() => removeNiche(i)}
+                    style={styles.removeNiche}
+                    title="Remove this niche. Rotation is positional, so this shifts which slot the cursor points at."
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
-              {openNiche === n.name && (
+              {openNiche === i && (
                 <>
+              <input
+                value={n.name}
+                onChange={(e) => updateNiche(i, { name: e.target.value })}
+                style={styles.subnicheInput}
+                placeholder="Niche name, e.g. Telegram-oriented businesses"
+              />
               <textarea
                 value={n.persona}
                 onChange={(e) => updateNiche(i, { persona: e.target.value })}
-                style={styles.personaInput}
+                style={{ ...styles.personaInput, marginTop: 6 }}
                 rows={2}
+                placeholder="Who they are, in a sentence — this text searches the knowledge base, so a bare label retrieves noise"
               />
               <input
                 value={n.subniches.join(", ")}
@@ -184,10 +219,29 @@ export function Settings({ onBack }: Props) {
                 style={styles.subnicheInput}
                 placeholder="comma-separated subniches"
               />
+              <input
+                value={n.kb_hints.join(", ")}
+                onChange={(e) =>
+                  updateNiche(i, {
+                    kb_hints: e.target.value.split(",").map((x) => x.trim()).filter(Boolean),
+                  })
+                }
+                style={styles.subnicheInput}
+                placeholder="comma-separated KB filenames, e.g. industry-igaming.md"
+              />
                 </>
               )}
             </div>
           ))}
+
+          <button style={styles.addNiche} onClick={addNiche}>
+            + Add niche
+          </button>
+          <p style={styles.keyHint}>
+            Rotation is positional: adding or removing a niche changes which slot the cursor points
+            at. Coverage over a full cycle is unaffected. Appending to the end of a subniche list is
+            the least disruptive edit.
+          </p>
 
           <button style={styles.saveButton} onClick={() => saveGenerator({ niches: gen.niches })}>
             Save niches
@@ -225,5 +279,8 @@ const styles: Record<string, React.CSSProperties> = {
   probationLabel: { color: "#c99", fontSize: 11, display: "flex", alignItems: "center", gap: 4 },
   personaInput: { width: "100%", boxSizing: "border-box" as const, padding: "6px 8px", background: "#2a2a2a", color: "#ccc", border: "1px solid #444", borderRadius: 6, fontSize: 12, resize: "vertical" as const, fontFamily: "inherit" },
   subnicheInput: { width: "100%", boxSizing: "border-box" as const, marginTop: 6, padding: "6px 8px", background: "#2a2a2a", color: "#ccc", border: "1px solid #444", borderRadius: 6, fontSize: 12 },
+  nicheCount: { color: "#777", fontWeight: 400 },
+  removeNiche: { background: "none", border: "none", color: "#a55", fontSize: 13, cursor: "pointer", padding: "0 2px" },
+  addNiche: { padding: "6px 12px", background: "#2a2a2a", color: "#ccc", border: "1px dashed #555", borderRadius: 6, cursor: "pointer", fontSize: 12, marginBottom: 6, width: "100%" },
   saveButton: { padding: "8px 16px", background: "#2a4a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, marginTop: 4 },
 };
