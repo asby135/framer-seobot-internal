@@ -126,3 +126,54 @@ describe("probation filtering", () => {
     expect(needsTopUp(pool, 10)).toBe(false);
   });
 });
+
+describe("topics already offered at gate 1", () => {
+  const fresh = (id: string): PendingTopic => ({ id, query: `q-${id}`, source: "seeded" });
+  const offered = (id: string): PendingTopic => ({
+    id,
+    query: `q-${id}`,
+    source: "seeded",
+    proposedTitle: `q-${id}`,
+  });
+
+  it("does not re-offer a topic while unoffered ones remain", () => {
+    // The bug: a digest topic the operator neither approved nor rejected stays
+    // 'pending', so it was eligible again the next night — and the same handful
+    // of areas came round night after night while the rest of the queue was
+    // never proposed at all.
+    const pool = [offered("old1"), offered("old2"), fresh("new1"), fresh("new2")];
+    const picked = selectTopics(pool, 2, () => 0);
+    expect(picked.map((p) => p.id).sort()).toEqual(["new1", "new2"]);
+  });
+
+  it("falls back to previously offered topics rather than sending an empty digest", () => {
+    // Only when there is genuinely nothing new: silence tells the operator
+    // nothing, and they can still ignore a repeat.
+    const pool = [offered("old1"), offered("old2")];
+    expect(selectTopics(pool, 2, () => 0)).toHaveLength(2);
+  });
+
+  it("tops the night up from offered topics once the fresh ones run out", () => {
+    const pool = [fresh("new1"), offered("old1"), offered("old2")];
+    const picked = selectTopics(pool, 3, () => 0);
+    expect(picked).toHaveLength(3);
+    expect(picked[0].id).toBe("new1");
+  });
+
+  it("counts an already-offered topic as spent, not as runway", () => {
+    // This is what froze the pipeline: 41 offered-but-unactioned topics read as
+    // a full pool, so the seeder never ran and the rotation cursor never moved.
+    const pool = Array.from({ length: 41 }, (_, i) => offered(String(i)));
+    expect(needsTopUp(pool, 10)).toBe(true);
+  });
+
+  it("still counts unoffered probationary topics as runway", () => {
+    // Unchanged: excluding them here made the pool never look full and seeding
+    // fire every night forever.
+    const pool = Array.from({ length: 12 }, (_, i) => ({
+      ...fresh(String(i)),
+      niche: "Online currency exchanges",
+    }));
+    expect(needsTopUp(pool, 10)).toBe(false);
+  });
+});

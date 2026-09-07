@@ -588,10 +588,23 @@ export async function runNightlyJob(dryRun: boolean): Promise<TitleProposal[]> {
         getCursor: () => getSetting("rotationCursor", 0),
         setCursor: (c) => setSetting("rotationCursor", c),
 
+        // proposed_title comes along because selection needs to know which of
+        // these have already been through a digest — gate 1 leaves them
+        // 'pending', so the column is the only record that they were offered.
         getPending: () =>
-          getDb()
-            .prepare("SELECT id, query, source, niche FROM keywords WHERE status = 'pending'")
-            .all() as Array<{ id: string; query: string; source: string; niche: string | null }>,
+          (
+            getDb()
+              .prepare(
+                "SELECT id, query, source, niche, proposed_title FROM keywords WHERE status = 'pending'"
+              )
+              .all() as Array<{
+              id: string;
+              query: string;
+              source: string;
+              niche: string | null;
+              proposed_title: string | null;
+            }>
+          ).map((r) => ({ ...r, proposedTitle: r.proposed_title })),
         poolThreshold: getSetting("poolThreshold", 10),
         articlesPerNight: () =>
           randomInt(getSetting("minPerNight", 5), getSetting("maxPerNight", 10)),
