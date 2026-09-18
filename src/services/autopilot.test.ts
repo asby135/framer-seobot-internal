@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { runNightly, type AutopilotDeps } from "./autopilot.js";
+import { runNightly, SEED_BATCH_SIZE, MAX_SEEDS_PER_RUN, type AutopilotDeps } from "./autopilot.js";
 import { DEFAULT_NICHES } from "./taxonomy.js";
 
 const topic = (id: string) => ({ id, query: `q-${id}`, source: "seeded" });
@@ -9,8 +9,8 @@ const topic = (id: string) => ({ id, query: `q-${id}`, source: "seeded" });
  *
  * The top-up loop re-reads the pool between seeds, so a fake returning a fixed
  * array models a seeder that inserts nothing — the loop would then run to its
- * cap on every test. Reality is that a seed adds ~10 topics, and these fakes
- * have to say so.
+ * cap on every test. Reality is that a seed adds a handful of topics, and these
+ * fakes have to say so.
  */
 function growingPool(start: number, perSeed: number, niche?: string) {
   let n = start;
@@ -85,7 +85,28 @@ describe("runNightly", () => {
     const pool = growingPool(1, 0);
     const d = deps({ getPending: pool.getPending, seed: vi.fn(async () => pool.onSeed()) });
     await runNightly(d);
-    expect(d.seed).toHaveBeenCalledTimes(3);
+    expect(d.seed).toHaveBeenCalledTimes(MAX_SEEDS_PER_RUN);
+  });
+
+  it("asks each slot for a small batch, so a night's pool spans several niches", async () => {
+    // Ten titles from one slot are ten siblings: one subniche, one article
+    // type. Filling the pool from three slots of ten made every digest read as
+    // two or three subjects. Small batches from more slots is the same number
+    // of topics drawn from more places.
+    const pool = growingPool(0, SEED_BATCH_SIZE);
+    const d = deps({ getPending: pool.getPending, seed: vi.fn(async () => pool.onSeed()) });
+    await runNightly(d);
+    const calls = (d.seed as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(calls.every((c) => c.count === SEED_BATCH_SIZE)).toBe(true);
+    expect(calls).toHaveLength(Math.ceil(10 / SEED_BATCH_SIZE));
+    expect(new Set(calls.map((c) => c.niche)).size).toBe(calls.length);
+  });
+
+  it("can refill the largest night the settings allow in a single run", () => {
+    // maxPerNight is capped at 20 (routes/settings.ts). If one run could seed
+    // fewer topics than one night can consume, the pool would shrink every
+    // night until the digest ran short.
+    expect(SEED_BATCH_SIZE * MAX_SEEDS_PER_RUN).toBeGreaterThanOrEqual(20);
   });
 
   it("does not seed when the pool is deep enough", async () => {

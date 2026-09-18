@@ -13,6 +13,7 @@ import { createPublishDebouncer } from "./publish-debounce.js";
 import { createRunner, type Runner } from "./scheduler.js";
 import { createGateHandlers, type KeywordRow, type ArticleRow } from "./gates.js";
 import { runNightly, type TitleProposal } from "./autopilot.js";
+import { poolTarget } from "./selection.js";
 import { buildDigest, buildKeyboard, sendMessage, sendDocument, editMessage, alert, escapeHtml } from "./notify.js";
 import { setArticleReadyHandler } from "./queue.js";
 import type { CallbackHandlers } from "../routes/telegram.js";
@@ -605,12 +606,12 @@ export async function runNightlyJob(dryRun: boolean): Promise<TitleProposal[]> {
               proposed_title: string | null;
             }>
           ).map((r) => ({ ...r, proposedTitle: r.proposed_title })),
-        poolThreshold: getSetting("poolThreshold", 10),
+        poolThreshold: poolTarget(getSetting("poolThreshold", 10), getSetting("maxPerNight", 10)),
         articlesPerNight: () =>
           randomInt(getSetting("minPerNight", 5), getSetting("maxPerNight", 10)),
 
         seed: async (req) => {
-          await seedTopics(`${req.persona}`, 10, {
+          await seedTopics(`${req.persona}`, req.count, {
             niche: req.niche,
             subniche: req.subniche,
             angle: req.angle,

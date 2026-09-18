@@ -34,6 +34,9 @@ research.post("/seed", async (c) => {
         seeded: result.seeded.length,
         revived: result.revived,
         skipped: result.skipped,
+        // Named, not just counted: the operator supplied these titles by hand,
+        // and "1 skipped" does not tell them which, or what it collided with.
+        near_duplicates: result.nearDuplicates,
         topics: result.seeded,
       });
     } catch (e) {

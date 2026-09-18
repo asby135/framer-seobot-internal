@@ -3,9 +3,11 @@
  *
  * Rotation walks all three levels so the seeder never revisits the same ground
  * until it has exhausted the space. With 8 niches × ~6 subniches × 5 angles the
- * pipeline has ~240 slots, or roughly a year of non-repeating topics at 10
- * topics per seed and 5-10 articles a night. A flat niche-only rotation would
- * cycle in about a month.
+ * pipeline has ~240 slots. At 4 topics per seed (autopilot.ts SEED_BATCH_SIZE)
+ * and 5-10 articles a night that is two seeds a night, so a full cycle takes
+ * about four months before any slot is asked a second time — and when it is,
+ * the covered list and the near-duplicate guard keep it off its earlier ground.
+ * A flat niche-only rotation would cycle in under a week.
  *
  * Everything here is pure — no DB, no network — so the rotation logic is
  * verifiable without standing anything up.

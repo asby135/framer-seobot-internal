@@ -4,6 +4,7 @@ import { getDb } from "../db/index.js";
 import { searchKB, getKBArticle } from "./kb.js";
 import { ANGLE_GUIDANCE } from "./taxonomy.js";
 import { TITLE_RULES, TITLE_SHAPE_BY_ANGLE } from "./title-rules.js";
+import { createTitleIndex } from "./similarity.js";
 import { isPureCompetitorTopic } from "../lib/competitors.js";
 import { queryToSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
@@ -224,12 +225,23 @@ export async function seedTopics(
  *    leaving it stuck (the DELETE endpoint can't clear rejected rows) and avoids
  *    inserting a duplicate query row.
  *  - A query matching an existing article slug → skip (already written).
+ *  - A query that is a REWORDING of any existing topic or article title → skip.
+ *    The checks above are exact, and the seeder prompt only lists the most
+ *    recent ~90 topics and titles, so without this a reworded repeat of anything
+ *    older went straight through. Checked against the whole corpus, every
+ *    status: a rewording of a rejected topic is no more wanted than the original.
  *  - Otherwise → insert new.
  */
 export function insertSeededTopics(
   candidates: string[],
   niche?: string
-): { seeded: Array<{ query: string }>; skipped: number; revived: number } {
+): {
+  seeded: Array<{ query: string }>;
+  skipped: number;
+  revived: number;
+  /** Candidates refused as rewordings, with the title each one collided with. */
+  nearDuplicates: Array<{ query: string; matched: string }>;
+} {
   const db = getDb();
   const SEEDED_SCORE = 50;
 
@@ -248,6 +260,18 @@ export function insertSeededTopics(
       (r) => r.slug
     )
   );
+
+  // generation_failed rows carry the topic as their title, but no article was
+  // written — that ground is still open, so they are left out.
+  const corpus = createTitleIndex([
+    ...(db.prepare("SELECT query FROM keywords").all() as { query: string }[]).map((r) => r.query),
+    ...(
+      db.prepare("SELECT title FROM articles WHERE status != 'generation_failed'").all() as {
+        title: string;
+      }[]
+    ).map((r) => r.title),
+  ]);
+  const nearDuplicates: Array<{ query: string; matched: string }> = [];
 
   const toInsert: string[] = [];
   const toRevive: string[] = []; // keyword ids
@@ -280,8 +304,23 @@ export function insertSeededTopics(
       continue;
     }
 
+    // After the exact-match branch on purpose: an exact match scores 1.0 here
+    // and would otherwise swallow the revive path above.
+    const matched = corpus.match(query);
+    if (matched) {
+      nearDuplicates.push({ query, matched });
+      skipped++;
+      continue;
+    }
+    // So two rewordings of one task inside this batch do not both get in.
+    corpus.add(query);
+
     toInsert.push(query);
     seededQueries.push(query);
+  }
+
+  if (nearDuplicates.length > 0) {
+    logger.info({ nearDuplicates }, "Seeder: skipped rewordings of existing topics or articles");
   }
 
   const insertStmt = db.prepare(
@@ -305,6 +344,7 @@ export function insertSeededTopics(
     seeded: seededQueries.map((query) => ({ query })),
     skipped,
     revived: toRevive.length,
+    nearDuplicates,
   };
 }
 

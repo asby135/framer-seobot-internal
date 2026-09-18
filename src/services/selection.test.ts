@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { selectTopics, needsTopUp, usableTopics, type PendingTopic } from "./selection.js";
+import { selectTopics, needsTopUp, usableTopics, poolTarget, type PendingTopic } from "./selection.js";
 
 const t = (id: string, source: string): PendingTopic => ({ id, query: `q-${id}`, source });
 
@@ -175,5 +175,96 @@ describe("topics already offered at gate 1", () => {
       niche: "Online currency exchanges",
     }));
     expect(needsTopUp(pool, 10)).toBe(false);
+  });
+});
+
+describe("spreading a night across niches", () => {
+  const inNiche = (id: string, niche: string | null): PendingTopic => ({
+    id, query: `q-${id}`, source: "seeded", niche,
+  });
+  /** Deterministic but non-constant, so a lopsided draw would show up. */
+  const lcg = (seed = 7) => () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+
+  it("takes one topic from every niche before taking a second from any", () => {
+    // The bug: one seed writes ten sibling titles for a single subniche, and a
+    // uniform draw from a pool dominated by the latest seed put three of them
+    // in one digest — three takes on "move fans to Telegram" in one night.
+    const pool = [
+      ...Array.from({ length: 10 }, (_, i) => inNiche(`a${i}`, "Creator")),
+      inNiche("b0", "Web3"),
+      inNiche("c0", "iGaming"),
+      inNiche("d0", "Media buying"),
+    ];
+    for (let seed = 1; seed <= 25; seed++) {
+      const niches = selectTopics(pool, 4, lcg(seed)).map((t) => t.niche);
+      expect(new Set(niches).size).toBe(4);
+    }
+  });
+
+  it("keeps the counts per niche within one of each other", () => {
+    const pool = ["A", "B", "C"].flatMap((n) =>
+      Array.from({ length: 10 }, (_, i) => inNiche(`${n}${i}`, n))
+    );
+    const counts: Record<string, number> = {};
+    for (const t of selectTopics(pool, 8, lcg())) counts[t.niche!] = (counts[t.niche!] ?? 0) + 1;
+    expect(Object.values(counts).sort()).toEqual([2, 3, 3]);
+  });
+
+  it("goes back to a niche for more once the others are exhausted", () => {
+    const pool = [inNiche("a0", "A"), inNiche("a1", "A"), inNiche("a2", "A"), inNiche("b0", "B")];
+    expect(selectTopics(pool, 4, lcg())).toHaveLength(4);
+  });
+
+  it("treats topics with no niche as one group of their own", () => {
+    // Hand-entered and legacy rows: they must neither crowd out the niches nor
+    // be starved by them.
+    const pool = [
+      ...Array.from({ length: 6 }, (_, i) => inNiche(`n${i}`, null)),
+      inNiche("a0", "A"),
+      inNiche("b0", "B"),
+    ];
+    const picked = selectTopics(pool, 3, lcg());
+    expect(new Set(picked.map((t) => t.niche ?? "none")).size).toBe(3);
+  });
+
+  it("does not always lead with the same niche", () => {
+    // Which niche gets the odd extra slot must rotate, or the first niche in
+    // the pool is quietly favoured every night.
+    const pool = ["A", "B", "C"].flatMap((n) =>
+      Array.from({ length: 5 }, (_, i) => inNiche(`${n}${i}`, n))
+    );
+    const firsts = new Set<string>();
+    for (let seed = 1; seed <= 40; seed++) firsts.add(selectTopics(pool, 1, lcg(seed))[0].niche!);
+    expect(firsts.size).toBe(3);
+  });
+
+  it("spreads unoffered topics first, and only then falls back to offered ones", () => {
+    const pool = [
+      inNiche("new-a", "A"),
+      { ...inNiche("old-b", "B"), proposedTitle: "x" },
+      { ...inNiche("old-c", "C"), proposedTitle: "y" },
+    ];
+    const picked = selectTopics(pool, 2, lcg());
+    expect(picked[0].id).toBe("new-a");
+    expect(picked).toHaveLength(2);
+  });
+});
+
+describe("poolTarget", () => {
+  it("keeps the pool at least two of the largest nights deep", () => {
+    // A pool only as deep as one night holds two or three seeds' worth, so a
+    // night drawn from it covers two or three niches however it is dealt.
+    // Simulated over 600 nights at 4 topics per seed: a pool of 10 gave ~4
+    // niches a night with up to 4 articles from one subniche; a pool of 20 gave
+    // ~7 niches with never more than 2.
+    expect(poolTarget(10, 10)).toBe(20);
+  });
+
+  it("respects a configured threshold that is already deeper", () => {
+    expect(poolTarget(50, 10)).toBe(50);
+  });
+
+  it("follows maxPerNight when the operator raises it", () => {
+    expect(poolTarget(10, 20)).toBe(40);
   });
 });

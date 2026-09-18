@@ -53,13 +53,47 @@ export function usableTopics(
   );
 }
 
-/** Draw up to `count` distinct items at random, consuming `pool`. */
-function draw(pool: PendingTopic[], count: number, rng: () => number): PendingTopic[] {
+/** Remove and return one item at random. `items` must be non-empty. */
+function take<T>(items: T[], rng: () => number): T {
+  // Clamp: an rng returning exactly 1 would otherwise index out of bounds.
+  const i = Math.min(items.length - 1, Math.floor(rng() * items.length));
+  return items.splice(i, 1)[0];
+}
+
+/**
+ * Draw up to `count` distinct topics, dealt round-robin across niches.
+ *
+ * Each lap visits every niche that still has topics once, in a fresh random
+ * order, taking one random topic from it. So no niche gets a second topic until
+ * every niche has had a first, and which niche gets the odd extra slot changes
+ * from night to night instead of favouring whichever sorts first.
+ *
+ * A uniform draw was not enough. One seed writes a batch of sibling titles for
+ * a single subniche, and the unoffered pool is dominated by the latest seed or
+ * two — so a uniform draw put three takes on one subject in a single digest
+ * while the blog as a whole looked balanced.
+ *
+ * Topics with no niche (hand-entered, or predating the column) form one group
+ * of their own: they neither crowd out the niches nor get starved by them.
+ */
+function drawSpread(pool: PendingTopic[], count: number, rng: () => number): PendingTopic[] {
+  const byNiche = new Map<string, PendingTopic[]>();
+  for (const t of pool) {
+    const key = t.niche ?? "";
+    const group = byNiche.get(key);
+    if (group) group.push(t);
+    else byNiche.set(key, [t]);
+  }
+
   const picked: PendingTopic[] = [];
-  while (picked.length < count && pool.length > 0) {
-    // Clamp: an rng returning exactly 1 would otherwise index out of bounds.
-    const i = Math.min(pool.length - 1, Math.floor(rng() * pool.length));
-    picked.push(pool.splice(i, 1)[0]);
+  while (picked.length < count && byNiche.size > 0) {
+    const lap = [...byNiche.keys()];
+    while (picked.length < count && lap.length > 0) {
+      const key = take(lap, rng);
+      const group = byNiche.get(key)!;
+      picked.push(take(group, rng));
+      if (group.length === 0) byNiche.delete(key);
+    }
   }
   return picked;
 }
@@ -69,8 +103,9 @@ function draw(pool: PendingTopic[], count: number, rng: () => number): PendingTo
  * operator has not already been shown.
  *
  * Random rather than scored: with Era gone every seeded topic carries the same
- * neutral opportunity_score, so ranking would be meaningless. Randomness also
- * spreads output across niches within a night.
+ * neutral opportunity_score, so ranking would be meaningless. The draw is dealt
+ * round-robin across niches — see drawSpread — because randomness alone did
+ * not spread a night: it follows the pool, and the pool is lumpy.
  *
  * The unoffered-first rule is not a nicety. Gate 1 leaves a topic `pending`, so
  * without it every night re-sampled the whole standing queue: topics nobody had
@@ -91,8 +126,8 @@ export function selectTopics(
   const unoffered = pool.filter((t) => !alreadyOffered(t));
   const offered = pool.filter(alreadyOffered);
 
-  const picked = draw(unoffered, count, rng);
-  if (picked.length < count) picked.push(...draw(offered, count - picked.length, rng));
+  const picked = drawSpread(unoffered, count, rng);
+  if (picked.length < count) picked.push(...drawSpread(offered, count - picked.length, rng));
   return picked;
 }
 
@@ -115,4 +150,18 @@ export function selectTopics(
  */
 export function needsTopUp(topics: PendingTopic[], threshold: number): boolean {
   return usableTopics(topics).filter((t) => !alreadyOffered(t)).length < threshold;
+}
+
+/**
+ * How many unoffered topics the top-up should maintain.
+ *
+ * The configured threshold, but never less than two of the largest nights. The
+ * floor is about variety, not about running dry: a night can only be as varied
+ * as the pool it is dealt from, and a pool one night deep holds two or three
+ * seeds — two or three niches — no matter how fairly selectTopics deals it.
+ * Two nights deep, the pool carries leftovers from enough earlier slots that a
+ * night reaches most of the taxonomy.
+ */
+export function poolTarget(configuredThreshold: number, maxPerNight: number): number {
+  return Math.max(configuredThreshold, 2 * maxPerNight);
 }

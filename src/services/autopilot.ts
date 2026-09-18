@@ -17,6 +17,8 @@ export interface SeedRequest {
   angle: string;
   kbHints: string[];
   covered: string[];
+  /** How many titles to ask this slot for. */
+  count: number;
 }
 
 export interface TitleProposal {
@@ -68,10 +70,27 @@ export interface AutopilotDeps {
  * agreed to.
  */
 /**
- * How many rotation slots one run may seed. Three keeps a night's pool spanning
- * several niches without letting a stuck seeder loop.
+ * How many titles one rotation slot is asked for.
+ *
+ * Small on purpose. A slot is one (niche, subniche, article type), so its
+ * titles are siblings — ten of them is ten takes on one corner of one audience,
+ * and the pool a night draws from is mostly the latest seeds. At ten per slot a
+ * digest read as two or three subjects ("move fans to Telegram" three times in
+ * one night) even while the blog as a whole was balanced. Four per slot fills
+ * the same pool from more than twice as many places.
+ *
+ * The cost is a shorter rotation runway per slot visit, which is fine: the
+ * slot comes round again, and the covered list plus the near-duplicate guard
+ * in insertSeededTopics keep the second visit off the first one's ground.
  */
-const MAX_SEEDS_PER_RUN = 3;
+export const SEED_BATCH_SIZE = 4;
+
+/**
+ * How many rotation slots one run may seed. Bounded so a seeder returning
+ * nothing (every candidate a duplicate) cannot spin; sized so that one run can
+ * still refill the largest night the settings allow (20 articles).
+ */
+export const MAX_SEEDS_PER_RUN = 6;
 
 export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> {
   // 1. Top up. Measured against USABLE topics only: a pool full of excluded
@@ -116,6 +135,7 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
       angle: slot.angle,
       kbHints: slot.niche.kb_hints,
       covered: deps.getCovered(),
+      count: SEED_BATCH_SIZE,
     });
     deps.setCursor(slot.cursor);
     seeds++;

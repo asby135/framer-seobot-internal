@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { runNightlyOnce } from "../services/bootstrap.js";
 import { getSetting } from "../services/settings.js";
 import { logger } from "../lib/logger.js";
+import { poolTarget } from "../services/selection.js";
 
 /**
  * Manual trigger for the nightly run.
@@ -66,6 +67,8 @@ autopilot.get("/status", (c) => {
     minPerNight: getSetting("minPerNight", 5),
     maxPerNight: getSetting("maxPerNight", 10),
     poolThreshold: getSetting("poolThreshold", 10),
+    // What the top-up actually maintains — the threshold, floored at two nights.
+    poolTarget: poolTarget(getSetting("poolThreshold", 10), getSetting("maxPerNight", 10)),
     autopilotEnabled: process.env.AUTOPILOT_ENABLED === "1",
     schedulerDryRun: process.env.SCHEDULER_DRY_RUN === "1",
     telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID),
