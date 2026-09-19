@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { syncCollection, previewSync, type CollectionPort, type CollectionItem } from "./framer-sync.js";
+import { syncCollection, previewSync, withFreshSessionRetry, type CollectionPort, type CollectionItem } from "./framer-sync.js";
 
 /**
  * Integration-shaped tests for the destructive path.
@@ -357,5 +357,97 @@ describe("syncCollection — incremental writes", () => {
     });
     expect(res.synced).toBe(3);
     expect(res.written).toBe(0);
+  });
+});
+
+describe("syncCollection — Framer's session not being ready is not the item's fault", () => {
+  // Seen in production 2026-09-18/19: every publish failed on its first write
+  // with this message, a DIFFERENT article each time, while a manual publish in
+  // the Framer editor went through. Framer raises it when its hosted session
+  // for the project has not finished loading the project's code modules — so
+  // it says nothing about the item, and waiting is the fix.
+  const NOT_READY = "ensureComponentsInLoader: Modules store not ready in time.";
+
+  function flakyPort(failures: number, message = NOT_READY) {
+    const port = fakePort([]);
+    let left = failures;
+    port.addItems = async (items) => {
+      port.calls.push(`addItems(${items.length})`);
+      if (left-- > 0) throw new Error(message);
+    };
+    return port;
+  }
+  const sleeps: number[] = [];
+  const retryOpts = () => {
+    sleeps.length = 0;
+    return { ...opts, sleep: async (ms: number) => void sleeps.push(ms) };
+  };
+
+  it("waits and retries on the same connection, and the sync succeeds", async () => {
+    const port = flakyPort(2);
+    const recorded: string[] = [];
+    const result = await syncCollection(port, [item("a")], ["ru"], locales, {
+      ...retryOpts(),
+      recordSynced: (entries) => recorded.push(...entries.map((e) => e[0])),
+    });
+    expect(port.calls.filter((c) => c.startsWith("addItems"))).toHaveLength(3);
+    expect(sleeps).toHaveLength(2);
+    expect(sleeps[1]).toBeGreaterThan(sleeps[0]); // backs off
+    expect(recorded).toEqual(["a"]);
+    expect(result.synced).toBe(1);
+  });
+
+  it("gives up after a bounded number of attempts and says it is Framer, not the item", async () => {
+    const port = flakyPort(99);
+    await expect(syncCollection(port, [item("a")], ["ru"], locales, retryOpts())).rejects.toThrow(
+      /Framer's session.*not ready/i
+    );
+    expect(port.calls.filter((c) => c.startsWith("addItems"))).toHaveLength(4);
+  });
+
+  it("does not split a batch into single items over it", async () => {
+    // Isolation exists to name a bad ITEM. This error is about the session, so
+    // splitting five items would only multiply the waiting by five.
+    const port = flakyPort(99);
+    const payload = ["a", "b", "c"].map(item);
+    await expect(syncCollection(port, payload, ["ru"], locales, retryOpts())).rejects.toThrow();
+    expect(port.calls.filter((c) => c.startsWith("addItems"))).toEqual(
+      Array(4).fill("addItems(3)")
+    );
+  });
+
+  it("does not retry an error that IS about the item", async () => {
+    const port = flakyPort(99, "Duplicate slug");
+    await expect(syncCollection(port, [item("a")], ["ru"], locales, retryOpts())).rejects.toThrow(
+      "Duplicate slug"
+    );
+    expect(port.calls.filter((c) => c.startsWith("addItems"))).toHaveLength(1);
+    expect(sleeps).toHaveLength(0);
+  });
+});
+
+describe("withFreshSessionRetry — when Framer says a new session would work", () => {
+  // framer-api marks some errors `retryable`: the server's own statement that
+  // the session crashed, closed or was recycled and that re-issuing on a fresh
+  // one is expected to succeed. Distinct from "not ready", which is waited out
+  // on the SAME connection.
+  const retryable = Object.assign(new Error("session recycled"), { retryable: true });
+
+  it("runs the whole sync again on a fresh session, once", async () => {
+    const run = vi.fn().mockRejectedValueOnce(retryable).mockResolvedValueOnce("ok");
+    await expect(withFreshSessionRetry(run, (e) => (e as { retryable?: boolean }).retryable === true)).resolves.toBe("ok");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not loop: a second retryable failure is final", async () => {
+    const run = vi.fn().mockRejectedValue(retryable);
+    await expect(withFreshSessionRetry(run, () => true)).rejects.toThrow("session recycled");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves every other error alone", async () => {
+    const run = vi.fn().mockRejectedValue(new Error("would remove 308 items"));
+    await expect(withFreshSessionRetry(run, () => false)).rejects.toThrow(/308/);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 });

@@ -264,3 +264,43 @@ describe("acknowledging a tapped button", () => {
     expect(msgs(d).join(" ")).toMatch(/publishing/i);
   });
 });
+
+describe("Publish-all when Framer is refusing writes", () => {
+  it("stops at the first failed sync instead of failing every article in turn", async () => {
+    // 27 articles were queued when Framer's session would not load; each one
+    // waited out the full timeout, failed, was rolled back and alerted on. The
+    // cause is not per-article, so the rest are left in review untouched.
+    const ids = ["a1", "a2", "a3", "a4"];
+    const d = deps({
+      reviewArticleIds: vi.fn(() => ids),
+      syncToFramer: vi
+        .fn()
+        .mockResolvedValueOnce({ synced: 1, removed: 0, withLocales: true })
+        .mockRejectedValueOnce(new Error("Framer's session was not ready")),
+    });
+    await createGateHandlers(d).onPublishAll(0);
+
+    expect(d.publishArticle).toHaveBeenCalledTimes(2); // a1 went out, a2 failed, a3/a4 untouched
+    expect(d.unpublishArticle).toHaveBeenCalledTimes(1);
+    const alerts = (d.alert as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+    expect(alerts.some((m) => /1 of 4/.test(m) && /still in review/i.test(m))).toBe(true);
+  });
+
+  it("still deploys what did get through", async () => {
+    const d = deps({
+      reviewArticleIds: vi.fn(() => ["a1", "a2"]),
+      syncToFramer: vi
+        .fn()
+        .mockResolvedValueOnce({ synced: 1, removed: 0, withLocales: true })
+        .mockRejectedValueOnce(new Error("nope")),
+    });
+    await createGateHandlers(d).onPublishAll(0);
+    expect(d.schedulePublish).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes everything when nothing fails", async () => {
+    const d = deps({ reviewArticleIds: vi.fn(() => ["a1", "a2", "a3"]) });
+    await createGateHandlers(d).onPublishAll(0);
+    expect(d.publishArticle).toHaveBeenCalledTimes(3);
+  });
+});

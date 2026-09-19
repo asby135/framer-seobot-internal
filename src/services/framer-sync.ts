@@ -1,4 +1,4 @@
-import { connect } from "framer-api";
+import { connect, isRetryableError } from "framer-api";
 import { getDb } from "../db/index.js";
 import { getSetting } from "./settings.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
@@ -380,6 +380,47 @@ export interface SyncOptions {
   recordSynced?: (entries: Array<[string, string]>) => void;
   /** Rewrite every item regardless of fingerprint. */
   force?: boolean;
+  /** Injected so the retry waits are instant under test. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Waits between attempts when Framer's session is not ready. Three retries,
+ * four attempts in all.
+ *
+ * Framer holds each failing call for ~50s before giving up, so the worst case
+ * is about five minutes — long, but it runs behind a Telegram button that has
+ * already been acknowledged, and the alternative was a publish that failed
+ * outright and had to be re-tapped by hand.
+ */
+const SESSION_RETRY_DELAYS_MS = [15_000, 30_000, 60_000];
+
+/**
+ * Framer's hosted session for the project has not finished loading the
+ * project's code modules.
+ *
+ * Raised by Framer, not by us or the client package, as
+ * "ensureComponentsInLoader: Modules store not ready in time." (its sibling in
+ * Framer's own publish flow is "Component loader not updated in time"). It is a
+ * property of the SESSION: in production it failed a different article on every
+ * attempt, each the only item being written, while the project published fine
+ * from the editor. Framer keeps an instance warm once started, so the fix is to
+ * wait and ask again on the same connection.
+ */
+export function isSessionNotReady(e: unknown): boolean {
+  const message = e instanceof Error ? e.message : "";
+  return /ensureComponentsInLoader|not (ready|updated) in time/i.test(message);
+}
+
+/** Thrown once the retries are spent, so callers do not go looking for a bad item. */
+export class FramerSessionNotReadyError extends Error {
+  constructor(attempts: number, cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : "unknown";
+    super(
+      `Framer's session for this project was still not ready after ${attempts} attempts (${detail}) — nothing is wrong with the article; try again in a few minutes`
+    );
+    this.name = "FramerSessionNotReadyError";
+  }
 }
 
 /**
@@ -481,8 +522,30 @@ export async function syncCollection(
 
   if (stale.length > 0) await collection.removeItems(stale);
 
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+  /** addItems, waiting out a Framer session that is still loading. */
+  const addWhenReady = async (batch: CollectionItem[]) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await collection.addItems(batch);
+        if (attempt > 1) logger.info({ attempt }, "Framer session became ready — write accepted");
+        return;
+      } catch (e) {
+        if (!isSessionNotReady(e)) throw e;
+        const wait = SESSION_RETRY_DELAYS_MS[attempt - 1];
+        if (wait === undefined) throw new FramerSessionNotReadyError(attempt, e);
+        logger.warn(
+          { attempt, waitMs: wait, error: e instanceof Error ? e.message : "unknown" },
+          "Framer's session is not ready — waiting, then retrying on the same connection"
+        );
+        await sleep(wait);
+      }
+    }
+  };
+
   const writeBatch = async (batch: CollectionItem[]) => {
-    await collection.addItems(batch);
+    await addWhenReady(batch);
     // Recorded per batch, NOT once at the end. Recording at the end meant a
     // timeout partway through discarded every batch that had already landed,
     // so a corpus too large to write in a single run could never make
@@ -496,6 +559,9 @@ export async function syncCollection(
       try {
         await writeBatch(batch);
       } catch (e) {
+        // About the session, not an item: isolating would blame an innocent
+        // article and multiply the waiting by the batch size.
+        if (e instanceof FramerSessionNotReadyError) throw e;
         const error = e instanceof Error ? e.message : "unknown";
         if (batch.length === 1) {
           logger.error(
@@ -745,7 +811,38 @@ export function clearSyncedHashes(): void {
   getDb().prepare("DELETE FROM framer_sync_state").run();
 }
 
+/**
+ * Run `run`, and once more from the top if it fails in a way a new session
+ * would fix.
+ *
+ * `run` must open its own connection, so the second attempt really is a fresh
+ * session. One retry only: the sync records its progress per batch, so the
+ * second pass is cheap, but a session that dies twice running is a problem to
+ * report, not to loop on.
+ */
+export async function withFreshSessionRetry<T>(
+  run: () => Promise<T>,
+  isRetryable: (e: unknown) => boolean
+): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (!isRetryable(e)) throw e;
+    logger.warn(
+      { error: e instanceof Error ? e.message : "unknown" },
+      "Framer reports the session failed retryably — reconnecting and running the sync once more"
+    );
+    return await run();
+  }
+}
+
 async function doSyncToFramer(force = false): Promise<SyncResult> {
+  // isRetryableError is the server's own flag: the session crashed, closed or
+  // was recycled, and the same calls on a new one are expected to succeed.
+  return withFreshSessionRetry(() => syncOnce(force), isRetryableError);
+}
+
+async function syncOnce(force: boolean): Promise<SyncResult> {
   const collectionId = env.FRAMER_COLLECTION_ID || getSetting("framerCollectionId", "");
   const maxRemovalShare = getSetting("maxRemovalShare", 0.2);
   const fields = getSetting<SchemaField[]>("framerFields", FRAMER_FIELDS);
