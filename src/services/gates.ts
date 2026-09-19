@@ -65,9 +65,6 @@ export interface GateDeps {
 }
 
 export function createGateHandlers(deps: GateDeps): CallbackHandlers {
-  /** Set while Publish-all runs, so each article does not announce itself. */
-  let bulkPublishInFlight = false;
-
   /**
    * `quiet` suppresses the per-item acknowledgement so the bulk handlers can
    * send one summary instead of one message per article.
@@ -99,51 +96,6 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
     return true;
   };
 
-  /**
-   * Publish one article: mark it, sync it, arm the deploy. Reports what
-   * happened so Publish-all can tell a failed sync from a double tap.
-   */
-  const publishOne = async (articleId: string): Promise<"published" | "skipped" | "failed"> => {
-    const article = deps.getArticle(articleId);
-    // publishArticle returns false when the article is not in draft/review,
-    // which is what makes a double-tap safe.
-    if (!deps.publishArticle(articleId)) {
-      logger.info({ articleId }, "Publish: article not in a publishable state");
-      return "skipped";
-    }
-
-    if (!bulkPublishInFlight) {
-      await deps.progress(
-        `🚀 Publishing “${article?.title ?? articleId}” — syncing to Framer, then the site deploys within ~5 minutes.`
-      );
-    }
-
-    try {
-      const result = await deps.syncToFramer();
-      logger.info({ articleId, ...result }, "Synced to Framer");
-      if (!result.withLocales) {
-        await deps.alert(`Synced ${articleId} WITHOUT translations — RU is missing on the site.`);
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "unknown";
-      logger.error({ articleId, error: message }, "Framer sync failed after publish");
-
-      // Roll the publish back. Without this the article is stuck: it reads
-      // as published so a second tap is a no-op, but it never reached
-      // Framer, and the only recovery is a manual API call.
-      deps.unpublishArticle(articleId);
-
-      // Deliberately do NOT arm the deploy: publishing the site after a
-      // failed sync would ship a site missing the article just approved, and
-      // the guards throw precisely when something is wrong.
-      await deps.alert(`Framer sync failed for ${articleId}: ${message} — publish reverted, tap Publish to retry.`);
-      return "failed";
-    }
-
-    deps.schedulePublish();
-    return "published";
-  };
-
   const handlers: CallbackHandlers = {
     async onApproveTitle(keywordId) {
       await approveOne(keywordId, false);
@@ -173,7 +125,41 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
     },
 
     async onPublish(articleId) {
-      await publishOne(articleId);
+      const article = deps.getArticle(articleId);
+      // publishArticle returns false when the article is not in draft/review,
+      // which is what makes a double-tap safe.
+      if (!deps.publishArticle(articleId)) {
+        logger.info({ articleId }, "Publish: article not in a publishable state");
+        return;
+      }
+
+      await deps.progress(
+        `🚀 Publishing “${article?.title ?? articleId}” — syncing to Framer, then the site deploys within ~5 minutes.`
+      );
+
+      try {
+        const result = await deps.syncToFramer();
+        logger.info({ articleId, ...result }, "Synced to Framer");
+        if (!result.withLocales) {
+          await deps.alert(`Synced ${articleId} WITHOUT translations — RU is missing on the site.`);
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "unknown";
+        logger.error({ articleId, error: message }, "Framer sync failed after publish");
+
+        // Roll the publish back. Without this the article is stuck: it reads
+        // as published so a second tap is a no-op, but it never reached
+        // Framer, and the only recovery is a manual API call.
+        deps.unpublishArticle(articleId);
+
+        // Deliberately do NOT arm the deploy: publishing the site after a
+        // failed sync would ship a site missing the article just approved, and
+        // the guards throw precisely when something is wrong.
+        await deps.alert(`Framer sync failed for ${articleId}: ${message} — publish reverted, tap Publish to retry.`);
+        return;
+      }
+
+      deps.schedulePublish();
     },
 
     async onRegenerate(articleId) {
@@ -239,35 +225,41 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
         `🚀 Publishing ${ids.length} article${ids.length === 1 ? "" : "s"} — syncing each to Framer, then one site deploy covers them all.`
       );
 
-      // Suppress the per-article acknowledgement for the duration; the summary
-      // above already covers them, and the deploy notification lists what
-      // actually went live.
-      bulkPublishInFlight = true;
-      let published = 0;
-      let stopped = false;
-      try {
-        for (const id of ids) {
-          const outcome = await publishOne(id);
-          if (outcome === "published") published++;
-          if (outcome === "failed") {
-            // A failed sync is about Framer, not about this article, so the
-            // next one would fail the same way. With 27 queued that was 27
-            // full timeouts, 27 rollbacks and 27 alerts. Stop; the rest stay
-            // in review exactly as they were.
-            stopped = true;
-            break;
-          }
-        }
-      } finally {
-        bulkPublishInFlight = false;
+      // Mark everything first, then sync ONCE. Syncing per article opened a new
+      // Framer connection each time, and Framer's session takes about 70s to
+      // accept its first write after connecting — so 26 articles paid that
+      // warm-up 26 times, some 50 minutes for what is a single batch of writes.
+      // One sync pays it once and writes the rest in batches.
+      const marked = ids.filter((id) => deps.publishArticle(id));
+      if (marked.length === 0) {
+        logger.info("Publish-all: nothing was in a publishable state");
+        return;
       }
 
-      if (stopped) {
-        const left = ids.length - published;
+      try {
+        const result = await deps.syncToFramer();
+        logger.info({ articles: marked.length, ...result }, "Publish-all synced to Framer");
+        if (!result.withLocales) {
+          await deps.alert(
+            `Synced ${marked.length} article${marked.length === 1 ? "" : "s"} WITHOUT translations — RU is missing on the site.`
+          );
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "unknown";
+        logger.error({ articles: marked.length, error: message }, "Framer sync failed after publish-all");
+
+        // Same reasoning as the single publish: an article left published but
+        // absent from Framer is stuck. Only what THIS tap marked is undone. Any
+        // that did land before the failure are re-sent by the next sync.
+        for (const id of marked) deps.unpublishArticle(id);
+
         await deps.alert(
-          `Publish all stopped: Framer refused a sync. Published ${published} of ${ids.length}; ${left} still in review — tap Publish all again in a few minutes.`
+          `Publish all failed: ${message} — ${marked.length} article${marked.length === 1 ? "" : "s"} still in review, tap Publish all to retry.`
         );
+        return;
       }
+
+      deps.schedulePublish();
     },
   };
 

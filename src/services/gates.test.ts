@@ -143,7 +143,7 @@ describe("bulk actions", () => {
     expect(d.enqueueGeneration).toHaveBeenCalledTimes(2);
   });
 
-  it("publish-all routes every reviewable article through the single-item path", async () => {
+  it("publish-all publishes every reviewable article", async () => {
     const d = deps();
     await createGateHandlers(d).onPublishAll(0);
     expect(d.publishArticle).toHaveBeenCalledTimes(2);
@@ -265,42 +265,57 @@ describe("acknowledging a tapped button", () => {
   });
 });
 
-describe("Publish-all when Framer is refusing writes", () => {
-  it("stops at the first failed sync instead of failing every article in turn", async () => {
-    // 27 articles were queued when Framer's session would not load; each one
-    // waited out the full timeout, failed, was rolled back and alerted on. The
-    // cause is not per-article, so the rest are left in review untouched.
-    const ids = ["a1", "a2", "a3", "a4"];
+describe("Publish-all syncs the whole batch in one go", () => {
+  // Seen 2026-09-19: Framer's session takes ~70s to accept its first write
+  // after connecting. Publish-all synced each article on its own connection,
+  // so 26 articles paid that warm-up 26 times — about 50 minutes for what is
+  // one batch of writes.
+  it("marks every article published, then syncs ONCE", async () => {
+    const order: string[] = [];
     const d = deps({
-      reviewArticleIds: vi.fn(() => ids),
-      syncToFramer: vi
-        .fn()
-        .mockResolvedValueOnce({ synced: 1, removed: 0, withLocales: true })
-        .mockRejectedValueOnce(new Error("Framer's session was not ready")),
+      reviewArticleIds: vi.fn(() => ["a1", "a2", "a3"]),
+      publishArticle: vi.fn((id: string) => { order.push(`publish:${id}`); return true; }),
+      syncToFramer: vi.fn(async () => { order.push("sync"); return { synced: 3, removed: 0, withLocales: true }; }),
     });
     await createGateHandlers(d).onPublishAll(0);
-
-    expect(d.publishArticle).toHaveBeenCalledTimes(2); // a1 went out, a2 failed, a3/a4 untouched
-    expect(d.unpublishArticle).toHaveBeenCalledTimes(1);
-    const alerts = (d.alert as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
-    expect(alerts.some((m) => /1 of 4/.test(m) && /still in review/i.test(m))).toBe(true);
-  });
-
-  it("still deploys what did get through", async () => {
-    const d = deps({
-      reviewArticleIds: vi.fn(() => ["a1", "a2"]),
-      syncToFramer: vi
-        .fn()
-        .mockResolvedValueOnce({ synced: 1, removed: 0, withLocales: true })
-        .mockRejectedValueOnce(new Error("nope")),
-    });
-    await createGateHandlers(d).onPublishAll(0);
+    expect(order).toEqual(["publish:a1", "publish:a2", "publish:a3", "sync"]);
     expect(d.schedulePublish).toHaveBeenCalledTimes(1);
   });
 
-  it("publishes everything when nothing fails", async () => {
-    const d = deps({ reviewArticleIds: vi.fn(() => ["a1", "a2", "a3"]) });
+  it("rolls back every article it marked when the sync fails, and says so once", async () => {
+    // Leaving them published would strand them: they read as live, so another
+    // tap is a no-op, but they never reached Framer.
+    const d = deps({
+      reviewArticleIds: vi.fn(() => ["a1", "a2", "a3"]),
+      syncToFramer: vi.fn(async () => { throw new Error("Framer's session was not ready"); }),
+    });
     await createGateHandlers(d).onPublishAll(0);
-    expect(d.publishArticle).toHaveBeenCalledTimes(3);
+    expect((d.unpublishArticle as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])).toEqual(["a1", "a2", "a3"]);
+    expect(d.schedulePublish).not.toHaveBeenCalled();
+    expect(d.alert).toHaveBeenCalledTimes(1);
+    expect(d.alert).toHaveBeenCalledWith(expect.stringMatching(/3 articles.*still in review/i));
+  });
+
+  it("does not roll back an article it did not mark", async () => {
+    // a2 was already published by a tap that raced this one; it is not ours to undo.
+    const d = deps({
+      reviewArticleIds: vi.fn(() => ["a1", "a2"]),
+      publishArticle: vi.fn((id: string) => id !== "a2"),
+      syncToFramer: vi.fn(async () => { throw new Error("nope"); }),
+    });
+    await createGateHandlers(d).onPublishAll(0);
+    expect((d.unpublishArticle as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])).toEqual(["a1"]);
+  });
+
+  it("does not sync at all when nothing was publishable", async () => {
+    const d = deps({ publishArticle: vi.fn(() => false) });
+    await createGateHandlers(d).onPublishAll(0);
+    expect(d.syncToFramer).not.toHaveBeenCalled();
+  });
+
+  it("still warns when the batch went out without translations", async () => {
+    const d = deps({ syncToFramer: vi.fn(async () => ({ synced: 2, removed: 0, withLocales: false })) });
+    await createGateHandlers(d).onPublishAll(0);
+    expect(d.alert).toHaveBeenCalledWith(expect.stringMatching(/without translations/i));
   });
 });
