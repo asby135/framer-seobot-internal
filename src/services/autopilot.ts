@@ -1,5 +1,5 @@
-import { nextSlot, probationaryNames, type Niche } from "./taxonomy.js";
-import { selectTopics, needsTopUp, type PendingTopic } from "./selection.js";
+import { nextSlot, probationaryNames, countPairs, type Niche } from "./taxonomy.js";
+import { selectTopics, needsTopUp, unofferedInNiche, type PendingTopic } from "./selection.js";
 import { logger } from "../lib/logger.js";
 
 /**
@@ -51,6 +51,12 @@ export interface AutopilotDeps {
   recordProposals(proposals: TitleProposal[]): void;
 
   sendTitleDigest(proposals: TitleProposal[]): Promise<number>;
+
+  /**
+   * Tell the operator something they need to act on — here, a night with
+   * nothing to propose. Optional so a rehearsal or a test can omit it.
+   */
+  notify?(message: string): Promise<void>;
   saveDigestMessageId(messageId: number): void;
 
   /**
@@ -92,6 +98,19 @@ export const SEED_BATCH_SIZE = 4;
  */
 export const MAX_SEEDS_PER_RUN = 6;
 
+/**
+ * How many unoffered topics a probationary niche may hold before its rotation
+ * slots stop seeding.
+ *
+ * Probationary topics are seeded so the operator can judge the niche, but
+ * selection never picks them, so beyond a sample to review they are dead
+ * weight. Without a cap, a night where every niche is on probation would seed
+ * on every run forever — which is why top-up used to count probationary topics
+ * as runway, and THAT stalled the digest. Capping the sample lets top-up count
+ * only what selection can use.
+ */
+export const PROBATION_SAMPLE_SIZE = 2 * SEED_BATCH_SIZE;
+
 export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> {
   // 1. Top up. Measured against USABLE topics only: a pool full of excluded
   //    rows is not runway, however large it looks.
@@ -102,10 +121,9 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
   // never arrive.
   const onProbation = probationaryNames(niches);
 
-  // Top-up counts probationary topics: they are real topics sitting in the
-  // queue awaiting review, so they DO fill the pool. Excluding them here meant
-  // that with every niche on probation the pool never looked full — seeding
-  // fired every night, forever, while selection returned nothing.
+  // Top-up counts only what selection can propose, so probationary topics are
+  // NOT runway (see needsTopUp). What stops a probationary niche piling up
+  // topics forever is the per-niche sample cap below.
   //
   // Seed until the pool clears the threshold rather than exactly once. One seed
   // per run could never fill a pool whose threshold was at or above the batch
@@ -114,29 +132,62 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
   // topics from one slot. Bounded at MAX_SEEDS_PER_RUN so a seeder returning
   // nothing (every candidate a duplicate) cannot spin.
   let seeds = 0;
-  while (seeds < MAX_SEEDS_PER_RUN && needsTopUp(deps.getPending(), deps.poolThreshold)) {
+  // A full lap of probationary slots that all already have their sample means
+  // there is nothing left to seed; stop rather than walk the rotation forever.
+  let skipped = 0;
+  const lap = countPairs(niches);
+  // A failed seed must not cost the night: the pool usually already holds
+  // enough to propose. Remembered so a night with nothing to propose can
+  // still fail loudly and be retried.
+  let seedError: unknown = null;
+  let noRotatableNiche = false;
+
+  while (seeds < MAX_SEEDS_PER_RUN && needsTopUp(deps.getPending(), deps.poolThreshold, onProbation)) {
     const slot = nextSlot(niches, deps.getCursor());
     if (!slot) {
       // No niche has subniches, or none configured. Not an error: the run
       // proceeds on whatever is already pending.
       logger.warn("No rotatable niche available — skipping top-up");
+      noRotatableNiche = true;
       break;
     }
+
+    if (
+      slot.niche.probation &&
+      unofferedInNiche(deps.getPending(), slot.niche.name) >= PROBATION_SAMPLE_SIZE
+    ) {
+      // Its sample is waiting for review; more would only pile up topics that
+      // selection can never pick. Move on to the next slot.
+      deps.setCursor(slot.cursor);
+      if (++skipped >= lap) break;
+      continue;
+    }
+
     logger.info(
       { niche: slot.niche.name, subniche: slot.subniche, angle: slot.angle, seed: seeds + 1 },
       "Topic pool low — seeding from rotation slot"
     );
-    // Re-read covered inside the loop so a second seed does not repeat what the
-    // first just wrote.
-    await deps.seed({
-      niche: slot.niche.name,
-      persona: slot.niche.persona,
-      subniche: slot.subniche,
-      angle: slot.angle,
-      kbHints: slot.niche.kb_hints,
-      covered: deps.getCovered(),
-      count: SEED_BATCH_SIZE,
-    });
+    try {
+      // Re-read covered inside the loop so a second seed does not repeat what
+      // the first just wrote.
+      await deps.seed({
+        niche: slot.niche.name,
+        persona: slot.niche.persona,
+        subniche: slot.subniche,
+        angle: slot.angle,
+        kbHints: slot.niche.kb_hints,
+        covered: deps.getCovered(),
+        count: SEED_BATCH_SIZE,
+      });
+    } catch (e) {
+      // The cursor stays put, so the next run retries this slot.
+      seedError = e;
+      logger.error(
+        { niche: slot.niche.name, error: e instanceof Error ? e.message : "unknown" },
+        "Seeding failed — proposing from the existing pool instead"
+      );
+      break;
+    }
     deps.setCursor(slot.cursor);
     seeds++;
   }
@@ -145,7 +196,15 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
   const count = deps.articlesPerNight();
   const selected = selectTopics(deps.getPending(), count, Math.random, onProbation);
   if (selected.length === 0) {
+    // Nothing to propose because seeding broke: fail, so the scheduler retries
+    // and, if it keeps failing, alerts.
+    if (seedError) throw seedError;
+
     logger.warn("No usable topics available — nothing to propose tonight");
+    // A silent night is indistinguishable from a broken bot. Say why.
+    if (!deps.dryRun) {
+      await deps.notify?.(nothingToProposeMessage(deps.getPending(), onProbation, noRotatableNiche));
+    }
     return [];
   }
 
@@ -179,4 +238,21 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
 
   logger.info({ proposed: proposals.length }, "Gate 1 digest sent");
   return proposals;
+}
+
+/** Why a night proposed nothing, in terms the operator can act on. */
+function nothingToProposeMessage(
+  pending: PendingTopic[],
+  onProbation: Set<string>,
+  noRotatableNiche: boolean
+): string {
+  const held = new Map<string, number>();
+  for (const t of pending) {
+    if (t.niche && onProbation.has(t.niche)) held.set(t.niche, (held.get(t.niche) ?? 0) + 1);
+  }
+  const base = "No titles tonight — there are no new topics to propose.";
+  if (noRotatableNiche) return `${base} No niche has any subniches to seed from — add some in the plugin's Settings.`;
+  if (held.size === 0) return `${base} Seeding produced nothing usable; check the logs.`;
+  const list = [...held].map(([n, c]) => `${n} (${c})`).join(", ");
+  return `${base} Topics waiting in probationary niches: ${list}. Approve some in the plugin, or clear probation in Settings once a niche's output looks right.`;
 }

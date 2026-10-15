@@ -135,9 +135,7 @@ export async function generateArticle(
     const status =
       Object.keys(flags).length > 0 ? "review" : ("draft" as const);
 
-    db.prepare(
-      `UPDATE articles SET content = ?, status = ?, flags = ? WHERE id = ?`
-    ).run(finalContent, status, JSON.stringify(flags), articleId);
+    finalizeArticle(db, articleId, finalContent, status, flags);
 
     // Update keyword status
     db.prepare("UPDATE keywords SET status = 'generated' WHERE id = ?").run(
@@ -154,25 +152,7 @@ export async function generateArticle(
 
     // Mark keyword as failed so it doesn't block the queue
     const db = getDb();
-    const articleId = nanoid();
-    db.prepare(
-      `INSERT INTO articles (id, keyword_id, title, slug, category, summary, content, schema_jsonld, status, flags)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'generation_failed', ?)`
-    ).run(
-      articleId,
-      keywordId,
-      `Failed: ${query}`,
-      queryToSlug(query),
-      "",
-      "",
-      "",
-      "",
-      JSON.stringify({ error: message })
-    );
-
-    db.prepare("UPDATE keywords SET status = 'generated' WHERE id = ?").run(
-      keywordId
-    );
+    const articleId = insertFailedArticle(db, keywordId, query, message);
 
     logSync("generate", 0, "error");
 
@@ -1073,4 +1053,53 @@ function logSync(action: string, count: number, status: string) {
   db.prepare(
     "INSERT INTO sync_log (id, action, items_count, status) VALUES (?, ?, ?, ?)"
   ).run(nanoid(), action, count, status);
+}
+
+/**
+ * Write the finished content and flags, and move the article out of 'draft'.
+ *
+ * The status only changes while the row is still 'draft', i.e. still the
+ * generator's own. Setting it unconditionally pulled an article that had been
+ * published mid-generation (thumbnail still rendering) back to draft/review,
+ * and the next sync then removed it from the live site.
+ */
+export function finalizeArticle(
+  db: ReturnType<typeof getDb>,
+  articleId: string,
+  content: string,
+  status: "draft" | "review",
+  flags: Record<string, unknown>
+): void {
+  db.prepare(
+    `UPDATE articles
+       SET content = ?, flags = ?,
+           status = CASE WHEN status = 'draft' THEN ? ELSE status END
+     WHERE id = ?`
+  ).run(content, JSON.stringify(flags), status, articleId);
+}
+
+/**
+ * Record a failed generation and mark its topic used, so it does not block the
+ * queue. Returns the new row's id.
+ *
+ * The row gets a slug of its own rather than the topic's. `slug` is UNIQUE:
+ * reusing the topic's slug threw whenever an article already held it (or the
+ * same topic failed twice), the queue did not catch it, and Node exits on an
+ * unhandled rejection — one failed generation took down the server. Holding the
+ * topic's real slug would also push a later successful retry onto a suffixed
+ * URL.
+ */
+export function insertFailedArticle(
+  db: ReturnType<typeof getDb>,
+  keywordId: string,
+  query: string,
+  message: string
+): string {
+  const articleId = nanoid();
+  db.prepare(
+    `INSERT INTO articles (id, keyword_id, title, slug, category, summary, content, schema_jsonld, status, flags)
+     VALUES (?, ?, ?, ?, '', '', '', '', 'generation_failed', ?)`
+  ).run(articleId, keywordId, `Failed: ${query}`, `failed-${articleId}`, JSON.stringify({ error: message }));
+  db.prepare("UPDATE keywords SET status = 'generated' WHERE id = ?").run(keywordId);
+  return articleId;
 }

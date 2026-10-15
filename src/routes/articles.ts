@@ -196,13 +196,30 @@ articles.post("/:id/publish", async (c) => {
 });
 
 // Delete an article
-articles.post("/:id/delete", (c) => {
+articles.post("/:id/delete", async (c) => {
   const db = getDb();
   const { id } = c.req.param();
+  const body = await c.req.json<{ removeLive?: boolean }>().catch(() => ({}) as { removeLive?: boolean });
 
-  const article = db.prepare("SELECT keyword_id FROM articles WHERE id = ?").get(id) as { keyword_id: string } | undefined;
+  const article = db.prepare("SELECT keyword_id, status FROM articles WHERE id = ?").get(id) as
+    | { keyword_id: string; status: string }
+    | undefined;
   if (!article) {
     return c.json({ error: "Article not found" }, 404);
+  }
+
+  // A live article only goes on an explicit confirmation. The next sync drops
+  // whatever is no longer in the database, so deleting it takes it off the
+  // site — that used to happen on one unconfirmed click.
+  if (article.status === "published" && body.removeLive !== true) {
+    return c.json(
+      {
+        error:
+          "This article is live. Deleting it removes it from the site at the next sync, and its URL will 404. Confirm to delete it anyway.",
+        live: true,
+      },
+      409
+    );
   }
 
   // Delete related data first (FK constraints)
@@ -268,9 +285,24 @@ articles.post("/:id/regenerate", async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json<{ instructions?: string }>().catch(() => ({ instructions: undefined }));
 
-  const article = db.prepare("SELECT keyword_id FROM articles WHERE id = ?").get(id) as { keyword_id: string } | undefined;
+  const article = db.prepare("SELECT keyword_id, status FROM articles WHERE id = ?").get(id) as
+    | { keyword_id: string; status: string }
+    | undefined;
   if (!article) {
     return c.json({ error: "Article not found" }, 404);
+  }
+
+  // Same rule as the Telegram gate. Regenerating deletes the row and lets the
+  // model pick a new slug, so a live article would come back at a different
+  // URL — the indexed one, and every internal link to it, would 404.
+  if (article.status === "published") {
+    return c.json(
+      {
+        error:
+          "Published articles can't be regenerated — it would change their URL and break links to it. Edit the article instead.",
+      },
+      409
+    );
   }
 
   const keyword = db.prepare("SELECT id, query FROM keywords WHERE id = ?").get(article.keyword_id) as { id: string; query: string } | undefined;

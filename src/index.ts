@@ -5,7 +5,7 @@ import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
 import { initDb, closeDb } from "./db/index.js";
 import { loadKB, getKBArticleCount } from "./services/kb.js";
-import { authMiddleware } from "./lib/auth.js";
+import { applyAuth } from "./lib/auth.js";
 import { status } from "./routes/status.js";
 import { setup } from "./routes/setup.js";
 import { topics } from "./routes/topics.js";
@@ -24,6 +24,7 @@ import {
   ensureDefaultSettings,
   registerArticleReadyHandler,
   recoverPendingPublish,
+  recoverOrphanedReviews,
   flushPendingPublish,
 } from "./services/bootstrap.js";
 
@@ -58,21 +59,10 @@ app.route("/api/status", status);
 // chat-id allowlist, both of which fail closed. See routes/telegram.ts.
 app.route("/api/telegram", telegramRoute(buildGateHandlers()));
 
-// Setup: POST /api/setup is public (needs secret), POST /api/setup/rotate is protected
-app.use("/api/setup/rotate", authMiddleware);
-app.route("/api/setup", setup);
+// Every protected path, in one list — see applyAuth for what is public and why.
+applyAuth(app);
 
-// Protected routes (require API key)
-app.use("/api/topics/*", authMiddleware);
-app.use("/api/articles/*", authMiddleware);
-app.use("/api/generate/*", authMiddleware);
-app.use("/api/sync/*", authMiddleware);
-app.use("/api/schema/*", authMiddleware);
-app.use("/api/research/*", authMiddleware);
-app.use("/api/kb/*", authMiddleware);
-app.use("/api/settings/*", authMiddleware);
-app.use("/api/settings", authMiddleware);
-app.use("/api/autopilot/*", authMiddleware);
+app.route("/api/setup", setup);
 
 app.route("/api/topics", topics);
 app.route("/api/articles", articles);
@@ -116,6 +106,9 @@ ensureDefaultSettings();
 // AUTOPILOT_ENABLED, because generation can also be triggered by hand and a
 // finished article with nobody told is the failure this closes.
 registerArticleReadyHandler();
+
+// After the ready handler, so recovered articles are announced at gate 2.
+recoverOrphanedReviews();
 
 // Re-arm a site deploy that was owed when the process last stopped.
 recoverPendingPublish();

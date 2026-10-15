@@ -172,19 +172,31 @@ export function ArticleList() {
     const ids = Array.from(batchSelected);
     const n = ids.length;
     setTranslateMessage("");
-    try {
-      for (const id of ids) {
+    // Live articles are never bulk-deleted: the backend refuses them (409)
+    // without an explicit per-article confirmation, because deleting one takes
+    // it off the site. Carry on past them and say which were skipped.
+    let deleted = 0;
+    let skippedLive = 0;
+    let failed = 0;
+    for (const id of ids) {
+      try {
         await api.deleteArticle(id);
+        deleted++;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 409) skippedLive++;
+        else failed++;
       }
-      setBatchSelected(new Set());
-      setTranslateMessage(`Deleted ${n} article${n === 1 ? "" : "s"}.`);
-      loadArticles();
-    } catch (e) {
-      setTranslateMessage(
-        e instanceof ApiError ? e.message : "Failed to delete some articles."
-      );
-      loadArticles(); // reload anyway — some may have deleted before the failure
     }
+    setBatchSelected(new Set());
+    const parts = [`Deleted ${deleted} of ${n}.`];
+    if (skippedLive > 0) {
+      parts.push(
+        `Skipped ${skippedLive} live article${skippedLive === 1 ? "" : "s"} — open ${skippedLive === 1 ? "it" : "each one"} to delete it from the site deliberately.`
+      );
+    }
+    if (failed > 0) parts.push(`${failed} failed.`);
+    setTranslateMessage(parts.join(" "));
+    loadArticles();
   }
 
   async function handleTranslateBatch() {

@@ -1,6 +1,7 @@
 import PQueue from "p-queue";
 import { generateArticle } from "./generator.js";
 import { translateArticle } from "./translator.js";
+import { getDb } from "../db/index.js";
 import { logger } from "../lib/logger.js";
 
 interface GenerationJob {
@@ -65,39 +66,96 @@ async function notifyArticleReady(articleId: string): Promise<void> {
 }
 
 /**
+ * Mark the article as shown to the operator, then tell them it is ready.
+ *
+ * The mark is what Publish all acts on. It used to act on every draft/review
+ * row, and the generator inserts its row as 'draft' before thumbnails,
+ * screenshots and translation — so one tap published articles nobody had
+ * seen. Stamped BEFORE the notification so a tap on that message finds it.
+ */
+async function handToReview(articleId: string): Promise<void> {
+  try {
+    getDb()
+      .prepare("UPDATE articles SET ready_at = COALESCE(ready_at, datetime('now')) WHERE id = ?")
+      .run(articleId);
+  } catch (e) {
+    logger.error(
+      { articleId, error: e instanceof Error ? e.message : "unknown" },
+      "Could not mark article ready for review"
+    );
+  }
+  await notifyArticleReady(articleId);
+}
+
+/**
+ * Called when a generation job throws instead of returning a result — i.e.
+ * the generator's own failure handling failed. Same reasoning as the ready
+ * hook: keeps the queue free of a Telegram dependency.
+ */
+type GenerationCrashHandler = (query: string, message: string) => void | Promise<void>;
+let onGenerationCrash: GenerationCrashHandler | null = null;
+
+export function setGenerationCrashHandler(handler: GenerationCrashHandler | null): void {
+  onGenerationCrash = handler;
+}
+
+/** Resolves once both queues are empty and idle. */
+export async function onQueuesIdle(): Promise<void> {
+  // A finished generation queues its translation before the generation queue
+  // goes idle, so waiting on the translation queue second covers it.
+  await generationQueue.onIdle();
+  await translationQueue.onIdle();
+}
+
+/**
  * Enqueue an article generation job.
  * Returns immediately — generation happens in the background.
  */
 export function enqueueGeneration(job: GenerationJob): void {
-  generationQueue.add(async () => {
-    logger.info({ keywordId: job.keywordId, query: job.query }, "Generation starting");
+  // Every error is caught here. p-queue rejects the promise add() returns, and
+  // nothing awaited it: Node exits on an unhandled rejection, so one job that
+  // threw past the generator's own failure handling took down the server and
+  // every job queued behind it.
+  void generationQueue.add(async () => {
+    try {
+      logger.info({ keywordId: job.keywordId, query: job.query }, "Generation starting");
 
-    const result = await generateArticle(job.keywordId, job.query, job.titleOverride);
+      const result = await generateArticle(job.keywordId, job.query, job.titleOverride);
 
-    lastGenerationResult = {
-      articleId: result.articleId,
-      status: result.status,
-      query: job.query,
-    };
+      lastGenerationResult = {
+        articleId: result.articleId,
+        status: result.status,
+        query: job.query,
+      };
 
-    logger.info(
-      { articleId: result.articleId, status: result.status, query: job.query },
-      "Generation complete"
-    );
+      logger.info(
+        { articleId: result.articleId, status: result.status, query: job.query },
+        "Generation complete"
+      );
 
-    // Chain RU translation so an article reaches the review gate already
-    // localized. Without this the operator would approve an article that only
-    // becomes bilingual after a separate manual trigger.
-    //
-    // Skipped for generation_failed rows: they have no usable content, and
-    // translating a failure stub would waste a call and produce a misleading
-    // "translated" flag on the article.
-    if (result.status !== "generation_failed") {
-      enqueueTranslation({ articleId: result.articleId, force: false, notifyWhenReady: true });
-    } else {
-      // A failed generation still needs to reach the operator, or the topic
-      // vanishes with no article and no message.
-      await notifyArticleReady(result.articleId);
+      // Chain RU translation so an article reaches the review gate already
+      // localized. Without this the operator would approve an article that only
+      // becomes bilingual after a separate manual trigger.
+      //
+      // Skipped for generation_failed rows: they have no usable content, and
+      // translating a failure stub would waste a call and produce a misleading
+      // "translated" flag on the article.
+      if (result.status !== "generation_failed") {
+        enqueueTranslation({ articleId: result.articleId, force: false, notifyWhenReady: true });
+      } else {
+        // A failed generation still needs to reach the operator, or the topic
+        // vanishes with no article and no message.
+        await notifyArticleReady(result.articleId);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "unknown";
+      lastGenerationResult = { status: "failed", query: job.query };
+      logger.error({ keywordId: job.keywordId, query: job.query, error: message }, "Generation job crashed");
+      try {
+        await onGenerationCrash?.(job.query, message);
+      } catch {
+        // Already logged above; a failed alert must not crash the queue either.
+      }
     }
   });
 }
@@ -108,7 +166,9 @@ export function enqueueGeneration(job: GenerationJob): void {
  * so peak Anthropic calls stay bounded even when bulk-translating.
  */
 export function enqueueTranslation(job: TranslationJob): void {
-  translationQueue.add(async () => {
+  // Like the generation job, the body catches everything it can throw; the
+  // void marks that nothing awaits add()'s promise on purpose.
+  void translationQueue.add(async () => {
     logger.info({ articleId: job.articleId, force: job.force }, "Translation starting");
 
     try {
@@ -118,7 +178,7 @@ export function enqueueTranslation(job: TranslationJob): void {
         { articleId: job.articleId, ...result },
         "Translation complete"
       );
-      if (job.notifyWhenReady) await notifyArticleReady(job.articleId);
+      if (job.notifyWhenReady) await handToReview(job.articleId);
     } catch (e) {
       lastTranslationResult = { articleId: job.articleId, status: "failed" };
       logger.error(
@@ -127,7 +187,7 @@ export function enqueueTranslation(job: TranslationJob): void {
       );
       // Still surface the article: an untranslated draft is reviewable, and
       // silently withholding it would strand it in `review` forever.
-      if (job.notifyWhenReady) await notifyArticleReady(job.articleId);
+      if (job.notifyWhenReady) await handToReview(job.articleId);
     }
   });
 }

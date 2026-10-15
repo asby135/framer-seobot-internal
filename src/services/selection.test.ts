@@ -119,11 +119,14 @@ describe("probation filtering", () => {
     expect(selectTopics(pool, 5, () => 0, onProbation).map((t) => t.id)).toEqual(["b"]);
   });
 
-  it("needsTopUp counts probationary topics, so the pool can fill", () => {
-    // Regression: excluding them meant the pool never looked full and seeding
-    // fired every night forever while selection returned nothing.
+  it("needsTopUp does not count probationary topics as runway", () => {
+    // Regression: counting them meant a pool full of topics selection can never
+    // pick looked full, so seeding stopped and the digest went silent for good.
+    // (The unbounded-seeding problem that counting them used to prevent is now
+    // handled by capping each probationary niche's sample — see autopilot.)
     const pool = Array.from({ length: 12 }, (_, i) => withNiche(String(i), "Online currency exchanges"));
-    expect(needsTopUp(pool, 10)).toBe(false);
+    expect(needsTopUp(pool, 10, onProbation)).toBe(true);
+    expect(needsTopUp(pool, 10)).toBe(false); // no exclusion set: legacy behaviour
   });
 });
 
@@ -167,15 +170,6 @@ describe("topics already offered at gate 1", () => {
     expect(needsTopUp(pool, 10)).toBe(true);
   });
 
-  it("still counts unoffered probationary topics as runway", () => {
-    // Unchanged: excluding them here made the pool never look full and seeding
-    // fire every night forever.
-    const pool = Array.from({ length: 12 }, (_, i) => ({
-      ...fresh(String(i)),
-      niche: "Online currency exchanges",
-    }));
-    expect(needsTopUp(pool, 10)).toBe(false);
-  });
 });
 
 describe("spreading a night across niches", () => {

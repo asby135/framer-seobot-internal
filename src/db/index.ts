@@ -39,11 +39,16 @@ export function initDb(): Database.Database {
   // errors at query time instead.
   const addColumn = (sql: string, onFirstAdd?: string) => {
     try {
-      db.exec(sql);
-      // Runs ONLY when the ALTER actually succeeded, i.e. the first time this
-      // migration is applied. Putting a backfill outside this block would
-      // re-run it on every boot.
-      if (onFirstAdd) db.exec(onFirstAdd);
+      // One transaction: if the backfill fails, the ALTER rolls back with it.
+      // Otherwise the next boot would see the column, treat the migration as
+      // applied, and the backfill would never run.
+      db.transaction(() => {
+        db.exec(sql);
+        // Runs ONLY when the ALTER actually succeeded, i.e. the first time
+        // this migration is applied. Putting a backfill outside this block
+        // would re-run it on every boot.
+        if (onFirstAdd) db.exec(onFirstAdd);
+      })();
     } catch (e) {
       if (!String(e).includes("duplicate column name")) throw e;
       // Column already exists — migration already applied.
@@ -63,6 +68,14 @@ export function initDb(): Database.Database {
     // backfill the first deploy after the migration would announce the entire
     // back catalogue.
     "UPDATE articles SET announced_at = published_at WHERE status = 'published'"
+  );
+  addColumn(
+    "ALTER TABLE articles ADD COLUMN ready_at TEXT",
+    // When the operator was handed the article at gate 2. Publish all acts only
+    // on articles that have it. Rows already sitting in draft/review when this
+    // migration runs finished generating long ago — a redeploy kills any job in
+    // flight — so they count as shown.
+    "UPDATE articles SET ready_at = COALESCE(updated_at, created_at) WHERE status IN ('draft', 'review')"
   );
 
   logger.info({ path: dbPath }, "Database initialized");

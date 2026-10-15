@@ -152,8 +152,8 @@ export function buildTelegramRoute(config: RouteConfig): Hono {
     // far longer than Telegram's callback timeout. Awaiting it here means
     // Telegram gives up and redelivers the same update while the first is
     // still running — two concurrent syncs against one collection, interleaving
-    // removeItems and addItems. syncToFramer holds a single-flight lock for the
-    // same reason.
+    // removeItems and addItems. syncToFramer serialises its runs for the same
+    // reason (see sync-lock.ts).
     // cq.id, NOT cb.id. cb.id is the article/keyword id parsed out of
     // callback_data; the callback QUERY id is Telegram's own and lives on the
     // update. Answering with the wrong one made Telegram reject every single

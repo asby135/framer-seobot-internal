@@ -17,7 +17,7 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   const [regenerating, setRegenerating] = useState(false);
   const [showEditPrompt, setShowEditPrompt] = useState(false);
   const [editInstructions, setEditInstructions] = useState("");
-  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
+  const [confirmDeleteLive, setConfirmDeleteLive] = useState(false);
   const [translating, setTranslating] = useState(checkTranslating(articleId));
   const [translateResult, setTranslateResult] = useState("");
   const [editing, setEditing] = useState(false);
@@ -44,11 +44,28 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   }
 
   async function handleDelete() {
+    const live = article?.status === "published";
+    // A live article takes a second, deliberate click: deleting it removes it
+    // from the site at the next sync.
+    if (live && !confirmDeleteLive) {
+      setConfirmDeleteLive(true);
+      return;
+    }
+    // Being in the confirm step IS the confirmation — including when it was
+    // reached via a 409 because the article went live after this view loaded.
+    const removeLive = live || confirmDeleteLive;
+    setConfirmDeleteLive(false);
     setDeleting(true);
     try {
-      await api.deleteArticle(articleId);
+      await api.deleteArticle(articleId, removeLive);
       onBack();
     } catch (e) {
+      // It went live after this view loaded: switch to the deliberate confirm
+      // instead of showing a bare error.
+      if (e instanceof ApiError && e.status === 409) {
+        setConfirmDeleteLive(true);
+        return;
+      }
       setError(e instanceof ApiError ? e.message : "Failed to delete");
     } finally {
       setDeleting(false);
@@ -56,11 +73,6 @@ export function ArticleDetail({ articleId, onBack }: Props) {
   }
 
   async function handleRegenerate() {
-    if (article?.status === "published" && !confirmRegenerate) {
-      setConfirmRegenerate(true);
-      return;
-    }
-    setConfirmRegenerate(false);
     setRegenerating(true);
     try {
       await api.regenerateArticle(articleId, editInstructions.trim() || undefined);
@@ -268,8 +280,9 @@ export function ArticleDetail({ articleId, onBack }: Props) {
         </div>
       )}
 
-      {/* Edit / Regenerate prompt */}
-      {!editing && (article.status === "draft" || article.status === "review" || article.status === "published") && (
+      {/* Edit / Regenerate prompt. Not offered for published articles: a
+          regenerated article gets a new slug, so the live URL would 404. */}
+      {!editing && (article.status === "draft" || article.status === "review") && (
         <div style={styles.section}>
           <button
             onClick={() => setShowEditPrompt(!showEditPrompt)}
@@ -286,15 +299,12 @@ export function ArticleDetail({ articleId, onBack }: Props) {
                 style={styles.editTextarea}
                 rows={4}
               />
-              {confirmRegenerate && (
-                <p style={styles.confirmWarning}>This will delete the published article and all translations. It will be unavailable until regeneration completes and you re-sync.</p>
-              )}
               <button
                 onClick={handleRegenerate}
                 disabled={regenerating}
-                style={{ ...(confirmRegenerate ? styles.confirmButton : styles.regenerateButton), ...(regenerating ? styles.disabled : {}) }}
+                style={{ ...styles.regenerateButton, ...(regenerating ? styles.disabled : {}) }}
               >
-                {regenerating ? "Regenerating…" : confirmRegenerate ? "Confirm — Delete & Regenerate" : "Regenerate Article"}
+                {regenerating ? "Regenerating…" : "Regenerate Article"}
               </button>
             </div>
           )}
@@ -341,12 +351,18 @@ export function ArticleDetail({ articleId, onBack }: Props) {
             {publishing ? "Publishing…" : "Publish"}
           </button>
         )}
+        {confirmDeleteLive && (
+          <p style={styles.confirmWarning}>
+            This article is live. Deleting it removes it from the site at the next sync, and its URL
+            will 404.
+          </p>
+        )}
         <button
           onClick={handleDelete}
           disabled={deleting}
-          style={{ ...styles.deleteButton, ...(deleting ? styles.disabled : {}) }}
+          style={{ ...(confirmDeleteLive ? styles.confirmButton : styles.deleteButton), ...(deleting ? styles.disabled : {}) }}
         >
-          {deleting ? "Deleting…" : "Delete"}
+          {deleting ? "Deleting…" : confirmDeleteLive ? "Confirm — remove from the live site" : "Delete"}
         </button>
       </div>
     </div>

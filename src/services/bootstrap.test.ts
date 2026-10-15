@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,8 @@ let publishIsOverdue: typeof import("./bootstrap.js").publishIsOverdue;
 let articlesAwaitingAnnouncement: typeof import("./bootstrap.js").articlesAwaitingAnnouncement;
 let markAnnounced: typeof import("./bootstrap.js").markAnnounced;
 let articleUrl: typeof import("./bootstrap.js").articleUrl;
+let articlesReadyForReview: typeof import("./bootstrap.js").articlesReadyForReview;
+let recoverOrphanedReviews: typeof import("./bootstrap.js").recoverOrphanedReviews;
 
 beforeAll(async () => {
   // env.ts snapshots process.env at import time, so this must be set before
@@ -28,7 +30,7 @@ beforeAll(async () => {
   const dbMod = await import("../db/index.js");
   dbMod.initDb();
   getDb = dbMod.getDb;
-  ({ buildGateHandlers, publishIsOverdue, articlesAwaitingAnnouncement, markAnnounced, articleUrl } =
+  ({ buildGateHandlers, publishIsOverdue, articlesAwaitingAnnouncement, markAnnounced, articleUrl, articlesReadyForReview, recoverOrphanedReviews } =
     await import("./bootstrap.js"));
 });
 
@@ -191,5 +193,64 @@ describe("articleUrl", () => {
     // A title beginning "Blog…" yields such a slug. /blog/blog-post-ideas is
     // the correct URL, not a duplicated prefix.
     expect(articleUrl("blog-post-ideas", SITE)).toBe("https://crmchat.ai/blog/blog-post-ideas");
+  });
+});
+
+describe("articlesReadyForReview — what Publish all may publish", () => {
+  // Publish all used to take every draft/review row. The generator inserts its
+  // row as 'draft' before thumbnails, screenshots and translation, and the
+  // gate-2 message only goes out after translation — so one tap published
+  // articles nobody had seen, some without an image or RU.
+  const add = (id: string, status: string, ready: boolean) => {
+    const db = getDb();
+    db.prepare("INSERT INTO keywords (id, query, status) VALUES (?, ?, 'generated')").run(`k-${id}`, `topic ${id}`);
+    db.prepare(
+      `INSERT INTO articles (id, keyword_id, title, slug, status, ready_at)
+       VALUES (?, ?, 'T', ?, ?, ${ready ? "datetime('now')" : "NULL"})`
+    ).run(id, `k-${id}`, `slug-${id}`, status);
+  };
+
+  it("includes articles the operator has been shown", () => {
+    add("shown-review", "review", true);
+    add("shown-draft", "draft", true);
+    expect(articlesReadyForReview().sort()).toEqual(["shown-draft", "shown-review"]);
+  });
+
+  it("excludes articles still generating or translating", () => {
+    add("in-progress", "draft", false);
+    expect(articlesReadyForReview()).toEqual([]);
+  });
+
+  it("excludes what is already published", () => {
+    add("live", "published", true);
+    expect(articlesReadyForReview()).toEqual([]);
+  });
+});
+
+describe("recoverOrphanedReviews — articles a restart cut off before gate 2", () => {
+  // The queues live in memory. A redeploy between "generated" and "translated"
+  // leaves a draft/review row that never gets ready_at and never reaches the
+  // operator — and Publish all now (rightly) ignores it. At boot the queues are
+  // empty, so every such row is an orphan: send it through translation again,
+  // which hands it to gate 2.
+  const add = (id: string, status: string, ready: boolean) => {
+    const db = getDb();
+    db.prepare("INSERT INTO keywords (id, query, status) VALUES (?, ?, 'generated')").run(`k-${id}`, `topic ${id}`);
+    db.prepare(
+      `INSERT INTO articles (id, keyword_id, title, slug, status, ready_at)
+       VALUES (?, ?, 'T', ?, ?, ${ready ? "datetime('now')" : "NULL"})`
+    ).run(id, `k-${id}`, `slug-${id}`, status);
+  };
+
+  it("re-enqueues every draft/review row that was never handed to the operator", () => {
+    add("orphan-draft", "draft", false);
+    add("orphan-review", "review", false);
+    add("shown", "review", true);
+    add("live", "published", false);
+    const enqueue = vi.fn();
+    const ids = recoverOrphanedReviews(enqueue);
+    expect(ids.sort()).toEqual(["orphan-draft", "orphan-review"]);
+    expect(enqueue).toHaveBeenCalledWith({ articleId: "orphan-draft", force: false, notifyWhenReady: true });
+    expect(enqueue).toHaveBeenCalledTimes(2);
   });
 });

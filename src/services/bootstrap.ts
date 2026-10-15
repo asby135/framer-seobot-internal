@@ -15,7 +15,7 @@ import { createGateHandlers, type KeywordRow, type ArticleRow } from "./gates.js
 import { runNightly, type TitleProposal } from "./autopilot.js";
 import { poolTarget } from "./selection.js";
 import { buildDigest, buildKeyboard, sendMessage, sendDocument, editMessage, alert, escapeHtml } from "./notify.js";
-import { setArticleReadyHandler } from "./queue.js";
+import { setArticleReadyHandler, setGenerationCrashHandler, enqueueTranslation } from "./queue.js";
 import type { CallbackHandlers } from "../routes/telegram.js";
 
 /**
@@ -124,6 +124,49 @@ async function publishFramerSite(): Promise<void> {
 export function articleUrl(slug: string, siteUrl: string = env.SITE_URL): string {
   const base = siteUrl.replace(/\/+$/, "");
   return base ? `${base}/${slug}` : `/${slug}`;
+}
+
+/**
+ * Articles Publish all may publish: in review AND already handed to the
+ * operator at gate 2.
+ *
+ * `draft`/`review` alone is not enough: the generator inserts its row as
+ * 'draft' before thumbnails, screenshots and translation are done, and the
+ * gate-2 message only goes out afterwards. Publish all used to sweep those up,
+ * publishing articles nobody had seen — some without an image or RU.
+ */
+export function articlesReadyForReview(): string[] {
+  return (
+    getDb()
+      .prepare(
+        "SELECT id FROM articles WHERE status IN ('draft','review') AND ready_at IS NOT NULL ORDER BY created_at"
+      )
+      .all() as { id: string }[]
+  ).map((r) => r.id);
+}
+
+/**
+ * Send every article a restart cut off before gate 2 back through translation,
+ * which hands it to the operator. Returns the ids re-enqueued.
+ *
+ * The queues live in memory, so a redeploy between "generated" and
+ * "translated" leaves a draft/review row that never gets ready_at and never
+ * reaches the operator — and Publish all rightly ignores it. Called at boot,
+ * when the queues are empty, so every such row is an orphan. Translation skips
+ * locales that already exist, so a row that only missed its notification costs
+ * nothing.
+ */
+export function recoverOrphanedReviews(
+  enqueue: (job: { articleId: string; force: boolean; notifyWhenReady: boolean }) => void = enqueueTranslation
+): string[] {
+  const ids = (
+    getDb()
+      .prepare("SELECT id FROM articles WHERE status IN ('draft','review') AND ready_at IS NULL ORDER BY created_at")
+      .all() as { id: string }[]
+  ).map((r) => r.id);
+  for (const articleId of ids) enqueue({ articleId, force: false, notifyWhenReady: true });
+  if (ids.length > 0) logger.warn({ ids }, "Re-enqueued articles a restart cut off before review");
+  return ids;
 }
 
 /**
@@ -399,12 +442,7 @@ export function buildGateHandlers(): CallbackHandlers {
       ).map((r) => r.id);
     },
 
-    reviewArticleIds: () =>
-      (
-        db()
-          .prepare("SELECT id FROM articles WHERE status IN ('draft','review') ORDER BY created_at")
-          .all() as { id: string }[]
-      ).map((r) => r.id),
+    reviewArticleIds: () => articlesReadyForReview(),
 
     recentTitles: () => recentPublishedTitles(),
     proposeTitle,
@@ -566,6 +604,11 @@ ${ruContent ? `<hr><p class="locale">Russian</p><h1>${escapeHtml(ruTitle ?? "")}
 
 /** Register the queue hook so finished articles reach gate 2. */
 export function registerArticleReadyHandler(): void {
+  // A job that throws past the generator's own failure handling leaves its
+  // topic 'approved' with no article; say so rather than let it vanish.
+  setGenerationCrashHandler(async (query, message) => {
+    await alert(`Generation crashed for “${query}”: ${message}. The topic is still approved — regenerate it from the plugin's Generate tab.`);
+  });
   setArticleReadyHandler(async (articleId) => {
     await sendArticleReadyDigest(articleId);
   });
@@ -639,6 +682,7 @@ export async function runNightlyJob(dryRun: boolean): Promise<TitleProposal[]> {
         },
 
         sendTitleDigest,
+        notify: alert,
         saveDigestMessageId: (id) => setSetting("lastDigestMessageId", id),
 
         dryRun,

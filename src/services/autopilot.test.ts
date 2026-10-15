@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { runNightly, SEED_BATCH_SIZE, MAX_SEEDS_PER_RUN, type AutopilotDeps } from "./autopilot.js";
+import { runNightly, SEED_BATCH_SIZE, MAX_SEEDS_PER_RUN, PROBATION_SAMPLE_SIZE, type AutopilotDeps } from "./autopilot.js";
+import type { PendingTopic } from "./selection.js";
 import { DEFAULT_NICHES } from "./taxonomy.js";
 
 const topic = (id: string) => ({ id, query: `q-${id}`, source: "seeded" });
@@ -171,16 +172,17 @@ describe("runNightly", () => {
   });
 
   it("seeds a probationary niche but never auto-selects its topics", async () => {
-    const probationPool = growingPool(1, 10, "Web3 / crypto");
-    const d = deps({
-      getNiches: () => DEFAULT_NICHES.map((n) => ({ ...n, probation: true })),
-      getPending: probationPool.getPending,
-      seed: vi.fn(async () => probationPool.onSeed()),
-    });
+    // A realistic pool (each seed lands in its slot's niche); the old fixture
+    // tagged every seeded topic with one niche, which no longer models top-up.
+    const all = DEFAULT_NICHES.map((n) => ({ ...n, probation: true }));
+    const pool = livePool();
+    const d = deps({ getNiches: () => all, getPending: pool.getPending, seed: pool.seed });
     await runNightly(d);
 
-    // Seeding happens — that is how the operator gets something to judge.
-    expect(d.seed).toHaveBeenCalledOnce();
+    // Seeding happens — that is how the operator gets something to judge —
+    // bounded per run, and each niche only up to its review sample.
+    expect(pool.seed).toHaveBeenCalled();
+    expect(pool.seed.mock.calls.length).toBeLessThanOrEqual(MAX_SEEDS_PER_RUN);
     // Selection does not: nothing generates from an unproven niche unattended.
     expect(d.sendTitleDigest).not.toHaveBeenCalled();
   });
@@ -258,5 +260,127 @@ describe("recording the proposed titles", () => {
     const d = deps({ getPending: () => [] });
     await runNightly(d);
     expect(d.recordProposals).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A pool that seeding really writes into, tagged with the slot's niche, so
+ * probation and top-up interact the way they do in production.
+ */
+function livePool(initial: PendingTopic[] = []) {
+  const rows: PendingTopic[] = [...initial];
+  let n = 0;
+  return {
+    rows,
+    getPending: () => rows,
+    seed: vi.fn(async (req: { niche: string }) => {
+      for (let i = 0; i < SEED_BATCH_SIZE; i++) {
+        n++;
+        rows.push({ id: `s${n}`, query: `seeded ${n}`, source: "seeded", niche: req.niche });
+      }
+    }),
+  };
+}
+const inNiche = (niche: string, count: number, prefix = niche): PendingTopic[] =>
+  Array.from({ length: count }, (_, i) => ({ id: `${prefix}-${i}`, query: `${prefix} ${i}`, source: "seeded", niche }));
+
+const PROBATION = DEFAULT_NICHES.filter((n) => n.probation).map((n) => n.name);
+
+describe("runNightly — probationary niches cannot stall the digest", () => {
+  it("still tops up and sends a digest when probationary topics fill the pool", async () => {
+    // The stall: 20+ unoffered probationary topics read as a full pool, so
+    // seeding stopped, selection (which skips probation) found nothing, and
+    // every night after that sent no digest and said nothing.
+    const pool = livePool(PROBATION.flatMap((n) => inNiche(n, 8)));
+    const d = deps({ getPending: pool.getPending, seed: pool.seed, poolThreshold: 20 });
+    const proposals = await runNightly(d);
+    expect(pool.seed).toHaveBeenCalled();
+    expect(proposals.length).toBeGreaterThan(0);
+    expect(d.sendTitleDigest).toHaveBeenCalledOnce();
+  });
+
+  it("stops seeding a probationary niche once it has a sample waiting for review", async () => {
+    let cursor = 5; // RU B2B SaaS — the first probationary slot in lap 0
+    const pool = livePool(PROBATION.flatMap((n) => inNiche(n, PROBATION_SAMPLE_SIZE)));
+    const d = deps({
+      getPending: pool.getPending,
+      seed: pool.seed,
+      getCursor: () => cursor,
+      setCursor: vi.fn((c: number) => { cursor = c; }),
+    });
+    await runNightly(d);
+    const seeded = pool.seed.mock.calls.map((c) => c[0].niche);
+    expect(seeded.length).toBeGreaterThan(0);
+    expect(seeded.some((n) => PROBATION.includes(n))).toBe(false);
+  });
+
+  it("keeps seeding a probationary niche that has no sample yet", async () => {
+    // Probation exists so the operator can judge a niche's output — it has to
+    // produce some.
+    let cursor = 5;
+    const pool = livePool();
+    const d = deps({
+      getPending: pool.getPending,
+      seed: pool.seed,
+      getCursor: () => cursor,
+      setCursor: vi.fn((c: number) => { cursor = c; }),
+    });
+    await runNightly(d);
+    expect(pool.seed.mock.calls[0][0].niche).toBe("RU B2B SaaS");
+  });
+
+  it("does not spin when every niche is on probation and each already has its sample", async () => {
+    const all = DEFAULT_NICHES.map((n) => ({ ...n, probation: true }));
+    const pool = livePool(all.flatMap((n) => inNiche(n.name, PROBATION_SAMPLE_SIZE)));
+    const d = deps({ getNiches: () => all, getPending: pool.getPending, seed: pool.seed });
+    const proposals = await runNightly(d);
+    expect(pool.seed).not.toHaveBeenCalled();
+    expect(proposals).toEqual([]);
+  });
+
+  it("tells the operator when there is nothing to propose, and why", async () => {
+    const pool = livePool(inNiche("RU B2B SaaS", 5));
+    const notify = vi.fn(async () => {});
+    const d = deps({ getPending: pool.getPending, seed: vi.fn(async () => {}), notify });
+    await runNightly(d);
+    expect(d.sendTitleDigest).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledOnce();
+    expect(String((notify.mock.calls[0] as unknown[])[0])).toMatch(/probation/i);
+  });
+
+  it("stays quiet on a dry run", async () => {
+    const notify = vi.fn(async () => {});
+    const d = deps({ getPending: () => [], seed: vi.fn(async () => {}), notify, dryRun: true });
+    await runNightly(d);
+    expect(notify).not.toHaveBeenCalled();
+  });
+});
+
+describe("runNightly — a failed seed does not cost the night", () => {
+  it("sends the digest from the existing pool when seeding fails", async () => {
+    // The pool target is two nights deep, so a night usually starts below it
+    // but with plenty to propose. One Anthropic 5xx used to throw out of the
+    // top-up and take the whole digest with it.
+    const pool = livePool(inNiche("Web3 / crypto", 8));
+    const d = deps({
+      getPending: pool.getPending,
+      poolThreshold: 20,
+      seed: vi.fn(async () => { throw new Error("529 overloaded"); }),
+    });
+    const proposals = await runNightly(d);
+    expect(d.seed).toHaveBeenCalledOnce(); // gives up seeding after the first failure
+    expect(proposals.length).toBeGreaterThan(0);
+    expect(d.sendTitleDigest).toHaveBeenCalledOnce();
+  });
+
+  it("does not advance the cursor past a slot that failed to seed", async () => {
+    const d = deps({ getPending: () => inNiche("Web3 / crypto", 3), seed: vi.fn(async () => { throw new Error("boom"); }) });
+    await runNightly(d);
+    expect(d.setCursor).not.toHaveBeenCalled();
+  });
+
+  it("fails the run when seeding failed AND there is nothing to propose, so the scheduler retries", async () => {
+    const d = deps({ getPending: () => [], seed: vi.fn(async () => { throw new Error("529 overloaded"); }) });
+    await expect(runNightly(d)).rejects.toThrow("529 overloaded");
   });
 });

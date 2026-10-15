@@ -177,9 +177,14 @@ class ApiClient {
     });
   }
 
-  async deleteArticle(id: string) {
+  /**
+   * Delete an article. A published one is refused (409) unless `removeLive`
+   * is set: deleting it takes it off the site at the next sync.
+   */
+  async deleteArticle(id: string, removeLive: boolean = false) {
     return this.request<{ success: boolean }>(`/api/articles/${id}/delete`, {
       method: "POST",
+      body: JSON.stringify({ removeLive }),
     });
   }
 

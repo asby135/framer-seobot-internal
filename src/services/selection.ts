@@ -134,22 +134,32 @@ export function selectTopics(
 /**
  * Should the seeder run tonight?
  *
- * Counts every topic with a usable SOURCE that has NOT already been offered at
- * gate 1, including ones from probationary niches: those are real topics
- * sitting in the queue awaiting review, so they fill the pool. Only selection
- * excludes them. Deliberately takes no exclusion set — passing one here
- * reintroduced unbounded nightly seeding, because with every niche on probation
- * the pool never looked full.
+ * Counts the topics selection could actually propose: a usable source, not yet
+ * offered at gate 1, and not from a probationary niche.
  *
  * Offered topics are excluded because they are not runway. Counting them
- * deadlocked the pipeline: a topic proposed at gate 1 stays `pending` until the
- * operator acts, so a queue of proposed-but-ignored topics sat permanently
- * above the threshold, the seeder never ran again, and the rotation cursor —
- * the only thing that moves the seeder onto a new niche, subniche and angle —
- * never advanced. The pool froze at whatever the last few slots produced.
+ * deadlocked the pipeline once: a queue of proposed-but-ignored topics sat
+ * above the threshold, the seeder never ran, and the rotation cursor froze.
+ *
+ * Probationary topics are excluded for the same reason — selection never picks
+ * them, so they cannot fill a night. Counting them stalled the digest outright:
+ * with a few niches on probation the unoffered pool filled with topics nothing
+ * could select, seeding stopped, and every night after that sent nothing. That
+ * they used to be counted was a guard against seeding forever when every niche
+ * is on probation; that guard now lives in the top-up loop, which stops
+ * seeding a probationary niche once it has a sample waiting for review.
  */
-export function needsTopUp(topics: PendingTopic[], threshold: number): boolean {
-  return usableTopics(topics).filter((t) => !alreadyOffered(t)).length < threshold;
+export function needsTopUp(
+  topics: PendingTopic[],
+  threshold: number,
+  excludeNiches: Set<string> = new Set()
+): boolean {
+  return usableTopics(topics, excludeNiches).filter((t) => !alreadyOffered(t)).length < threshold;
+}
+
+/** Unoffered usable topics from one niche — its sample awaiting review. */
+export function unofferedInNiche(topics: PendingTopic[], niche: string): number {
+  return usableTopics(topics).filter((t) => t.niche === niche && !alreadyOffered(t)).length;
 }
 
 /**

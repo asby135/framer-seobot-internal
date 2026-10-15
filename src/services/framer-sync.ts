@@ -1,4 +1,5 @@
 import { connect, isRetryableError } from "framer-api";
+import { createSyncLock } from "./sync-lock.js";
 import { getDb } from "../db/index.js";
 import { getSetting } from "./settings.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
@@ -753,32 +754,18 @@ export async function previewSyncToFramer(): Promise<SyncPreview> {
 }
 
 /**
- * Single-flight lock.
- *
- * Callbacks are handled concurrently (the webhook acknowledges before working),
- * and Telegram can redeliver an update. Two syncs interleaving removeItems and
- * addItems on one collection is exactly how a partial wipe happens, so a second
- * caller joins the run already in progress instead of starting another.
- */
-let inFlight: Promise<SyncResult> | null = null;
-
-/**
  * Connect to Framer and sync all published articles into the bound collection.
  * Does NOT publish the site — that is debounced separately.
+ *
+ * Serialised by createSyncLock: one sync at a time, and a caller who arrives
+ * mid-sync gets a fresh follow-up pass rather than the running one's result.
+ * Handing out the running result was a bug — that pass had read the article
+ * list before the caller's article was marked published, so the article was
+ * reported synced, deployed and announced while never reaching Framer.
  */
-export async function syncToFramer(force = false): Promise<SyncResult> {
-  if (inFlight) {
-    // A joiner takes the run already going, force or not: starting a second
-    // pass concurrently is the partial-wipe scenario this lock exists to stop.
-    // Re-run force once this one settles if a full rewrite is still wanted.
-    logger.info({ force }, "Sync already in progress — joining it rather than starting a second");
-    return inFlight;
-  }
-  inFlight = doSyncToFramer(force).finally(() => {
-    inFlight = null;
-  });
-  return inFlight;
-}
+export const syncToFramer: (force?: boolean) => Promise<SyncResult> = createSyncLock(
+  (force) => doSyncToFramer(force)
+);
 
 /** Fingerprints of what Framer is believed to hold, from the last sync. */
 export function loadSyncedHashes(): Map<string, string> {
