@@ -91,13 +91,54 @@ describe("insertSeededTopics — near-duplicate guard", () => {
     expect(r.nearDuplicates).toEqual([]);
   });
 
-  it("still revives an exactly-matching rejected topic", () => {
-    // Unchanged: re-importing the exact text of something rejected means the
+  it("revives an exactly-matching rejected topic on a deliberate import", () => {
+    // Re-importing the exact text of something rejected, by hand, means the
     // operator wants it back.
     insertSeededTopics(["Why Telegram Accounts Get Banned for Bulk Messaging"]);
     getDb().prepare("UPDATE keywords SET status = 'rejected'").run();
-    const r = insertSeededTopics(["Why Telegram Accounts Get Banned for Bulk Messaging"]);
+    const r = insertSeededTopics(["Why Telegram Accounts Get Banned for Bulk Messaging"], undefined, {
+      reviveRejected: true,
+    });
     expect(r.revived).toBe(1);
     expect(pendingQueries()).toHaveLength(1);
+  });
+});
+
+describe("insertSeededTopics — a rejection sticks", () => {
+  const TOPIC = "Why Telegram Accounts Get Banned for Bulk Messaging";
+  const reject = () =>
+    getDb().prepare("UPDATE keywords SET status = 'rejected', proposed_title = query").run();
+  const row = () =>
+    getDb().prepare("SELECT status, niche, proposed_title FROM keywords").get() as {
+      status: string; niche: string | null; proposed_title: string | null;
+    };
+
+  it("does not bring a rejected topic back from automatic seeding", () => {
+    // Telegram tells the operator a rejected topic "will not be proposed
+    // again". The nightly seeder shared the import's revive path, so Claude
+    // repeating the exact text months later put it straight back.
+    insertSeededTopics([TOPIC], "Web3 / crypto");
+    reject();
+    const r = insertSeededTopics([TOPIC], "Web3 / crypto");
+    expect(r.revived).toBe(0);
+    expect(r.skipped).toBe(1);
+    expect(row().status).toBe("rejected");
+  });
+
+  it("offers a deliberately revived topic afresh", () => {
+    // Its old proposed_title marked it as already offered, so it never counted
+    // toward the pool and only ever filled a short night.
+    insertSeededTopics([TOPIC], "Web3 / crypto");
+    reject();
+    insertSeededTopics([TOPIC], undefined, { reviveRejected: true });
+    expect(row().proposed_title).toBeNull();
+  });
+
+  it("keeps the topic's niche when the import names none", () => {
+    // A blank niche on revive slipped a probationary topic past probation.
+    insertSeededTopics([TOPIC], "Online currency exchanges");
+    reject();
+    insertSeededTopics([TOPIC], undefined, { reviveRejected: true });
+    expect(row().niche).toBe("Online currency exchanges");
   });
 });

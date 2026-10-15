@@ -23,7 +23,8 @@ research.post("/seed", async (c) => {
   // from another blog). Inserts as-is, skipping Claude generation.
   if (Array.isArray(body.topics) && body.topics.length > 0) {
     try {
-      const result = insertSeededTopics(body.topics.slice(0, 100));
+      // A deliberate import: exact matches of rejected topics come back.
+      const result = insertSeededTopics(body.topics.slice(0, 100), undefined, { reviveRejected: true });
       logger.info(
         { provided: body.topics.length, seeded: result.seeded.length, revived: result.revived, skipped: result.skipped },
         "Direct topic import complete"

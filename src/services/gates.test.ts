@@ -6,7 +6,7 @@ function deps(over: Partial<GateDeps> = {}): GateDeps {
     getKeyword: vi.fn(() => ({ id: "kw1", query: "a topic", status: "pending", proposed_title: "A Headline" })),
     approveKeyword: vi.fn(),
     rejectKeyword: vi.fn(),
-    enqueueGeneration: vi.fn(),
+    enqueueGeneration: vi.fn(() => true),
     getArticle: vi.fn(() => ({ id: "art1", title: "T", slug: "s", status: "review", content: "<p>body</p>" })),
     publishArticle: vi.fn(() => true),
     deleteArticle: vi.fn(),
@@ -14,6 +14,8 @@ function deps(over: Partial<GateDeps> = {}): GateDeps {
     syncToFramer: vi.fn(async () => ({ synced: 1, removed: 0, withLocales: true })),
     schedulePublish: vi.fn(),
     unpublishArticle: vi.fn(),
+    syncClock: vi.fn(() => "2026-10-15 12:00:00"),
+    syncedSince: vi.fn(() => []),
     pendingProposedKeywordIds: vi.fn(() => ["kw1", "kw2"]),
     reviewArticleIds: vi.fn(() => ["art1", "art2"]),
     recentTitles: () => [],
@@ -317,5 +319,71 @@ describe("Publish-all syncs the whole batch in one go", () => {
     const d = deps({ syncToFramer: vi.fn(async () => ({ synced: 2, removed: 0, withLocales: false })) });
     await createGateHandlers(d).onPublishAll(0);
     expect(d.alert).toHaveBeenCalledWith(expect.stringMatching(/without translations/i));
+  });
+});
+
+describe("a sync that fails partway", () => {
+  // The sync writes in batches and records each batch as it lands. When a
+  // later batch failed, every article was rolled back to review — including
+  // those already in Framer. A deploy before the next sync shipped them as
+  // live while the database said review; the next sync then removed them.
+  it("keeps the articles that reached Framer published, rolls back the rest, and deploys", async () => {
+    const d = deps({
+      reviewArticleIds: vi.fn(() => ["a1", "a2", "a3"]),
+      syncToFramer: vi.fn(async () => { throw new Error("batch 2 refused"); }),
+      syncedSince: vi.fn((ids: string[]) => ids.filter((id) => id === "a1")),
+    });
+    await createGateHandlers(d).onPublishAll(0);
+    expect((d.unpublishArticle as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])).toEqual(["a2", "a3"]);
+    expect(d.schedulePublish).toHaveBeenCalledOnce();
+    expect(d.alert).toHaveBeenCalledWith(expect.stringMatching(/1 of 3.*2 still in review/i));
+  });
+
+  it("asks what landed since the sync STARTED, not since some earlier one", async () => {
+    const d = deps({ syncToFramer: vi.fn(async () => { throw new Error("x"); }) });
+    await createGateHandlers(d).onPublishAll(0);
+    expect(d.syncedSince).toHaveBeenCalledWith(["art1", "art2"], "2026-10-15 12:00:00");
+  });
+
+  it("does not deploy when nothing landed", async () => {
+    const d = deps({ syncToFramer: vi.fn(async () => { throw new Error("x"); }) });
+    await createGateHandlers(d).onPublishAll(0);
+    expect(d.schedulePublish).not.toHaveBeenCalled();
+  });
+
+  it("keeps a single publish whose article landed before the failure", async () => {
+    const d = deps({
+      syncToFramer: vi.fn(async () => { throw new Error("a later batch failed"); }),
+      syncedSince: vi.fn((ids: string[]) => ids),
+    });
+    await createGateHandlers(d).onPublish("art1", 0);
+    expect(d.unpublishArticle).not.toHaveBeenCalled();
+    expect(d.schedulePublish).toHaveBeenCalledOnce();
+  });
+});
+
+describe("when the sync clock is read", () => {
+  it("reads it right after marking the article, before any Telegram round-trip", async () => {
+    // A sync already running could pick the article up and write it while the
+    // "Publishing…" message was in flight. Reading the clock after that made
+    // the write look older than the sync, so a later failure rolled back an
+    // article that was in Framer.
+    const order: string[] = [];
+    const d = deps({
+      progress: vi.fn(async () => { order.push("progress"); }),
+      syncClock: vi.fn(() => { order.push("clock"); return "t"; }),
+    });
+    await createGateHandlers(d).onPublish("art1", 0);
+    expect(order.indexOf("clock")).toBeLessThan(order.indexOf("progress"));
+  });
+});
+
+describe("approving when the queue refuses the topic", () => {
+  it("does not claim generation started", async () => {
+    const d = deps({ enqueueGeneration: vi.fn(() => false) });
+    await createGateHandlers(d).onApproveTitle("kw1", 5);
+    const said = (d.progress as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+    expect(said.some((m) => /writing/i.test(m))).toBe(false);
+    expect(said.some((m) => /already/i.test(m))).toBe(true);
   });
 });

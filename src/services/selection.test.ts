@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { selectTopics, needsTopUp, usableTopics, poolTarget, type PendingTopic } from "./selection.js";
+import { selectTopics, needsTopUp, usableTopics, poolTarget, blockedNiches, type PendingTopic } from "./selection.js";
 
 const t = (id: string, source: string): PendingTopic => ({ id, query: `q-${id}`, source });
 
@@ -260,5 +260,22 @@ describe("poolTarget", () => {
 
   it("follows maxPerNight when the operator raises it", () => {
     expect(poolTarget(10, 20)).toBe(40);
+  });
+});
+
+describe("blockedNiches", () => {
+  const t = (niche: string | null): PendingTopic => ({ id: String(Math.random()), query: "q", source: "seeded", niche });
+
+  it("blocks probationary niches and any niche no longer in the settings", () => {
+    // Probation used to be matched by name against the current list only, so
+    // renaming or removing a probationary niche released its unreviewed topics
+    // into the digest.
+    const blocked = blockedNiches(new Set(["Web3 / crypto"]), [t("Web3 / crypto"), t("Old name"), t("Probation niche")]);
+    expect([...blocked].sort()).toEqual(["Old name", "Probation niche"]);
+  });
+
+  it("never blocks topics with no niche", () => {
+    // Hand-entered and plugin-seeded topics carry none; they stay selectable.
+    expect(blockedNiches(new Set(), [t(null)]).size).toBe(0);
   });
 });

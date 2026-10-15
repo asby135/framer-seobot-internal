@@ -69,6 +69,10 @@ export function initDb(): Database.Database {
     // back catalogue.
     "UPDATE articles SET announced_at = published_at WHERE status = 'published'"
   );
+  // The generation job a topic is waiting on, as JSON ({query, titleOverride}),
+  // or NULL. Makes the in-memory queue survivable: set on enqueue, cleared when
+  // the job ends, and replayed at boot. Also the one-job-per-topic guard.
+  addColumn("ALTER TABLE keywords ADD COLUMN generation_job TEXT");
   addColumn(
     "ALTER TABLE articles ADD COLUMN ready_at TEXT",
     // When the operator was handed the article at gate 2. Publish all acts only

@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
 import { searchKB } from "./kb.js";
 import { generateThumbnail, processScreenshots } from "./assets.js";
-import { queryToSlug } from "../lib/utils.js";
+import { queryToSlug, uniqueSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
@@ -529,10 +529,7 @@ Write the article following the four AEO rules and call the publish_article tool
   }
 
   // Ensure slug doesn't collide with existing articles
-  let slug = queryToSlug(parsed.slug || parsed.title);
-  if (existingSlugs.has(slug)) {
-    slug = `${slug}-${nanoid(6)}`;
-  }
+  const slug = uniqueSlug(queryToSlug(parsed.slug || parsed.title), existingSlugs);
 
   // Sanitize HTML content
   const sanitizedContent = sanitizeHTML(parsed.content || "");

@@ -14,7 +14,9 @@ topics.get("/", (c) => {
   const excludeWithArticles = c.req.query("exclude_with_articles") === "1";
 
   const whereClause = excludeWithArticles
-    ? "WHERE k.status = ? AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.keyword_id = k.id)"
+    ? // The Generate tab's view: approved, no article yet, and not already
+      // queued — listing queued topics invited a second generation.
+      "WHERE k.status = ? AND k.generation_job IS NULL AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.keyword_id = k.id)"
     : "WHERE k.status = ?";
 
   const rows = db

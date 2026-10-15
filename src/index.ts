@@ -25,6 +25,7 @@ import {
   registerArticleReadyHandler,
   recoverPendingPublish,
   recoverOrphanedReviews,
+  recoverInterruptedGenerations,
   flushPendingPublish,
 } from "./services/bootstrap.js";
 
@@ -108,7 +109,19 @@ ensureDefaultSettings();
 registerArticleReadyHandler();
 
 // After the ready handler, so recovered articles are announced at gate 2.
-recoverOrphanedReviews();
+// Interrupted generations first: that discards their half-written drafts,
+// which recoverOrphanedReviews would otherwise send to review.
+// Guarded: a recovery bug must cost a log line, not a crash-looping deploy.
+for (const [name, recover] of [
+  ["interrupted generations", recoverInterruptedGenerations],
+  ["orphaned reviews", recoverOrphanedReviews],
+] as const) {
+  try {
+    recover();
+  } catch (e) {
+    logger.error({ error: e instanceof Error ? e.message : "unknown" }, `Boot recovery of ${name} failed`);
+  }
+}
 
 // Re-arm a site deploy that was owed when the process last stopped.
 recoverPendingPublish();

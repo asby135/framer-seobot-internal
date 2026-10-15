@@ -384,3 +384,13 @@ describe("runNightly — a failed seed does not cost the night", () => {
     await expect(runNightly(d)).rejects.toThrow("529 overloaded");
   });
 });
+
+describe("runNightly — niches that are no longer configured", () => {
+  it("does not auto-select topics from a niche that was renamed or removed", async () => {
+    const pool = livePool([...inNiche("Removed niche", 6), ...inNiche("Web3 / crypto", 6)]);
+    const d = deps({ getPending: pool.getPending, seed: pool.seed, articlesPerNight: () => 10 });
+    const proposals = await runNightly(d);
+    expect(proposals.length).toBeGreaterThan(0);
+    expect(proposals.some((p) => p.keywordId.startsWith("Removed niche"))).toBe(false);
+  });
+});

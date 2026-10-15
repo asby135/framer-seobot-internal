@@ -220,10 +220,13 @@ export async function seedTopics(
  *
  * Dedup behavior:
  *  - A query already present as pending/approved/generated → skip (genuinely active).
- *  - A query present only as a REJECTED row → revive it (status back to pending). A
- *    re-import of something you rejected means you want it back; reviving avoids
- *    leaving it stuck (the DELETE endpoint can't clear rejected rows) and avoids
- *    inserting a duplicate query row.
+ *  - A query present only as a REJECTED row → skip, unless `reviveRejected` is set.
+ *    The operator was told a rejected topic "will not be proposed again", and the
+ *    nightly seeder used to revive it whenever Claude repeated the exact text.
+ *    Only a deliberate import (POST /research/seed with `topics`) revives: a
+ *    re-import of something you rejected means you want it back. A revived topic
+ *    is offered afresh (proposed_title cleared) and keeps its niche unless the
+ *    import names one.
  *  - A query matching an existing article slug → skip (already written).
  *  - A query that is a REWORDING of any existing topic or article title → skip.
  *    The checks above are exact, and the seeder prompt only lists the most
@@ -234,7 +237,8 @@ export async function seedTopics(
  */
 export function insertSeededTopics(
   candidates: string[],
-  niche?: string
+  niche?: string,
+  opts: { reviveRejected?: boolean } = {}
 ): {
   seeded: Array<{ query: string }>;
   skipped: number;
@@ -295,7 +299,7 @@ export function insertSeededTopics(
 
     const existing = byQuery.get(key);
     if (existing) {
-      if (existing.status === "rejected") {
+      if (existing.status === "rejected" && opts.reviveRejected) {
         toRevive.push(existing.id);
         seededQueries.push(query);
       } else {
@@ -327,12 +331,16 @@ export function insertSeededTopics(
     `INSERT INTO keywords (id, query, source, opportunity_score, status, niche)
      VALUES (?, ?, 'seeded', ?, 'pending', ?)`
   );
-  // Revive must set `niche` too. Writing it only on the INSERT path meant a
-  // previously-rejected topic revived by a probationary niche kept a NULL or
-  // stale niche, so the probation filter never matched it and it could
-  // generate unattended — the exact leak probation exists to prevent.
+  // Only a deliberate import revives (see reviveRejected). It names no niche,
+  // so the revive keeps the topic's own via COALESCE — blanking it slipped a
+  // probationary topic past probation. proposed_title is cleared so the
+  // revived topic counts as unoffered; otherwise it never counted toward the
+  // pool and only ever filled a short night.
   const reviveStmt = db.prepare(
-    `UPDATE keywords SET status = 'pending', source = 'seeded', opportunity_score = ?, niche = ?, updated_at = datetime('now') WHERE id = ?`
+    `UPDATE keywords
+        SET status = 'pending', source = 'seeded', opportunity_score = ?,
+            niche = COALESCE(?, niche), proposed_title = NULL, updated_at = datetime('now')
+      WHERE id = ?`
   );
   const insertMany = db.transaction((items: string[]) => {
     for (const q of items) insertStmt.run(nanoid(), q, SEEDED_SCORE, niche ?? null);

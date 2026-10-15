@@ -146,6 +146,100 @@ export function articlesReadyForReview(): string[] {
 }
 
 /**
+ * Roll a publish back to review.
+ *
+ * Clears announced_at too: a deploy that fires mid-sync can announce an
+ * article whose sync then fails, and left stamped, its eventual real publish
+ * would never be announced.
+ */
+export function unpublishArticleRow(id: string): void {
+  getDb()
+    .prepare(
+      "UPDATE articles SET status = 'review', published_at = NULL, announced_at = NULL, updated_at = datetime('now') WHERE id = ?"
+    )
+    .run(id);
+}
+
+/**
+ * Of `ids`, the articles written to Framer at or after `since` — i.e. those a
+ * failed sync had already delivered. Item ids are article ids, and the sync
+ * records each batch in framer_sync_state as it lands.
+ */
+export function articlesSyncedSince(ids: string[], since: string): string[] {
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => "?").join(",");
+  const landed = new Set(
+    (
+      getDb()
+        .prepare(`SELECT item_id FROM framer_sync_state WHERE item_id IN (${placeholders}) AND synced_at >= ?`)
+        .all(...ids, since) as { item_id: string }[]
+    ).map((r) => r.item_id)
+  );
+  return ids.filter((id) => landed.has(id));
+}
+
+/**
+ * Re-queue every generation a restart interrupted. Returns the keyword ids.
+ *
+ * The queue lives in memory; the job record on the keyword (generation_job)
+ * does not. Called at boot, when the queue is empty, so every recorded job was
+ * cut off. A job killed mid-generation may have left its half-written draft
+ * (the row is inserted before thumbnails and screenshots); it is discarded so
+ * the rerun does not give the topic two articles. Run BEFORE
+ * recoverOrphanedReviews, which would otherwise send that draft to review.
+ */
+export function recoverInterruptedGenerations(
+  enqueue: (job: { keywordId: string; query: string; titleOverride?: string }) => boolean = enqueueGeneration
+): string[] {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT id, query, generation_job FROM keywords WHERE generation_job IS NOT NULL")
+    .all() as Array<{ id: string; query: string; generation_job: string }>;
+
+  const requeued: string[] = [];
+  for (const row of rows) {
+    // Per row: one bad record must not crash-loop the deploy.
+    try {
+      const halfWritten = db
+        .prepare(
+          "SELECT id FROM articles WHERE keyword_id = ? AND status IN ('draft','review') AND ready_at IS NULL"
+        )
+        .all(row.id) as { id: string }[];
+      for (const a of halfWritten) deleteArticleRow(a.id);
+
+      // Release the claim whatever happens next, so the queue can take it.
+      db.prepare("UPDATE keywords SET generation_job = NULL WHERE id = ?").run(row.id);
+
+      // Replay only what is still wanted and still unwritten: a topic rejected
+      // while it was queued, or one that already has an article (e.g. a failed
+      // generation that was being reported), must not be generated again.
+      const current = db.prepare("SELECT status FROM keywords WHERE id = ?").get(row.id) as { status: string };
+      const hasArticle = db.prepare("SELECT 1 FROM articles WHERE keyword_id = ?").get(row.id);
+      if (current.status === "rejected" || hasArticle) continue;
+
+      let recorded: { query?: unknown; titleOverride?: unknown } = {};
+      try {
+        const parsed: unknown = JSON.parse(row.generation_job);
+        if (parsed && typeof parsed === "object") recorded = parsed as typeof recorded;
+      } catch {
+        // A corrupt record still names the topic; fall back to its query.
+      }
+      enqueue({
+        keywordId: row.id,
+        query: typeof recorded.query === "string" ? recorded.query : row.query,
+        ...(typeof recorded.titleOverride === "string" ? { titleOverride: recorded.titleOverride } : {}),
+      });
+      requeued.push(row.id);
+    } catch (e) {
+      logger.error({ keywordId: row.id, error: e instanceof Error ? e.message : "unknown" }, "Could not recover an interrupted generation");
+    }
+  }
+
+  if (requeued.length > 0) logger.warn({ keywordIds: requeued }, "Re-queued generations a restart interrupted");
+  return requeued;
+}
+
+/**
  * Send every article a restart cut off before gate 2 back through translation,
  * which hands it to the operator. Returns the ids re-enqueued.
  *
@@ -418,13 +512,9 @@ export function buildGateHandlers(): CallbackHandlers {
     syncToFramer,
     schedulePublish: () => schedulePublishPersisted(),
 
-    unpublishArticle: (id) => {
-      db()
-        .prepare(
-          "UPDATE articles SET status = 'review', published_at = NULL, updated_at = datetime('now') WHERE id = ?"
-        )
-        .run(id);
-    },
+    unpublishArticle: unpublishArticleRow,
+    syncClock: () => (db().prepare("SELECT datetime('now') AS t").get() as { t: string }).t,
+    syncedSince: articlesSyncedSince,
 
     /**
      * The topics from the most recent digest that are still awaiting a

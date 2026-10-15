@@ -99,6 +99,15 @@ export function setGenerationCrashHandler(handler: GenerationCrashHandler | null
   onGenerationCrash = handler;
 }
 
+/** End a topic's generation claim. Idempotent; never throws. */
+function releaseClaim(keywordId: string): void {
+  try {
+    getDb().prepare("UPDATE keywords SET generation_job = NULL WHERE id = ?").run(keywordId);
+  } catch (e) {
+    logger.error({ keywordId, error: e instanceof Error ? e.message : "unknown" }, "Could not clear the generation record");
+  }
+}
+
 /** Resolves once both queues are empty and idle. */
 export async function onQueuesIdle(): Promise<void> {
   // A finished generation queues its translation before the generation queue
@@ -108,10 +117,31 @@ export async function onQueuesIdle(): Promise<void> {
 }
 
 /**
- * Enqueue an article generation job.
- * Returns immediately — generation happens in the background.
+ * Enqueue an article generation job. Returns false — and queues nothing — if
+ * the topic already has a job queued or running.
+ *
+ * The job is recorded on the keyword before it is queued (generation_job) and
+ * cleared when it ends, however it ends. That record is what lets a restart
+ * resume the queue (see recoverInterruptedGenerations): the queue itself lives
+ * in memory, and every redeploy during an Approve all used to drop the rest of
+ * the batch. Claiming it with `WHERE generation_job IS NULL` is also the
+ * one-job-per-topic guard — a topic approved in Telegram and then generated
+ * from the plugin while it waited produced two articles.
  */
-export function enqueueGeneration(job: GenerationJob): void {
+export function enqueueGeneration(job: GenerationJob): boolean {
+  const claimed =
+    getDb()
+      .prepare("UPDATE keywords SET generation_job = ? WHERE id = ? AND generation_job IS NULL")
+      .run(JSON.stringify({ query: job.query, titleOverride: job.titleOverride ?? null }), job.keywordId).changes > 0;
+  if (!claimed) {
+    const exists = getDb().prepare("SELECT 1 FROM keywords WHERE id = ?").get(job.keywordId);
+    logger.info(
+      { keywordId: job.keywordId, query: job.query },
+      exists ? "Generation not queued — this topic already has a job" : "Generation not queued — no such topic"
+    );
+    return false;
+  }
+
   // Every error is caught here. p-queue rejects the promise add() returns, and
   // nothing awaited it: Node exits on an unhandled rejection, so one job that
   // threw past the generator's own failure handling took down the server and
@@ -144,7 +174,10 @@ export function enqueueGeneration(job: GenerationJob): void {
         enqueueTranslation({ articleId: result.articleId, force: false, notifyWhenReady: true });
       } else {
         // A failed generation still needs to reach the operator, or the topic
-        // vanishes with no article and no message.
+        // vanishes with no article and no message. Release the topic first: a
+        // restart while that message is in flight would otherwise replay the
+        // job and give the topic a second article.
+        releaseClaim(job.keywordId);
         await notifyArticleReady(result.articleId);
       }
     } catch (e) {
@@ -156,8 +189,13 @@ export function enqueueGeneration(job: GenerationJob): void {
       } catch {
         // Already logged above; a failed alert must not crash the queue either.
       }
+    } finally {
+      // Ends the claim however the job ended, so the topic can be queued again
+      // (a regenerate, or a retry after a crash).
+      releaseClaim(job.keywordId);
     }
   });
+  return true;
 }
 
 /**

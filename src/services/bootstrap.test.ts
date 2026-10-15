@@ -22,6 +22,9 @@ let markAnnounced: typeof import("./bootstrap.js").markAnnounced;
 let articleUrl: typeof import("./bootstrap.js").articleUrl;
 let articlesReadyForReview: typeof import("./bootstrap.js").articlesReadyForReview;
 let recoverOrphanedReviews: typeof import("./bootstrap.js").recoverOrphanedReviews;
+let recoverInterruptedGenerations: typeof import("./bootstrap.js").recoverInterruptedGenerations;
+let articlesSyncedSince: typeof import("./bootstrap.js").articlesSyncedSince;
+let unpublishArticleRow: typeof import("./bootstrap.js").unpublishArticleRow;
 
 beforeAll(async () => {
   // env.ts snapshots process.env at import time, so this must be set before
@@ -30,7 +33,7 @@ beforeAll(async () => {
   const dbMod = await import("../db/index.js");
   dbMod.initDb();
   getDb = dbMod.getDb;
-  ({ buildGateHandlers, publishIsOverdue, articlesAwaitingAnnouncement, markAnnounced, articleUrl, articlesReadyForReview, recoverOrphanedReviews } =
+  ({ buildGateHandlers, publishIsOverdue, articlesAwaitingAnnouncement, markAnnounced, articleUrl, articlesReadyForReview, recoverOrphanedReviews, recoverInterruptedGenerations, articlesSyncedSince, unpublishArticleRow } =
     await import("./bootstrap.js"));
 });
 
@@ -40,6 +43,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM article_translations").run();
   db.prepare("DELETE FROM articles").run();
   db.prepare("DELETE FROM keywords").run();
+  db.prepare("DELETE FROM framer_sync_state").run();
 });
 
 function seedArticle(id = "a1", keywordId = "k1") {
@@ -252,5 +256,110 @@ describe("recoverOrphanedReviews — articles a restart cut off before gate 2", 
     expect(ids.sort()).toEqual(["orphan-draft", "orphan-review"]);
     expect(enqueue).toHaveBeenCalledWith({ articleId: "orphan-draft", force: false, notifyWhenReady: true });
     expect(enqueue).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("recoverInterruptedGenerations — the queue survives a redeploy", () => {
+  // The generation queue lives in memory. Every redeploy during an Approve all
+  // used to drop the rest of the batch: topics stuck 'approved', no article,
+  // no message, and the approved headline lost.
+  const kw = (id: string, job: object | null) =>
+    getDb()
+      .prepare("INSERT INTO keywords (id, query, status, generation_job) VALUES (?, ?, 'approved', ?)")
+      .run(id, `topic ${id}`, job ? JSON.stringify(job) : null);
+  const art = (id: string, keywordId: string, status: string, ready: boolean) =>
+    getDb()
+      .prepare(
+        `INSERT INTO articles (id, keyword_id, title, slug, status, ready_at) VALUES (?, ?, 'T', ?, ?, ${ready ? "datetime('now')" : "NULL"})`
+      )
+      .run(id, keywordId, `slug-${id}`, status);
+  const exists = (id: string) => Boolean(getDb().prepare("SELECT 1 FROM articles WHERE id = ?").get(id));
+
+  it("re-queues every recorded job with its original query and headline", () => {
+    kw("k1", { query: "topic k1", titleOverride: "The Approved Headline" });
+    kw("k2", null);
+    const enqueue = vi.fn(() => true);
+    expect(recoverInterruptedGenerations(enqueue)).toEqual(["k1"]);
+    expect(enqueue).toHaveBeenCalledWith({ keywordId: "k1", query: "topic k1", titleOverride: "The Approved Headline" });
+    expect(enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("clears the record before re-queuing, so the queue can claim it again", () => {
+    kw("k1", { query: "topic k1" });
+    let seenDuringEnqueue: unknown = "unset";
+    recoverInterruptedGenerations(() => {
+      seenDuringEnqueue = (getDb().prepare("SELECT generation_job FROM keywords WHERE id = 'k1'").get() as { generation_job: unknown }).generation_job;
+      return true;
+    });
+    expect(seenDuringEnqueue).toBeNull();
+  });
+
+  it("discards the half-written draft the killed job left behind", () => {
+    // The generator inserts its row before thumbnails and screenshots. Keeping
+    // it would mean two articles for one topic once the job reruns.
+    kw("k1", { query: "topic k1" });
+    art("half", "k1", "draft", false);
+    recoverInterruptedGenerations(vi.fn(() => true));
+    expect(exists("half")).toBe(false);
+  });
+
+  it("drops the job of a topic rejected while it was queued", () => {
+    kw("k1", { query: "topic k1" });
+    getDb().prepare("UPDATE keywords SET status = 'rejected' WHERE id = 'k1'").run();
+    const enqueue = vi.fn(() => true);
+    recoverInterruptedGenerations(enqueue);
+    expect(enqueue).not.toHaveBeenCalled();
+    const job = getDb().prepare("SELECT generation_job FROM keywords WHERE id = 'k1'").get() as { generation_job: unknown };
+    expect(job.generation_job).toBeNull();
+  });
+
+  it("drops the job of a topic that already has an article (e.g. a failed generation being reported)", () => {
+    kw("k1", { query: "topic k1" });
+    art("failed", "k1", "generation_failed", false);
+    const enqueue = vi.fn(() => true);
+    recoverInterruptedGenerations(enqueue);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(exists("failed")).toBe(true);
+  });
+
+  it("survives a corrupt record without crashing boot", () => {
+    getDb().prepare("INSERT INTO keywords (id, query, status, generation_job) VALUES ('k1', 'topic k1', 'approved', 'null')").run();
+    const enqueue = vi.fn(() => true);
+    expect(() => recoverInterruptedGenerations(enqueue)).not.toThrow();
+    expect(enqueue).toHaveBeenCalledWith({ keywordId: "k1", query: "topic k1" });
+  });
+
+  it("leaves finished articles alone", () => {
+    kw("k1", { query: "topic k1" });
+    art("shown", "k1", "review", true);
+    art("live", "k1", "published", true);
+    recoverInterruptedGenerations(vi.fn(() => true));
+    expect(exists("shown")).toBe(true);
+    expect(exists("live")).toBe(true);
+  });
+});
+
+describe("articlesSyncedSince — what reached Framer before a sync failed", () => {
+  it("returns the ids written to Framer at or after the given time", () => {
+    const db = getDb();
+    db.prepare("INSERT INTO framer_sync_state (item_id, hash, synced_at) VALUES ('new', 'h', '2026-10-15 12:00:05')").run();
+    db.prepare("INSERT INTO framer_sync_state (item_id, hash, synced_at) VALUES ('old', 'h', '2026-10-15 11:00:00')").run();
+    expect(articlesSyncedSince(["new", "old", "absent"], "2026-10-15 12:00:00")).toEqual(["new"]);
+  });
+
+  it("handles an empty list", () => {
+    expect(articlesSyncedSince([], "2026-10-15 12:00:00")).toEqual([]);
+  });
+});
+
+describe("unpublishArticleRow", () => {
+  it("clears the announcement stamp along with the publish", () => {
+    // A deploy firing mid-sync could announce an article that then failed to
+    // sync. Left stamped, its eventual real publish was never announced.
+    seedArticle("a1", "k1");
+    getDb().prepare("UPDATE articles SET status = 'published', published_at = datetime('now'), announced_at = datetime('now') WHERE id = 'a1'").run();
+    unpublishArticleRow("a1");
+    const row = getDb().prepare("SELECT status, published_at, announced_at FROM articles WHERE id = 'a1'").get();
+    expect(row).toEqual({ status: "review", published_at: null, announced_at: null });
   });
 });

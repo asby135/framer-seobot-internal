@@ -90,11 +90,70 @@ describe("a generation that throws", () => {
   });
 
   it("keeps processing the jobs behind it", async () => {
+    getDb().prepare("INSERT INTO keywords (id, query, status) VALUES ('k2', 'q2', 'approved')").run();
     generate.mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce({ articleId: "a1", status: "review" });
     translate.mockResolvedValue({});
     queue.enqueueGeneration({ keywordId: "k1", query: "first" });
-    queue.enqueueGeneration({ keywordId: "k1", query: "second" });
+    queue.enqueueGeneration({ keywordId: "k2", query: "second" });
     await queue.onQueuesIdle();
     expect(generate).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("one generation per topic, recorded so a restart can resume it", () => {
+  const job = () =>
+    (getDb().prepare("SELECT generation_job FROM keywords WHERE id = 'k1'").get() as { generation_job: string | null })
+      .generation_job;
+
+  it("refuses to queue a topic that is already queued", async () => {
+    // Approved in Telegram, then generated again from the plugin's Generate
+    // tab while still waiting its turn: two articles, twice the spend.
+    let release!: () => void;
+    generate.mockImplementation(() => new Promise((r) => { release = () => r({ articleId: "a1", status: "generation_failed" }); }));
+    expect(queue.enqueueGeneration({ keywordId: "k1", query: "q" })).toBe(true);
+    expect(queue.enqueueGeneration({ keywordId: "k1", query: "q" })).toBe(false);
+    await new Promise((r) => setTimeout(r, 0));
+    release();
+    await queue.onQueuesIdle();
+    expect(generate).toHaveBeenCalledOnce();
+  });
+
+  it("records the job the moment it is queued", async () => {
+    let release!: () => void;
+    generate.mockImplementation(() => new Promise((r) => { release = () => r({ articleId: "a1", status: "generation_failed" }); }));
+    queue.enqueueGeneration({ keywordId: "k1", query: "q", titleOverride: "The Headline" });
+    expect(JSON.parse(job()!)).toEqual({ query: "q", titleOverride: "The Headline" });
+    await new Promise((r) => setTimeout(r, 0));
+    release();
+    await queue.onQueuesIdle();
+  });
+
+  it("clears the record when the job ends, so the topic can be queued again", async () => {
+    generate.mockResolvedValue({ articleId: "a1", status: "generation_failed" });
+    queue.enqueueGeneration({ keywordId: "k1", query: "q" });
+    await queue.onQueuesIdle();
+    expect(job()).toBeNull();
+    expect(queue.enqueueGeneration({ keywordId: "k1", query: "q" })).toBe(true);
+    await queue.onQueuesIdle();
+  });
+
+  it("clears the record when the job crashes too", async () => {
+    generate.mockRejectedValue(new Error("boom"));
+    queue.enqueueGeneration({ keywordId: "k1", query: "q" });
+    await queue.onQueuesIdle();
+    expect(job()).toBeNull();
+  });
+});
+
+describe("a failed generation", () => {
+  it("releases the topic before the operator is told, so a restart mid-message does not rerun it", async () => {
+    let jobDuringNotify: unknown = "unset";
+    queue.setArticleReadyHandler(() => {
+      jobDuringNotify = (getDb().prepare("SELECT generation_job FROM keywords WHERE id = 'k1'").get() as { generation_job: unknown }).generation_job;
+    });
+    generate.mockResolvedValue({ articleId: "a1", status: "generation_failed" });
+    queue.enqueueGeneration({ keywordId: "k1", query: "q" });
+    await queue.onQueuesIdle();
+    expect(jobDuringNotify).toBeNull();
   });
 });

@@ -157,6 +157,22 @@ export function needsTopUp(
   return usableTopics(topics, excludeNiches).filter((t) => !alreadyOffered(t)).length < threshold;
 }
 
+/**
+ * Niche names found on topics that are not currently active (configured and
+ * off probation): probationary niches, and niches since renamed or removed.
+ *
+ * Fails closed on purpose. Probation used to be matched against the current
+ * list of probationary NAMES, so renaming or removing a probationary niche
+ * released its unreviewed topics straight into the digest. Topics with no
+ * niche (hand-entered, plugin-seeded) are never blocked. Blocked topics stay
+ * visible in the plugin for a manual decision.
+ */
+export function blockedNiches(activeNames: Set<string>, topics: PendingTopic[]): Set<string> {
+  const blocked = new Set<string>();
+  for (const t of topics) if (t.niche && !activeNames.has(t.niche)) blocked.add(t.niche);
+  return blocked;
+}
+
 /** Unoffered usable topics from one niche — its sample awaiting review. */
 export function unofferedInNiche(topics: PendingTopic[], niche: string): number {
   return usableTopics(topics).filter((t) => t.niche === niche && !alreadyOffered(t)).length;

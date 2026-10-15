@@ -44,28 +44,32 @@ generate.post("/", async (c) => {
   const db = getDb();
   const body = await c.req.json<{ keyword_id?: string }>().catch(() => ({ keyword_id: undefined }));
 
-  let approved: { id: string; query: string } | undefined;
+  // Not already queued (generation_job), and written under the headline the
+  // digest proposed — the plugin path used to ignore both.
+  let approved: { id: string; query: string; proposed_title: string | null } | undefined;
 
   if (body.keyword_id) {
     // Generate a specific topic
     approved = db
       .prepare(
-        `SELECT k.id, k.query FROM keywords k
+        `SELECT k.id, k.query, k.proposed_title FROM keywords k
          WHERE k.id = ? AND k.status = 'approved'
+         AND k.generation_job IS NULL
          AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.keyword_id = k.id)`
       )
-      .get(body.keyword_id) as { id: string; query: string } | undefined;
+      .get(body.keyword_id) as typeof approved;
   } else {
     // Pick the highest-scoring approved topic
     approved = db
       .prepare(
-        `SELECT k.id, k.query FROM keywords k
+        `SELECT k.id, k.query, k.proposed_title FROM keywords k
          WHERE k.status = 'approved'
+         AND k.generation_job IS NULL
          AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.keyword_id = k.id)
          ORDER BY k.opportunity_score DESC
          LIMIT 1`
       )
-      .get() as { id: string; query: string } | undefined;
+      .get() as typeof approved;
   }
 
   if (!approved) {
@@ -75,10 +79,17 @@ generate.post("/", async (c) => {
   // PQueue serializes everything (concurrency=1), so it's safe to stack more
   // jobs behind whatever is already running — they'll just wait their turn.
 
+  // Enqueue for background generation. False means it was queued by someone
+  // else between the read above and here.
+  const queued = enqueueGeneration({
+    keywordId: approved.id,
+    query: approved.query,
+    titleOverride: approved.proposed_title ?? undefined,
+  });
+  if (!queued) {
+    return c.json({ error: "This topic is already being generated" }, 409);
+  }
   rateLimiter.record();
-
-  // Enqueue for background generation
-  enqueueGeneration({ keywordId: approved.id, query: approved.query });
   logger.info(
     { keyword_id: approved.id, query: approved.query },
     "Generation enqueued"
@@ -114,12 +125,13 @@ generate.post("/batch", async (c) => {
   const placeholders = uniqueIds.map(() => "?").join(",");
   const approved = db
     .prepare(
-      `SELECT k.id, k.query FROM keywords k
+      `SELECT k.id, k.query, k.proposed_title FROM keywords k
        WHERE k.id IN (${placeholders}) AND k.status = 'approved'
-       AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.keyword_id = k.id)
+       AND k.generation_job IS NULL
+         AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.keyword_id = k.id)
        ORDER BY k.opportunity_score DESC`
     )
-    .all(...uniqueIds) as Array<{ id: string; query: string }>;
+    .all(...uniqueIds) as Array<{ id: string; query: string; proposed_title: string | null }>;
 
   if (approved.length === 0) {
     return c.json({ error: "No matching approved topics waiting for generation" }, 404);
@@ -127,12 +139,20 @@ generate.post("/batch", async (c) => {
 
   // Clamp to rate-limit budget
   const remaining = rateLimiter.remaining();
-  const toEnqueue = approved.slice(0, remaining);
-  const skipped = approved.slice(remaining);
+  const candidates = approved.slice(0, remaining);
+  const skipped: Array<{ keyword_id: string; query: string; reason: string }> = approved
+    .slice(remaining)
+    .map((k) => ({ keyword_id: k.id, query: k.query, reason: "rate-limit" }));
+  const toEnqueue: typeof approved = [];
 
-  for (const k of toEnqueue) {
+  for (const k of candidates) {
+    const queued = enqueueGeneration({ keywordId: k.id, query: k.query, titleOverride: k.proposed_title ?? undefined });
+    if (!queued) {
+      skipped.push({ keyword_id: k.id, query: k.query, reason: "already-queued" });
+      continue;
+    }
     rateLimiter.record();
-    enqueueGeneration({ keywordId: k.id, query: k.query });
+    toEnqueue.push(k);
   }
 
   logger.info(
@@ -144,7 +164,7 @@ generate.post("/batch", async (c) => {
     {
       status: "queued",
       enqueued: toEnqueue.map((k) => ({ keyword_id: k.id, query: k.query })),
-      skipped: skipped.map((k) => ({ keyword_id: k.id, query: k.query, reason: "rate-limit" })),
+      skipped,
       remaining: rateLimiter.remaining(),
     },
     202

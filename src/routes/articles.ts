@@ -305,7 +305,9 @@ articles.post("/:id/regenerate", async (c) => {
     );
   }
 
-  const keyword = db.prepare("SELECT id, query FROM keywords WHERE id = ?").get(article.keyword_id) as { id: string; query: string } | undefined;
+  const keyword = db.prepare("SELECT id, query, proposed_title FROM keywords WHERE id = ?").get(article.keyword_id) as
+    | { id: string; query: string; proposed_title: string | null }
+    | undefined;
   if (!keyword) {
     return c.json({ error: "Associated keyword not found" }, 404);
   }
@@ -323,18 +325,27 @@ articles.post("/:id/regenerate", async (c) => {
   // Reset keyword to approved so generator picks it up
   db.prepare("UPDATE keywords SET status = 'approved' WHERE id = ?").run(keyword.id);
 
+  let queued: boolean;
   // If instructions provided, store them temporarily on the keyword
   if (body.instructions?.trim()) {
     db.prepare("UPDATE keywords SET search_volume = NULL WHERE id = ?").run(keyword.id);
     // Store instructions in a temp field — we'll pass it via the query
     const modifiedQuery = `${keyword.query} [EDITING INSTRUCTIONS: ${body.instructions.trim()}]`;
-    enqueueGeneration({ keywordId: keyword.id, query: modifiedQuery });
+    // No pinned title here: the instructions may well be about the title.
+    queued = enqueueGeneration({ keywordId: keyword.id, query: modifiedQuery });
   } else {
-    enqueueGeneration({ keywordId: keyword.id, query: keyword.query });
+    // Keep the headline approved at gate 1, as the Telegram regenerate does.
+    queued = enqueueGeneration({
+      keywordId: keyword.id,
+      query: keyword.query,
+      titleOverride: keyword.proposed_title ?? undefined,
+    });
   }
 
-  logger.info({ articleId: id, keywordId: keyword.id, hasInstructions: !!body.instructions }, "Article regeneration enqueued");
-  return c.json({ status: "queued", keyword_id: keyword.id, query: keyword.query });
+  logger.info({ articleId: id, keywordId: keyword.id, hasInstructions: !!body.instructions, queued }, "Article regeneration enqueued");
+  // False only when a job for this topic is already recorded — that job will
+  // write the article, so say so rather than claim a new one was queued.
+  return c.json({ status: queued ? "queued" : "already-queued", keyword_id: keyword.id, query: keyword.query });
 });
 
 // Bulk import articles (for migrating from external CMS)

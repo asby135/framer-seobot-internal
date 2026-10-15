@@ -1,5 +1,5 @@
 import { nextSlot, probationaryNames, countPairs, type Niche } from "./taxonomy.js";
-import { selectTopics, needsTopUp, unofferedInNiche, type PendingTopic } from "./selection.js";
+import { selectTopics, needsTopUp, unofferedInNiche, blockedNiches, type PendingTopic } from "./selection.js";
 import { logger } from "../lib/logger.js";
 
 /**
@@ -120,6 +120,11 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
   // meant they produced nothing and the operator waited for topics that could
   // never arrive.
   const onProbation = probationaryNames(niches);
+  // Topics selection must not pick: probationary niches, plus niches no longer
+  // configured (renamed or removed). Recomputed per read, because seeding adds
+  // topics under probationary names that may not have had any before.
+  const active = new Set(niches.filter((n) => !n.probation).map((n) => n.name));
+  const blocked = (topics: PendingTopic[]) => new Set([...onProbation, ...blockedNiches(active, topics)]);
 
   // Top-up counts only what selection can propose, so probationary topics are
   // NOT runway (see needsTopUp). What stops a probationary niche piling up
@@ -142,7 +147,7 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
   let seedError: unknown = null;
   let noRotatableNiche = false;
 
-  while (seeds < MAX_SEEDS_PER_RUN && needsTopUp(deps.getPending(), deps.poolThreshold, onProbation)) {
+  while (seeds < MAX_SEEDS_PER_RUN && needsTopUp(deps.getPending(), deps.poolThreshold, blocked(deps.getPending()))) {
     const slot = nextSlot(niches, deps.getCursor());
     if (!slot) {
       // No niche has subniches, or none configured. Not an error: the run
@@ -194,7 +199,17 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
 
   // 2. Select. Re-read the pool so freshly seeded topics are eligible tonight.
   const count = deps.articlesPerNight();
-  const selected = selectTopics(deps.getPending(), count, Math.random, onProbation);
+  const pool = deps.getPending();
+  const selected = selectTopics(pool, count, Math.random, blocked(pool));
+
+  // Topics in niches no longer configured are held back by design (fail
+  // closed), but a renamed live niche would otherwise lose its whole pool in
+  // silence. Logged every night so the drop is visible before it empties one.
+  const unconfigured = [...blockedNiches(active, pool)].filter((n) => !onProbation.has(n));
+  if (unconfigured.length > 0) {
+    const counts = Object.fromEntries(unconfigured.map((n) => [n, pool.filter((t) => t.niche === n).length]));
+    logger.warn({ counts }, "Pending topics held back: their niche is no longer configured");
+  }
   if (selected.length === 0) {
     // Nothing to propose because seeding broke: fail, so the scheduler retries
     // and, if it keeps failing, alerts.
@@ -203,7 +218,7 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
     logger.warn("No usable topics available — nothing to propose tonight");
     // A silent night is indistinguishable from a broken bot. Say why.
     if (!deps.dryRun) {
-      await deps.notify?.(nothingToProposeMessage(deps.getPending(), onProbation, noRotatableNiche));
+      await deps.notify?.(nothingToProposeMessage(pool, blocked(pool), noRotatableNiche));
     }
     return [];
   }
@@ -243,16 +258,16 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
 /** Why a night proposed nothing, in terms the operator can act on. */
 function nothingToProposeMessage(
   pending: PendingTopic[],
-  onProbation: Set<string>,
+  blockedNames: Set<string>,
   noRotatableNiche: boolean
 ): string {
   const held = new Map<string, number>();
   for (const t of pending) {
-    if (t.niche && onProbation.has(t.niche)) held.set(t.niche, (held.get(t.niche) ?? 0) + 1);
+    if (t.niche && blockedNames.has(t.niche)) held.set(t.niche, (held.get(t.niche) ?? 0) + 1);
   }
   const base = "No titles tonight — there are no new topics to propose.";
   if (noRotatableNiche) return `${base} No niche has any subniches to seed from — add some in the plugin's Settings.`;
   if (held.size === 0) return `${base} Seeding produced nothing usable; check the logs.`;
   const list = [...held].map(([n, c]) => `${n} (${c})`).join(", ");
-  return `${base} Topics waiting in probationary niches: ${list}. Approve some in the plugin, or clear probation in Settings once a niche's output looks right.`;
+  return `${base} Topics are waiting in niches that are on probation or no longer configured: ${list}. Approve some in the plugin, or clear probation in Settings once a niche's output looks right.`;
 }

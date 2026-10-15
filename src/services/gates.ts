@@ -29,7 +29,8 @@ export interface GateDeps {
   getKeyword(id: string): KeywordRow | undefined;
   approveKeyword(id: string): void;
   rejectKeyword(id: string): void;
-  enqueueGeneration(job: { keywordId: string; query: string; titleOverride?: string }): void;
+  /** False when the topic already has a generation job (see queue.ts). */
+  enqueueGeneration(job: { keywordId: string; query: string; titleOverride?: string }): boolean;
 
   getArticle(id: string): ArticleRow | undefined;
   /** Returns false when the article was not in a publishable state. */
@@ -41,6 +42,10 @@ export interface GateDeps {
   schedulePublish(): void;
   /** Revert a publish when the subsequent sync fails, so a retry can work. */
   unpublishArticle(id: string): void;
+  /** The database clock, in the format framer_sync_state.synced_at uses. */
+  syncClock(): string;
+  /** Of `ids`, those written to Framer at or after `since` (see articlesSyncedSince). */
+  syncedSince(ids: string[], since: string): string[];
 
   /** Keyword ids still pending with a proposed title — for Approve all. */
   pendingProposedKeywordIds(): string[];
@@ -82,11 +87,20 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
     }
 
     deps.approveKeyword(keywordId);
-    deps.enqueueGeneration({
+    const queued = deps.enqueueGeneration({
       keywordId,
       query: kw.query,
       titleOverride: kw.proposed_title ?? undefined,
     });
+    if (!queued) {
+      // Already being written (e.g. queued from the plugin). Saying "writing"
+      // would promise a second article that is not coming.
+      logger.info({ keywordId }, "Approve title: topic already has a generation job");
+      if (!quiet) {
+        await deps.progress(`⏳ “${kw.proposed_title ?? kw.query}” is already being written — the draft arrives here when it is done.`);
+      }
+      return false;
+    }
     logger.info({ keywordId, title: kw.proposed_title }, "Title approved — generation enqueued");
     if (!quiet) {
       await deps.progress(
@@ -94,6 +108,26 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
       );
     }
     return true;
+  };
+
+  /**
+   * After a failed sync: keep published what reached Framer, roll back the
+   * rest, and deploy if anything landed.
+   *
+   * The sync writes in batches and records each batch as it lands, so a
+   * failure partway leaves some articles in Framer. Rolling all of them back
+   * left those items in the project while the database said 'review': a
+   * deploy before the next sync shipped them, and the next sync then removed
+   * them. Rolling back is still right for what did not land — an article left
+   * 'published' but absent from Framer is stuck, since a second tap is a no-op.
+   */
+  const settleFailedSync = (marked: string[], since: string) => {
+    const landedSet = new Set(deps.syncedSince(marked, since));
+    const landed = marked.filter((id) => landedSet.has(id));
+    const reverted = marked.filter((id) => !landedSet.has(id));
+    for (const id of reverted) deps.unpublishArticle(id);
+    if (landed.length > 0) deps.schedulePublish();
+    return { landed, reverted };
   };
 
   const handlers: CallbackHandlers = {
@@ -132,6 +166,10 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
         logger.info({ articleId }, "Publish: article not in a publishable state");
         return;
       }
+      // Read right after marking, before the Telegram round-trip below: a sync
+      // already running can pick the article up and write it in that window,
+      // and a later read would make that write look older than this sync.
+      const since = deps.syncClock();
 
       await deps.progress(
         `🚀 Publishing “${article?.title ?? articleId}” — syncing to Framer, then the site deploys within ~5 minutes.`
@@ -147,15 +185,14 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
         const message = e instanceof Error ? e.message : "unknown";
         logger.error({ articleId, error: message }, "Framer sync failed after publish");
 
-        // Roll the publish back. Without this the article is stuck: it reads
-        // as published so a second tap is a no-op, but it never reached
-        // Framer, and the only recovery is a manual API call.
-        deps.unpublishArticle(articleId);
-
-        // Deliberately do NOT arm the deploy: publishing the site after a
-        // failed sync would ship a site missing the article just approved, and
-        // the guards throw precisely when something is wrong.
-        await deps.alert(`Framer sync failed for ${articleId}: ${message} — publish reverted, tap Publish to retry.`);
+        // The deploy is armed only if the article itself reached Framer —
+        // never to ship a site missing the article just approved.
+        const { landed } = settleFailedSync([articleId], since);
+        await deps.alert(
+          landed.length > 0
+            ? `“${article?.title ?? articleId}” reached Framer and will deploy, but the sync then failed: ${message}`
+            : `Framer sync failed for ${articleId}: ${message} — publish reverted, tap Publish to retry.`
+        );
         return;
       }
 
@@ -236,6 +273,7 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
         return;
       }
 
+      const since = deps.syncClock();
       try {
         const result = await deps.syncToFramer();
         logger.info({ articles: marked.length, ...result }, "Publish-all synced to Framer");
@@ -248,13 +286,14 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
         const message = e instanceof Error ? e.message : "unknown";
         logger.error({ articles: marked.length, error: message }, "Framer sync failed after publish-all");
 
-        // Same reasoning as the single publish: an article left published but
-        // absent from Framer is stuck. Only what THIS tap marked is undone. Any
-        // that did land before the failure are re-sent by the next sync.
-        for (const id of marked) deps.unpublishArticle(id);
-
+        // Only what THIS tap marked is considered, and of that only what did
+        // not reach Framer is rolled back.
+        const { landed, reverted } = settleFailedSync(marked, since);
+        const plural = (n: number) => `${n} article${n === 1 ? "" : "s"}`;
         await deps.alert(
-          `Publish all failed: ${message} — ${marked.length} article${marked.length === 1 ? "" : "s"} still in review, tap Publish all to retry.`
+          landed.length === 0
+            ? `Publish all failed: ${message} — ${plural(marked.length)} still in review, tap Publish all to retry.`
+            : `Publish all partly failed: ${message} — ${landed.length} of ${marked.length} went out; ${reverted.length} still in review, tap Publish all to retry.`
         );
         return;
       }
