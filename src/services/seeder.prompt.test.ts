@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSeederPrompt, buildSeederSystemPrompt, MAX_COVERED, type SeederPromptInput } from "./seeder.js";
+import { buildSeederPrompt, buildSeederSystemPrompt, parseTopicCandidates, MAX_COVERED, type SeederPromptInput } from "./seeder.js";
 
 const base: SeederPromptInput = {
   audience: "Web3 BD leads at DeFi protocols",
@@ -91,5 +91,63 @@ describe("buildSeederSystemPrompt", () => {
 
   it("asks for the requested count", () => {
     expect(buildSeederSystemPrompt(7)).toContain("exactly 7 titles");
+  });
+});
+
+describe("parseTopicCandidates", () => {
+  it("keeps no more titles than were asked for", () => {
+    // A slot asked for 4 that got 10 back inserted all 10 sibling titles —
+    // the very lumpiness the small batch size exists to prevent.
+    const ten = Array.from({ length: 10 }, (_, i) => `How to Do Task ${i}`);
+    expect(parseTopicCandidates({ topics: ten }, 4)).toHaveLength(4);
+  });
+
+  it("drops non-strings, blanks and repeats", () => {
+    expect(parseTopicCandidates({ topics: ["  How to A  ", 7, "", "how to a", null, "How to B"] }, 10)).toEqual([
+      "How to A",
+      "How to B",
+    ]);
+  });
+
+  it("drops titles that are not written in English", () => {
+    // The blog is English (RU is a translation of it). A Russian title gets an
+    // empty or junk slug and is invisible to the near-duplicate guard, whose
+    // tokens are Latin — even when it contains a brand name like "Telegram".
+    expect(
+      parseTopicCandidates({ topics: ["Как найти клиентов в Telegram", "Как настроить бота", "How to Find Clients"] }, 10)
+    ).toEqual(["How to Find Clients"]);
+  });
+
+  it("returns nothing for a malformed tool payload", () => {
+    expect(parseTopicCandidates(undefined, 4)).toEqual([]);
+    expect(parseTopicCandidates({ topics: "not an array" }, 4)).toEqual([]);
+  });
+});
+
+describe("the seeder asks for English", () => {
+  it("says so in the system prompt", () => {
+    // Two personas are "Russian-speaking…"; nothing said which language to write in.
+    expect(buildSeederSystemPrompt(4)).toMatch(/in English/i);
+  });
+});
+
+describe("automatic seeding stays off the product", () => {
+  it("drops any proposed title that names CRMChat", () => {
+    // The rule ("the topic must NOT be about CRMChat") lived only in the
+    // prompt; the competitor filter explicitly KEEPS titles containing
+    // "crmchat", so "CRMChat vs HubSpot for Crypto Funds" went straight in.
+    expect(
+      parseTopicCandidates({ topics: ["CRMChat vs HubSpot for Crypto Funds", "How to Use crmchat Folders", "How to Tag Leads"] }, 10)
+    ).toEqual(["How to Tag Leads"]);
+  });
+
+  it("tells the tops angle the category is never CRMs", () => {
+    // Its required shape, "Best <category> for <audience>", is the banned
+    // example ("Best CRM for crypto funds") with the obvious category filled in.
+    expect(buildSeederPrompt({ ...base, angle: "tops" })).toMatch(/not CRMs/i);
+  });
+
+  it("tells the comparison angle never to name CRMChat", () => {
+    expect(buildSeederPrompt({ ...base, angle: "comparison" })).toMatch(/never naming CRMChat/i);
   });
 });

@@ -34,8 +34,12 @@ export const TITLE_SHAPE_BY_ANGLE: Record<string, string> = {
   "how-to": '"How to <do the specific task>" — state the task, not a benefit',
   "what-is": '"What Is <term>" or "<term>, Explained" — name the thing being defined',
   troubleshooting: '"<Thing> Not Working" / "Why <thing> <fails>" / "Fix <specific error>"',
-  comparison: '"<A> vs <B>" or "<N> <category> Alternatives"',
-  tops: '"Best <category> for <audience>" or "<N> <category> Tools"',
+  // Never CRMChat by name — the house rule. A roundup's category is never CRMs
+  // either: "Best CRM for crypto funds" is the rules' own example of a banned,
+  // product-led title. Whether comparisons may weigh CRMs (Kommo vs amoCRM) is
+  // an open product question, so that is left as it was.
+  comparison: '"<A> vs <B>" or "<N> <category> Alternatives" — never naming CRMChat',
+  tops: '"Best <category> for <audience>" or "<N> <category> Tools" — the category is a kind of tool for the task (parsers, bots, schedulers…), not CRMs, and never CRMChat',
 };
 
 /**

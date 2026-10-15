@@ -44,3 +44,103 @@ describe("stripLeakedJsonLd", () => {
     expect(out).not.toContain("FAQPage");
   });
 });
+
+describe("sanitizeHTML — prose is never eaten", () => {
+  // A raw "<" followed by a digit or space was read as the start of a tag, and
+  // everything up to the next ">" — the rest of the sentence and the closing
+  // tags — was deleted. The prompt asks for citable numbers, so "<5%" is common.
+  it("keeps a sentence containing '<50'", () => {
+    const out = sanitizeHTML("<p>Keep it under <50 messages per day to stay safe.</p><h2>Next</h2>");
+    expect(out).toBe("<p>Keep it under &lt;50 messages per day to stay safe.</p><h2>Next</h2>");
+  });
+
+  it("keeps a sentence containing '<5%'", () => {
+    const out = sanitizeHTML("<p>Reply rate <5% means trouble.</p><p>Second</p>");
+    expect(out).toBe("<p>Reply rate &lt;5% means trouble.</p><p>Second</p>");
+  });
+
+  it("keeps '< 10' with a space", () => {
+    expect(sanitizeHTML("<p>Use < 10 accounts at first.</p>")).toBe("<p>Use &lt; 10 accounts at first.</p>");
+  });
+
+  it("does not strip 'on...=' text from prose", () => {
+    // The event-handler regex ran over the whole document, text included.
+    expect(sanitizeHTML("<p>Set online=true in the config.</p>")).toBe("<p>Set online=true in the config.</p>");
+  });
+
+  it("keeps a schema.org example inside a code block", () => {
+    const html = '<p>Example:</p><pre><code>{"@context": "https://schema.org", "@type": "FAQPage"}</code></pre><p>After</p>';
+    expect(sanitizeHTML(html)).toContain("<p>After</p>");
+  });
+});
+
+describe("sanitizeHTML — still strips what it must", () => {
+  it("drops event-handler attributes, quoted or not", () => {
+    expect(sanitizeHTML('<a href="https://x.com" onclick="evil()">x</a>')).toBe('<a href="https://x.com">x</a>');
+    expect(sanitizeHTML('<img src="https://x.com/y.png" onerror=alert(1)>')).toBe('<img src="https://x.com/y.png">');
+  });
+
+  it("drops script and style blocks with their content", () => {
+    expect(sanitizeHTML("<p>a</p><script>alert(1)</script><style>p{}</style><p>b</p>")).toBe("<p>a</p><p>b</p>");
+  });
+
+  it("drops disallowed tags but keeps their text", () => {
+    expect(sanitizeHTML("<p>a <iframe src='https://x'></iframe><font>b</font></p>")).toBe("<p>a b</p>");
+  });
+
+  it.each([
+    "javascript:alert(1)",
+    "JavaScript:alert(1)",
+    " javascript:alert(1)",
+    "java&#x09;script:alert(1)",
+    "data:text/html,<script>",
+    "vbscript:x",
+  ])("removes an unsafe link target: %s", (url) => {
+    expect(sanitizeHTML(`<a href="${url}">x</a>`)).toBe("<a>x</a>");
+  });
+
+  it.each(["https://crmchat.ai/blog/x", "/blog/x", "#faq", "mailto:hi@crmchat.ai"])(
+    "keeps a safe link target: %s",
+    (url) => {
+      expect(sanitizeHTML(`<a href="${url}">x</a>`)).toBe(`<a href="${url}">x</a>`);
+    }
+  );
+});
+
+describe("sanitizeHTML — comments", () => {
+  // Browsers end a comment at "<!-->", "<!--->" or "--!>", earlier than a
+  // lazy /<!--[\s\S]*?-->/ thinks — so passing comments through let markup
+  // hidden "inside" one reach the page.
+  it.each([
+    "<!--><img src=x onerror=alert(1)>-->",
+    "<!---><img src=x onerror=alert(1)>-->",
+    "<!-- a --!><img src=x onerror=alert(1)> -->",
+  ])("does not let markup escape a comment: %s", (html) => {
+    expect(sanitizeHTML(html)).not.toMatch(/onerror/i);
+  });
+
+  it("keeps the screenshot placeholder the asset pipeline needs", () => {
+    const html = "<p>a</p><!-- screenshot:https://kommo.com/pricing --><p>b</p>";
+    expect(sanitizeHTML(html)).toBe(html);
+  });
+
+  it("drops a placeholder whose URL could break out of an attribute", () => {
+    expect(sanitizeHTML('<!-- screenshot:https://x.com/"onload="alert(1) -->')).not.toMatch(/screenshot/);
+  });
+
+  it("drops any other comment", () => {
+    expect(sanitizeHTML("<p>a</p><!-- note to self --><p>b</p>")).toBe("<p>a</p><p>b</p>");
+  });
+});
+
+describe("sanitizeHTML — hardening", () => {
+  it("allows Telegram deep links", () => {
+    expect(sanitizeHTML('<a href="tg://resolve?domain=crmchat">x</a>')).toBe('<a href="tg://resolve?domain=crmchat">x</a>');
+  });
+
+  it("stays fast on adversarial input", () => {
+    const started = Date.now();
+    sanitizeHTML("<a ".repeat(50_000));
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+});

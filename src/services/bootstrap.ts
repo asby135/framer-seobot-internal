@@ -580,6 +580,38 @@ async function sendTitleDigest(proposals: TitleProposal[]): Promise<number> {
 }
 
 /**
+ * The article's flags as lines for the gate-2 message, already HTML-escaped.
+ *
+ * It used to print only the flag names ("⚠️ quality_issues"), so a broken
+ * internal link or an unsupported pricing claim looked exactly like routine
+ * noise and shipped with one tap. Now the operator sees what is wrong.
+ */
+export function describeFlags(flags: Record<string, unknown>): string[] {
+  const MAX_ITEMS = 3;
+  const clip = (s: string) => escapeHtml(s.length > 160 ? `${s.slice(0, 157)}…` : s);
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  const lines: string[] = [];
+  const more = (items: string[]) => (items.length > MAX_ITEMS ? ` (+${items.length - MAX_ITEMS} more)` : "");
+
+  const issues = list(flags.quality_issues);
+  for (const i of issues.slice(0, MAX_ITEMS)) lines.push(`⚠️ ${clip(i)}`);
+  if (issues.length > MAX_ITEMS) lines[lines.length - 1] += more(issues);
+
+  const claims = list(flags.ungrounded_claims);
+  for (const c of claims.slice(0, MAX_ITEMS)) lines.push(`⚠️ Not backed by the knowledge base: ${clip(c)}`);
+  if (claims.length > MAX_ITEMS) lines[lines.length - 1] += more(claims);
+
+  if (flags.low_kb_match) lines.push("⚠️ No knowledge-base page matched this topic — check any product claims");
+  if (flags.thumbnail_missing) lines.push("⚠️ No thumbnail");
+  const shots = list(flags.screenshots_failed);
+  if (shots.length > 0) lines.push(`⚠️ ${shots.length} screenshot${shots.length === 1 ? "" : "s"} failed`);
+
+  const known = new Set(["quality_issues", "ungrounded_claims", "low_kb_match", "thumbnail_missing", "screenshots_failed"]);
+  for (const key of Object.keys(flags)) if (!known.has(key)) lines.push(`⚠️ ${escapeHtml(key)}`);
+  return lines;
+}
+
+/**
  * Gate 2: tell the operator an article is ready, and give them the buttons to
  * publish, regenerate or delete it.
  *
@@ -624,8 +656,7 @@ export async function sendArticleReadyDigest(articleId: string): Promise<void> {
   const flags: string[] = [];
   if (!ru) flags.push("⚠️ RU translation missing");
   try {
-    const parsed = JSON.parse(article.flags ?? "{}") as Record<string, unknown>;
-    for (const key of Object.keys(parsed)) flags.push(`⚠️ ${key}`);
+    flags.push(...describeFlags(JSON.parse(article.flags ?? "{}") as Record<string, unknown>));
   } catch {
     /* flags column is best-effort metadata */
   }

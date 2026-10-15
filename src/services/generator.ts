@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
-import { searchKB } from "./kb.js";
+import { searchKB, kbExcerpt, articleTextForFactCheck } from "./kb.js";
 import { generateThumbnail, processScreenshots } from "./assets.js";
 import { queryToSlug, uniqueSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
@@ -9,6 +9,7 @@ import { logger } from "../lib/logger.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
 import { namesCompetitor } from "../lib/competitors.js";
 import { TITLE_RULES } from "./title-rules.js";
+import { titleTokens, TROUBLESHOOTING_SHAPE } from "./similarity.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -288,7 +289,7 @@ async function callClaude(
   const kbContext = kbResults
     .map(
       (kb, i) =>
-        `--- KB Article ${i + 1}: ${kb.title} ---\n${kb.content.slice(0, 2000)}`
+        `--- KB Article ${i + 1}: ${kb.title} ---\n${kbExcerpt(kb.content)}`
     )
     .join("\n\n");
 
@@ -798,7 +799,8 @@ async function validateGrounding(
 ): Promise<string[]> {
   try {
     const kbContext = kbResults
-      .map((kb) => `--- ${kb.title} ---\n${kb.content.slice(0, 2000)}`)
+      // The same excerpt the writer saw, so a claim it grounded is checkable.
+      .map((kb) => `--- ${kb.title} ---\n${kbExcerpt(kb.content)}`)
       .join("\n\n");
 
     const response = await anthropic.messages.create({
@@ -812,7 +814,7 @@ Only flag specific, verifiable product claims. General marketing language or ind
       messages: [
         {
           role: "user",
-          content: `ARTICLE:\n${articleContent.slice(0, 6000)}\n\nKNOWLEDGE BASE:\n${kbContext}`,
+          content: `ARTICLE:\n${articleTextForFactCheck(articleContent)}\n\nKNOWLEDGE BASE:\n${kbContext}`,
         },
       ],
     });
@@ -867,14 +869,27 @@ Only flag specific, verifiable product claims. General marketing language or ind
  * marker to end-of-content. These markers do not occur in normal article prose.
  */
 export function stripLeakedJsonLd(html: string): string {
-  const m = html.search(
-    /\{\s*"@context"\s*:\s*"https?:\/\/schema\.org"|\{\s*"@type"\s*:\s*"FAQPage"/
-  );
+  // A marker inside <pre> or <code> is an example the article is showing, not
+  // a leak — cutting there deleted the rest of the article.
+  const marker = /\{\s*"@context"\s*:\s*"https?:\/\/schema\.org"|\{\s*"@type"\s*:\s*"FAQPage"/g;
+  let m = -1;
+  for (const found of html.matchAll(marker)) {
+    if (!insideCodeBlock(html, found.index!)) {
+      m = found.index!;
+      break;
+    }
+  }
   if (m === -1) return html;
   let out = html.slice(0, m);
   // Drop a now-dangling trailing open wrapper tag (e.g. a "<p>" that wrapped the JSON).
   out = out.replace(/\s*<(?:p|div|span|pre|code)>\s*$/i, "");
   return out.trimEnd();
+}
+
+/** Is `index` inside an open <pre> or <code> element? */
+function insideCodeBlock(html: string, index: number): boolean {
+  const before = html.slice(0, index).toLowerCase();
+  return ["pre", "code"].some((tag) => before.lastIndexOf(`<${tag}`) > before.lastIndexOf(`</${tag}`));
 }
 
 /**
@@ -921,79 +936,148 @@ export function sanitizeHTML(html: string): string {
   // Remove a trailing bare "placeholder" text node — a recurring model artifact.
   clean = stripTrailingPlaceholder(clean);
 
-  // Remove script tags and their content
-  clean = clean.replace(/<script[\s\S]*?<\/script>/gi, "");
+  // Remove script and style blocks with their content.
+  clean = clean.replace(/<script\b[\s\S]*?<\/script\s*>/gi, "");
+  clean = clean.replace(/<style\b[\s\S]*?<\/style\s*>/gi, "");
 
-  // Remove style tags and their content
-  clean = clean.replace(/<style[\s\S]*?<\/style>/gi, "");
-
-  // Remove event handlers (onclick, onload, onerror, etc.)
-  clean = clean.replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, "");
-  clean = clean.replace(/\s+on\w+\s*=\s*\S+/gi, "");
-
-  // Remove javascript: URLs
-  clean = clean.replace(/href\s*=\s*["']javascript:[^"']*["']/gi, 'href="#"');
-  clean = clean.replace(/src\s*=\s*["']javascript:[^"']*["']/gi, "");
-
-  // Remove data: URLs from src (potential XSS vector)
-  clean = clean.replace(/src\s*=\s*["']data:[^"']*["']/gi, "");
-
-  // Strip disallowed tags but keep their content
-  clean = clean.replace(/<\/?(\w+)([^>]*)>/g, (match, tag, attrs) => {
+  // One pass over real markup; everything between tags is text.
+  //
+  // A tag is recognised only by real tag syntax: a letter after "<", and
+  // attribute values that may be quoted (and so may contain "<" or ">"). Any
+  // other "<" is text and is escaped. The previous pattern, /<\/?(\w+)([^>]*)>/,
+  // read "<5%" or "<50" as a tag named "5"/"50" and deleted everything up to the
+  // next ">" — the rest of the sentence and its closing tags.
+  //
+  // Event handlers and unsafe URLs are removed by the attribute allowlist below,
+  // inside tags only. The old global regexes for them ran over prose too, and
+  // turned "set online=true" into "set".
+  //
+  // Comments: only the screenshot placeholder survives, in its exact shape —
+  // processScreenshots() needs it. Every other comment is dropped. Passing
+  // comments through was an XSS hole: browsers end a comment at "<!-->",
+  // "<!--->" or "--!>", earlier than the pattern thinks, so markup "inside"
+  // one reached the page.
+  return clean.replace(TOKEN, (match, tag: string | undefined, attrs: string | undefined, text: string | undefined) => {
+    if (text !== undefined) return text.replace(/</g, "&lt;");
+    if (tag === undefined) return SCREENSHOT_PLACEHOLDER.test(match) ? match : ""; // a comment
     const lowerTag = tag.toLowerCase();
     if (!ALLOWED_TAGS.has(lowerTag)) return "";
-
-    // Filter attributes
-    const cleanAttrs = (attrs as string)
-      .match(/\s+[\w-]+\s*=\s*["'][^"']*["']/g)
-      ?.filter((attr: string) => {
-        const name = attr.trim().split(/\s*=/)[0].toLowerCase();
-        return ALLOWED_ATTRS.has(name);
-      })
-      .join("") || "";
-
-    // Self-closing tags
     if (match.startsWith("</")) return `</${lowerTag}>`;
-    return `<${lowerTag}${cleanAttrs}>`;
+    return `<${lowerTag}${filterAttributes(attrs ?? "")}>`;
   });
+}
 
-  // Preserve screenshot placeholder comments (needed for asset pipeline)
-  // They were already processed or will be processed by processScreenshots()
+/**
+ * Comments, tags (with quoted or unquoted attribute values), or a run of text.
+ * A "<" that starts neither a comment nor a tag is matched as text on its own.
+ */
+//
+// Attribute names and unquoted values exclude "<": allowing it made the
+// pattern quadratic on input like "<a <a <a …" (34 s at 200k characters).
+const TOKEN =
+  /<!--[\s\S]*?-->|<\/?([A-Za-z][A-Za-z0-9]*)((?:\s+[^\s"'<>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>]+))?)*)\s*\/?>|([^<]+|<)/g;
 
-  return clean;
+const ATTRIBUTE = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>]+)))?/g;
+
+/**
+ * The one comment allowed through: a screenshot placeholder whose URL cannot
+ * break out of the attribute processScreenshots() later puts it in.
+ */
+const SCREENSHOT_PLACEHOLDER = /^<!-- screenshot:https?:\/\/[^\s<>"'`]+ -->$/;
+
+/** Keep allowlisted attributes that have a value, with link targets checked. */
+function filterAttributes(attrs: string): string {
+  let out = "";
+  for (const m of attrs.matchAll(ATTRIBUTE)) {
+    const name = m[1].toLowerCase();
+    const value = m[2] ?? m[3] ?? m[4];
+    if (value === undefined || !ALLOWED_ATTRS.has(name)) continue;
+    if ((name === "href" || name === "src") && !isSafeUrl(value)) continue;
+    out += ` ${name}="${value.replace(/"/g, "&quot;")}"`;
+  }
+  return out;
+}
+
+/**
+ * Relative paths, fragments, and http(s)/mailto/tel/tg links only. Anything with an
+ * entity or control character is refused outright: browsers decode
+ * "java&#x09;script:" into a working javascript: URL.
+ */
+export function isSafeUrl(raw: string): boolean {
+  const value = raw.trim();
+  if (/&#|&colon;|&tab;|&newline;/i.test(value) || /[\x00-\x1f]/.test(value)) return false;
+  const scheme = value.match(/^([a-z][a-z0-9+.-]*):/i);
+  if (!scheme) return true;
+  // tg: — Telegram deep links (tg://resolve?domain=…) belong on a Telegram blog.
+  return ["http", "https", "mailto", "tel", "tg"].includes(scheme[1].toLowerCase());
 }
 
 // --- Quality checks ---
 
-function runQualityChecks(
+export type ArticleType = "how-to" | "what-is" | "comparison" | "tops" | "troubleshooting";
+
+/**
+ * Word-count bounds per article type: the prompt's ARTICLE TYPE ranges with
+ * about 25% slack either side. KEEP IN STEP with that section of the prompt —
+ * a single 800-1,800 band for every type contradicted it, so what-is and
+ * troubleshooting articles written exactly as instructed were flagged.
+ */
+const LENGTH_BOUNDS: Record<ArticleType, [number, number]> = {
+  "how-to": [750, 1900], // prompt: 1,000-1,500
+  "what-is": [300, 700], // prompt: 400-450
+  comparison: [600, 1500], // prompt: 800-1,200
+  tops: [750, 1900], // prompt: 1,000-1,500
+  troubleshooting: [450, 1300], // prompt: 600-1,000
+};
+
+/** The prompt's archetype rules, applied to a topic. How-to is the default. */
+export function articleTypeOf(topic: string): ArticleType {
+  const t = topic.toLowerCase().trim();
+  if (TROUBLESHOOTING_SHAPE.test(t)) return "troubleshooting";
+  if (/\bwhat (is|are)\b|\bexplained\b|\bmeaning\b|\bmean\b|\bdefinition\b/.test(t)) return "what-is";
+  if (/\bvs\.?\b|\bversus\b|\balternatives?\b/.test(t)) return "comparison";
+  if (/^(best|top)\b|\b(best|top) \d+\b|\btools for\b/.test(t)) return "tops";
+  return "how-to";
+}
+
+/** Share of the topic's meaningful words that appear in `text`. */
+function topicCoverage(topic: string, text: string): number {
+  const wanted = titleTokens(topic);
+  if (wanted.size === 0) return 1;
+  const present = titleTokens(text);
+  let hit = 0;
+  for (const w of wanted) if (present.has(w)) hit++;
+  return hit / wanted.size;
+}
+
+export function runQualityChecks(
   article: GeneratedArticle,
   query: string,
   existingSlugs: Set<string>
 ): string[] {
   const issues: string[] = [];
 
-  // Check keyword in title
-  if (!article.title.toLowerCase().includes(query.toLowerCase())) {
-    issues.push("Target keyword not found in title");
+  // The topic by its meaningful words, not as an exact string: the prompt
+  // tells the model the keyword is a seed, not the title, so an exact-substring
+  // test flagged nearly every article it wrote as instructed.
+  if (topicCoverage(query, article.title) < 0.6) {
+    issues.push("Title drifts from the topic");
   }
-
-  // Check keyword in first paragraph
   const firstPara = article.content.match(/<p>(.*?)<\/p>/s);
-  if (
-    firstPara &&
-    !firstPara[1].toLowerCase().includes(query.toLowerCase())
-  ) {
-    issues.push("Target keyword not found in first paragraph");
+  if (firstPara && topicCoverage(query, firstPara[1].replace(/<[^>]+>/g, " ")) < 0.5) {
+    issues.push("Topic not introduced in the first paragraph");
   }
 
-  // Check word count (strip HTML tags)
+  // Length against this article's own type (see LENGTH_BOUNDS).
+  const type = articleTypeOf(query);
+  const [min, max] = LENGTH_BOUNDS[type];
   const plainText = article.content.replace(/<[^>]+>/g, " ");
   const wordCount = plainText.split(/\s+/).filter((w) => w.length > 0).length;
-  if (wordCount < 800) {
-    issues.push(`Article too short: ${wordCount} words (minimum 800)`);
+  if (wordCount < min) {
+    issues.push(`Article too short for a ${type} article: ${wordCount} words (minimum ${min})`);
   }
-  if (wordCount > 1800) {
-    issues.push(`Article too long: ${wordCount} words (maximum 1,800)`);
+  if (wordCount > max) {
+    issues.push(`Article too long for a ${type} article: ${wordCount} words (maximum ${max})`);
   }
 
   // Validate internal links

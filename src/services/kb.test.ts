@@ -55,8 +55,27 @@ Sales automation chatbot lead qualification.`
   });
 
   it("respects topK limit", () => {
-    const results = searchKB("telegram", 1);
-    expect(results.length).toBe(1);
+    // "sales automation" is on two of the three pages.
+    expect(searchKB("sales automation", 2).length).toBe(2);
+    expect(searchKB("sales automation", 1).length).toBe(1);
+  });
+
+  it("gives a word that is on every page no say when better words are present", () => {
+    // "telegram" is on all three pages here, as on nearly every real one. It
+    // used to keep a full IDF of 1+, so it decided matches it says nothing about.
+    expect(searchKB("telegram pricing plans")[0].filename).toBe("pricing.md");
+  });
+
+  it("falls back to common words when they are all the query has", () => {
+    // Returning nothing for a head term like "telegram outreach" set the
+    // low_kb_match flag on it.
+    expect(searchKB("telegram").length).toBeGreaterThan(0);
+  });
+
+  it("does not match a page on one incidental word", () => {
+    // Any single overlap used to count, so off-topic queries always "matched"
+    // something and the low_kb_match flag never fired.
+    expect(searchKB("pizza plans for kids parties")).toEqual([]);
   });
 
   it("returns empty array for completely unrelated query", () => {

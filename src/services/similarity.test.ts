@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { titleSimilarity, findNearDuplicate, NEAR_DUPLICATE_THRESHOLD } from "./similarity.js";
+import { titleSimilarity, findNearDuplicate, createTitleIndex, NEAR_DUPLICATE_THRESHOLD } from "./similarity.js";
 
 describe("titleSimilarity", () => {
   it("scores a reworded version of the same task above the threshold", () => {
@@ -55,5 +55,60 @@ describe("findNearDuplicate", () => {
 
   it("returns undefined for new ground", () => {
     expect(findNearDuplicate("How to Rotate Chatter Shifts Around the Clock", corpus)).toBeUndefined();
+  });
+});
+
+describe("titleSimilarity — distinct tasks on one subject are not duplicates", () => {
+  // Shape words are stripped so rewordings match, but some of them carry the
+  // task. The rotation deliberately asks for a how-to AND a troubleshooting
+  // article per subniche; the guard was refusing the second.
+  it.each([
+    ["Telegram Folder Sync Not Working", "How to Set Up Telegram Folder Sync"],
+    ["How to Fix a Telegram Bot That Stopped Sending Messages", "How to Set Up a Telegram Bot to Send Messages"],
+    ["How to Export Telegram Group Members to CSV", "How to Import Telegram Group Members from CSV"],
+    ["How to Schedule Telegram Messages", "How to Cancel Scheduled Telegram Messages"],
+    ["How to Add Members to a Telegram Group", "How to Remove Members from a Telegram Group"],
+    ["Why Telegram Accounts Get Banned", "How to Recover a Banned Telegram Account"],
+  ])("%s ≠ %s", (a, b) => {
+    expect(titleSimilarity(a, b)).toBeLessThan(NEAR_DUPLICATE_THRESHOLD);
+  });
+
+  it("still catches a rewording that shares the failure", () => {
+    expect(
+      titleSimilarity("Telegram Folder Sync Not Working", "Fix Telegram Folder Sync That Is Not Working")
+    ).toBeGreaterThanOrEqual(NEAR_DUPLICATE_THRESHOLD);
+  });
+
+  it("matches 'banned' with 'bans'", () => {
+    // The stemmer left "bann" and "ban" apart, so this pair slipped through.
+    expect(
+      titleSimilarity(
+        "Why Telegram Accounts Get Banned for Bulk Messaging",
+        "How to Avoid Telegram Account Bans When Bulk Messaging"
+      )
+    ).toBeGreaterThanOrEqual(NEAR_DUPLICATE_THRESHOLD);
+  });
+});
+
+describe("titleSimilarity — the task distinctions are not loopholes", () => {
+  it("treats 'Fix X' and 'Why X' about the same failure as the same ground", () => {
+    expect(
+      titleSimilarity("Fix a Telegram Account Banned for Bulk Messaging", "Why Telegram Accounts Get Banned for Bulk Messaging")
+    ).toBeGreaterThanOrEqual(NEAR_DUPLICATE_THRESHOLD);
+  });
+
+  it("treats synonym verbs on one side as the same task", () => {
+    // delete/remove are both "reversal" words: having one each is not a
+    // difference in task.
+    expect(
+      titleSimilarity("How to Delete Old Messages in a Telegram Group", "How to Remove Old Messages in a Telegram Group")
+    ).toBeGreaterThanOrEqual(0.5);
+  });
+});
+
+describe("neighbors", () => {
+  it("offers different-task titles too — the model judge decides those", () => {
+    const index = createTitleIndex(["Why Telegram Accounts Get Banned"]);
+    expect(index.neighbors("How to Recover a Banned Telegram Account")).toEqual(["Why Telegram Accounts Get Banned"]);
   });
 });

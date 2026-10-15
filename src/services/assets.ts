@@ -197,7 +197,9 @@ export async function processScreenshots(
     if (screenshotUrl) {
       result = result.replace(
         match[0],
-        `<img src="${screenshotUrl}" alt="Screenshot of ${url}" loading="lazy" />`
+        // Escaped: the URL comes from model output, and a quote in it would
+        // otherwise add attributes to this tag.
+        `<img src="${screenshotUrl}" alt="Screenshot of ${url.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;")}" loading="lazy" />`
       );
     } else {
       failed.push(url);

@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
-import { searchKB, getKBArticle } from "./kb.js";
+import { searchKB, getKBArticle, kbExcerpt } from "./kb.js";
 import { ANGLE_GUIDANCE } from "./taxonomy.js";
 import { TITLE_RULES, TITLE_SHAPE_BY_ANGLE } from "./title-rules.js";
 import { createTitleIndex } from "./similarity.js";
@@ -42,6 +42,8 @@ ${TITLE_RULES}
 
 - Each title must be a DIFFERENT task. Do not propose near-variations of one another.
 - Do not propose pure-competitor titles (a competitor name with no task behind it).
+
+Write every title in English, even for a Russian-speaking audience — the blog is English and is translated afterwards.
 
 Return exactly ${count} titles via the emit_topics tool.`;
 }
@@ -186,7 +188,7 @@ export async function seedTopics(
   const kbResults = [...pinned, ...searched].slice(0, 5);
 
   const kbContext = kbResults
-    .map((kb, i) => `--- KB ${i + 1}: ${kb.title} ---\n${kb.content.slice(0, 2000)}`)
+    .map((kb, i) => `--- KB ${i + 1}: ${kb.title} ---\n${kbExcerpt(kb.content)}`)
     .join("\n\n");
 
   // 2. Generate candidate topics via Claude
@@ -204,12 +206,17 @@ export async function seedTopics(
     return { seeded: [], skipped: 0, audience };
   }
 
-  const { seeded, skipped, revived } = insertSeededTopics(candidates, opts.niche);
+  // Synonym-level repeats the word-overlap guard in insertSeededTopics cannot
+  // see; that guard still runs on what survives.
+  const { kept, dropped } = await dropSemanticDuplicates(candidates, loadTitleCorpus(), judgeDuplicatesWithHaiku);
+  if (dropped.length > 0) logger.info({ dropped }, "Seeder: skipped titles judged to repeat existing ones");
+
+  const { seeded, skipped, revived } = insertSeededTopics(kept, opts.niche);
   logger.info(
-    { audience, requested: n, seeded: seeded.length, revived, skipped },
+    { audience, requested: n, seeded: seeded.length, revived, skipped: skipped + dropped.length },
     "Audience topic seeding complete"
   );
-  return { seeded, skipped, audience };
+  return { seeded, skipped: skipped + dropped.length, audience };
 }
 
 /**
@@ -235,6 +242,25 @@ export async function seedTopics(
  *    status: a rewording of a rejected topic is no more wanted than the original.
  *  - Otherwise → insert new.
  */
+/**
+ * Every title a new topic must not repeat: all topic queries (any status) and
+ * every article title. generation_failed rows carry the topic as their title,
+ * but no article was written — that ground is still open, so they are left out.
+ */
+export function loadTitleCorpus(): string[] {
+  const db = getDb();
+  // De-duplicated: a topic's query and its article's title are usually the
+  // same string, and twice-listed titles waste the judge's shortlist.
+  return [
+    ...new Set([
+      ...(db.prepare("SELECT query FROM keywords").all() as { query: string }[]).map((r) => r.query),
+      ...(
+        db.prepare("SELECT title FROM articles WHERE status != 'generation_failed'").all() as { title: string }[]
+      ).map((r) => r.title),
+    ]),
+  ];
+}
+
 export function insertSeededTopics(
   candidates: string[],
   niche?: string,
@@ -265,16 +291,7 @@ export function insertSeededTopics(
     )
   );
 
-  // generation_failed rows carry the topic as their title, but no article was
-  // written — that ground is still open, so they are left out.
-  const corpus = createTitleIndex([
-    ...(db.prepare("SELECT query FROM keywords").all() as { query: string }[]).map((r) => r.query),
-    ...(
-      db.prepare("SELECT title FROM articles WHERE status != 'generation_failed'").all() as {
-        title: string;
-      }[]
-    ).map((r) => r.title),
-  ]);
+  const corpus = createTitleIndex(loadTitleCorpus());
   const nearDuplicates: Array<{ query: string; matched: string }> = [];
 
   const toInsert: string[] = [];
@@ -399,7 +416,162 @@ async function generateTopicCandidates(input: SeederPromptInput): Promise<string
     );
     return [];
   }
-  const out = (toolBlock.input as { topics?: unknown }).topics;
-  if (!Array.isArray(out)) return [];
-  return out.filter((t): t is string => typeof t === "string");
+  return parseTopicCandidates(toolBlock.input, count);
+}
+
+/**
+ * The titles from an emit_topics payload: strings only, trimmed, non-empty,
+ * de-duplicated, in English, not naming CRMChat, and no more than `count`.
+ *
+ * Uncapped, a slot asked for 4 that got 10 back inserted all 10 sibling
+ * titles — the lumpiness SEED_BATCH_SIZE exists to prevent. Non-English titles
+ * are dropped because the blog is English (RU is a translation of it) and the
+ * near-duplicate guard only sees Latin words.
+ */
+export function parseTopicCandidates(input: unknown, count: number): string[] {
+  const raw = (input as { topics?: unknown } | undefined)?.topics;
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const title = item.trim();
+    const key = title.toLowerCase();
+    // The house rule — the topic is never CRMChat itself — enforced, not just
+    // asked for. Hand imports go through insertSeededTopics directly and may
+    // still carry deliberate brand comparisons.
+    if (!title || seen.has(key) || !isMostlyLatin(title) || key.includes("crmchat")) continue;
+    seen.add(key);
+    out.push(title);
+    if (out.length >= count) break;
+  }
+  return out;
+}
+
+/** At least 80% of the letters are Latin. */
+function isMostlyLatin(text: string): boolean {
+  const letters = text.match(/\p{L}/gu) ?? [];
+  if (letters.length === 0) return false;
+  const latin = letters.filter((ch) => /[A-Za-z\u00C0-\u024F]/.test(ch)).length;
+  return latin / letters.length >= 0.8;
+}
+
+/** Judges, for each candidate, which of its shortlisted titles it repeats (or null). */
+export type DuplicateJudge = (
+  items: Array<{ candidate: string; neighbors: string[] }>
+) => Promise<Array<string | null>>;
+
+/**
+ * Drop candidates that repeat an existing title in different words.
+ *
+ * The word-overlap guard misses synonyms: "…to Deliver Forex Trading Signals"
+ * and "…for Distributing Forex Signals" are one article on the live blog. Word
+ * overlap shortlists each candidate's nearest existing titles, and one model
+ * call judges only the shortlist. Fails open — a judge error keeps every
+ * candidate, and the word-overlap guard still runs afterwards.
+ */
+export async function dropSemanticDuplicates(
+  candidates: string[],
+  corpus: string[],
+  judge: DuplicateJudge
+): Promise<{ kept: string[]; dropped: Array<{ query: string; matched: string }> }> {
+  const index = createTitleIndex(corpus);
+  // Exact repeats are left to insertSeededTopics, which refuses them for free.
+  const known = new Set(corpus.map((t) => t.trim().toLowerCase()));
+  const items = candidates
+    .filter((candidate) => !known.has(candidate.trim().toLowerCase()))
+    .map((candidate) => ({ candidate, neighbors: index.neighbors(candidate) }))
+    .filter((i) => i.neighbors.length > 0);
+  if (items.length === 0) return { kept: candidates, dropped: [] };
+
+  let verdicts: Array<string | null>;
+  try {
+    verdicts = await judge(items);
+  } catch (e) {
+    logger.warn({ error: e instanceof Error ? e.message : "unknown" }, "Duplicate judge failed — keeping all candidates");
+    return { kept: candidates, dropped: [] };
+  }
+
+  const repeats = new Map<string, string>();
+  const norm = (t: string) => t.trim().toLowerCase();
+  items.forEach((item, i) => {
+    const verdict = verdicts[i];
+    if (!verdict) return;
+    // Only a title that was actually offered counts — compared loosely, since
+    // the model may change case or spacing when it copies one back.
+    const offered = item.neighbors.find((n) => norm(n) === norm(verdict));
+    if (offered) repeats.set(item.candidate, offered);
+  });
+  return {
+    kept: candidates.filter((c) => !repeats.has(c)),
+    dropped: [...repeats].map(([query, matched]) => ({ query, matched })),
+  };
+}
+
+/** One verdict per item, by index; anything malformed reads as "not a duplicate". */
+export function parseDuplicateVerdicts(input: unknown, count: number): Array<string | null> {
+  const out: Array<string | null> = Array.from({ length: count }, () => null);
+  const results = (input as { results?: unknown } | undefined)?.results;
+  if (!Array.isArray(results)) return out;
+  for (const r of results) {
+    const { index, duplicate_of } = (r ?? {}) as { index?: unknown; duplicate_of?: unknown };
+    if (typeof index === "number" && index >= 0 && index < count && typeof duplicate_of === "string") {
+      out[index] = duplicate_of;
+    }
+  }
+  return out;
+}
+
+const DUPLICATE_JUDGE_SYSTEM = `You decide whether proposed blog article titles repeat existing ones.
+
+A proposed title REPEATS an existing one when a reader searching for either would be fully served by the same article: the same task for the same reader, even if worded differently, with synonyms, or with extra detail.
+
+It is NOT a repeat when it is a different task on the same subject — setting something up vs fixing it, adding vs removing, explaining what something is vs how to do it — or a different audience or platform where the answer genuinely differs. When unsure, it is not a repeat.
+
+For each item, report the existing title it repeats, copied exactly, or null.`;
+
+async function judgeDuplicatesWithHaiku(
+  items: Array<{ candidate: string; neighbors: string[] }>
+): Promise<Array<string | null>> {
+  const listing = items
+    .map(
+      (item, i) =>
+        `[${i}] PROPOSED: ${item.candidate}\n${item.neighbors.map((n) => `    EXISTING: ${n}`).join("\n")}`
+    )
+    .join("\n\n");
+  const response = await anthropic.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 1024,
+    tools: [
+      {
+        name: "report_duplicates",
+        description: "Report, for each numbered item, which existing title it repeats, or null.",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            results: {
+              type: "array" as const,
+              items: {
+                type: "object" as const,
+                properties: {
+                  index: { type: "integer" as const },
+                  duplicate_of: { type: ["string", "null"] as unknown as "string" },
+                },
+                required: ["index", "duplicate_of"],
+              },
+            },
+          },
+          required: ["results"],
+        },
+      },
+    ],
+    tool_choice: { type: "tool" as const, name: "report_duplicates" },
+    system: DUPLICATE_JUDGE_SYSTEM,
+    messages: [{ role: "user", content: listing }],
+  },
+  // A stuck call must not hold up a nightly run: the SDK default is a
+  // 10-minute timeout with 2 retries. Failing fast just skips the judge.
+  { timeout: 30_000, maxRetries: 1 });
+  const block = response.content.find((b) => b.type === "tool_use");
+  return parseDuplicateVerdicts(block && block.type === "tool_use" ? block.input : undefined, items.length);
 }

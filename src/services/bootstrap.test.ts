@@ -25,6 +25,7 @@ let recoverOrphanedReviews: typeof import("./bootstrap.js").recoverOrphanedRevie
 let recoverInterruptedGenerations: typeof import("./bootstrap.js").recoverInterruptedGenerations;
 let articlesSyncedSince: typeof import("./bootstrap.js").articlesSyncedSince;
 let unpublishArticleRow: typeof import("./bootstrap.js").unpublishArticleRow;
+let describeFlags: typeof import("./bootstrap.js").describeFlags;
 
 beforeAll(async () => {
   // env.ts snapshots process.env at import time, so this must be set before
@@ -33,7 +34,7 @@ beforeAll(async () => {
   const dbMod = await import("../db/index.js");
   dbMod.initDb();
   getDb = dbMod.getDb;
-  ({ buildGateHandlers, publishIsOverdue, articlesAwaitingAnnouncement, markAnnounced, articleUrl, articlesReadyForReview, recoverOrphanedReviews, recoverInterruptedGenerations, articlesSyncedSince, unpublishArticleRow } =
+  ({ buildGateHandlers, publishIsOverdue, articlesAwaitingAnnouncement, markAnnounced, articleUrl, articlesReadyForReview, recoverOrphanedReviews, recoverInterruptedGenerations, articlesSyncedSince, unpublishArticleRow, describeFlags } =
     await import("./bootstrap.js"));
 });
 
@@ -361,5 +362,34 @@ describe("unpublishArticleRow", () => {
     unpublishArticleRow("a1");
     const row = getDb().prepare("SELECT status, published_at, announced_at FROM articles WHERE id = 'a1'").get();
     expect(row).toEqual({ status: "review", published_at: null, announced_at: null });
+  });
+});
+
+describe("describeFlags — what gate 2 tells the operator", () => {
+  // Gate 2 used to print only the flag names ("⚠️ quality_issues"), so a real
+  // broken link or an unsupported pricing claim looked exactly like routine
+  // noise, and shipped with one tap.
+  it("spells out the issues and the unsupported claims", () => {
+    const lines = describeFlags({
+      quality_issues: ["Broken internal link: /blog/nope"],
+      ungrounded_claims: ["CRMChat costs $5 per seat"],
+    });
+    expect(lines.join("\n")).toContain("Broken internal link: /blog/nope");
+    expect(lines.join("\n")).toContain("CRMChat costs $5 per seat");
+  });
+
+  it("names the plain flags in words", () => {
+    expect(describeFlags({ thumbnail_missing: true, low_kb_match: true }).join("\n")).toMatch(/thumbnail/i);
+    expect(describeFlags({ low_kb_match: true }).join("\n")).toMatch(/knowledge/i);
+  });
+
+  it("escapes what it quotes", () => {
+    expect(describeFlags({ ungrounded_claims: ["<b>bold</b> & co"] }).join("")).toContain("&lt;b&gt;bold&lt;/b&gt; &amp; co");
+  });
+
+  it("caps long lists and long items", () => {
+    const lines = describeFlags({ ungrounded_claims: Array.from({ length: 10 }, (_, i) => `claim ${i} ${"x".repeat(400)}`) });
+    expect(lines.length).toBeLessThanOrEqual(5);
+    expect(lines.every((l) => l.length < 260)).toBe(true);
   });
 });
