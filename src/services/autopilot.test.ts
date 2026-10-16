@@ -394,3 +394,25 @@ describe("runNightly — niches that are no longer configured", () => {
     expect(proposals.some((p) => p.keywordId.startsWith("Removed niche"))).toBe(false);
   });
 });
+
+describe("the digest's identity and a failed send", () => {
+  it("hands the digest id from recording to sending, for the Approve-all button", async () => {
+    const d = deps({ recordProposals: vi.fn(() => "dig-9") });
+    await runNightly(d);
+    expect((d.sendTitleDigest as ReturnType<typeof vi.fn>).mock.calls[0][1]).toBe("dig-9");
+  });
+
+  it("un-records the proposals when the digest could not be sent", async () => {
+    // Recorded first so the buttons work; but a digest nobody saw must not
+    // leave its topics marked as already offered.
+    const forgetProposals = vi.fn();
+    const d = deps({
+      recordProposals: vi.fn(() => "dig-9"),
+      sendTitleDigest: vi.fn(async () => { throw new Error("Telegram rejected the digest"); }),
+      forgetProposals,
+    });
+    await expect(runNightly(d)).rejects.toThrow(/Telegram/);
+    expect(forgetProposals).toHaveBeenCalledOnce();
+    expect(forgetProposals.mock.calls[0][1]).toBe("dig-9");
+  });
+});

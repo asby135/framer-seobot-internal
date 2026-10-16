@@ -74,14 +74,25 @@ export function GeneratePanel() {
     }
   }
 
+  // Every page, not just the first 50 — topics past the first page were
+  // invisible here and could not be generated from the plugin.
+  async function loadAllApproved() {
+    const first = await api.getTopics("approved", 1, true);
+    const all = [...first.topics];
+    for (let page = 2; page <= Math.min(first.pages, 10); page++) {
+      all.push(...(await api.getTopics("approved", page, true)).topics);
+    }
+    return all;
+  }
+
   async function loadData() {
     setLoading(true);
     try {
-      const [topicsRes, statusRes] = await Promise.all([
-        api.getTopics("approved", 1, true),
+      const [approvedTopics, statusRes] = await Promise.all([
+        loadAllApproved(),
         api.getGenerationStatus(),
       ]);
-      setTopics(topicsRes.topics);
+      setTopics(approvedTopics);
       setRemaining(statusRes.remaining);
       setQueueDepth(statusRes.queue.pending + statusRes.queue.active);
 

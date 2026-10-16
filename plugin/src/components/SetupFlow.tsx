@@ -3,9 +3,11 @@ import { api, ApiError } from "../api/client";
 
 interface Props {
   onComplete: (baseUrl: string, apiKey: string) => void;
+  /** Why setup is showing again, e.g. a revoked key. */
+  notice?: string;
 }
 
-export function SetupFlow({ onComplete }: Props) {
+export function SetupFlow({ onComplete, notice }: Props) {
   const [baseUrl, setBaseUrl] = useState("");
   const [secret, setSecret] = useState("");
   const [error, setError] = useState("");
@@ -43,6 +45,7 @@ export function SetupFlow({ onComplete }: Props) {
   return (
     <div style={styles.container}>
       <h2 style={styles.title}>CRMChat SEO Engine</h2>
+      {notice && <p style={styles.error}>{notice}</p>}
       <p style={styles.subtitle}>
         Connect your backend to get started. You'll need the URL and setup
         secret from Railway.

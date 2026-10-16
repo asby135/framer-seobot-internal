@@ -545,8 +545,14 @@ export async function syncCollection(
     }
   };
 
+  // Every id written in this sync, so a locale fallback can skip what already landed.
+  const writtenIds = new Set<string>();
+  // What the ordinary pass set out to write; the locale fallback writes only this.
+  let changedIds: string[] = [];
+
   const writeBatch = async (batch: CollectionItem[]) => {
     await addWhenReady(batch);
+    for (const it of batch) writtenIds.add(it.id);
     // Recorded per batch, NOT once at the end. Recording at the end meant a
     // timeout partway through discarded every batch that had already landed,
     // so a corpus too large to write in a single run could never make
@@ -637,6 +643,7 @@ export async function syncCollection(
       ? all
       : all.filter((i) => !present.has(i.id) || (!adopting && known.get(i.id) !== fingerprint(i)));
 
+    changedIds = changed.map((i) => i.id);
     if (changed.length === 0) {
       logger.info({ total: all.length }, "Framer sync: nothing changed, no items written");
       return 0;
@@ -664,11 +671,15 @@ export async function syncCollection(
       "Locale sync failed — retrying without translations"
     );
     withLocales = false;
-    // The locale-less shape differs from anything recorded, so this is a full
-    // rewrite by construction.
-    const plain = buildItems(payload, localeMap, { includeLocales: false });
+    // Only what this sync set out to write and has not yet landed. Rewriting the
+    // whole collection without locales took ~30 minutes, stripped RU from every
+    // article, and recorded hashes of that shape — so the next ordinary sync
+    // rewrote everything again. The plain hashes recorded here differ from the
+    // with-locale ones, so these few items are retried with RU next time.
+    const remaining = new Set(changedIds.filter((id) => !writtenIds.has(id)));
+    const plain = buildItems(payload, localeMap, { includeLocales: false }).filter((i) => remaining.has(i.id));
     await addAll(plain);
-    written = plain.length;
+    written = writtenIds.size;
   }
 
   await collection.setPluginData("lastSync", new Date().toISOString());

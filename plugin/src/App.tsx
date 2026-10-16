@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { framer } from "framer-plugin";
-import { api } from "./api/client";
+import { api, ApiError } from "./api/client";
 import { SetupFlow } from "./components/SetupFlow";
 import { TopicQueue } from "./components/TopicQueue";
 import { ArticleList } from "./components/ArticleList";
@@ -14,6 +14,7 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>("topics");
   const [showSettings, setShowSettings] = useState(false);
+  const [setupNotice, setSetupNotice] = useState("");
 
   useEffect(() => {
     checkSetup();
@@ -28,12 +29,17 @@ export function App() {
 
       if (baseUrl && apiKey) {
         api.configure(baseUrl, apiKey);
-        // Verify connection
-        await api.getStatus();
+        // Verify the KEY, not just that the backend is up: /api/status is
+        // public, so a revoked key used to pass this check and the plugin showed
+        // "Connected" while every tab failed with "Invalid API key".
+        await api.getSettings();
         setIsSetup(true);
       }
-    } catch {
-      // Not configured or backend unreachable
+    } catch (e) {
+      // Not configured, key rejected, or backend unreachable — reconnect.
+      if (e instanceof ApiError && e.status === 401) {
+        setSetupNotice("The saved API key was rejected — it may have been revoked. Reconnect below.");
+      }
       setIsSetup(false);
     } finally {
       setLoading(false);
@@ -57,7 +63,7 @@ export function App() {
   }
 
   if (!isSetup) {
-    return <SetupFlow onComplete={handleSetupComplete} />;
+    return <SetupFlow onComplete={handleSetupComplete} notice={setupNotice} />;
   }
 
   if (showSettings) {

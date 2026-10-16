@@ -127,4 +127,18 @@ describe("publish debouncer", () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(publish).not.toHaveBeenCalled();
   });
+
+  it("tells a caller of flushNow when the publish finally failed", async () => {
+    // It resolved either way, so "publish the site now" answered "site
+    // published" after Framer had refused twice.
+    vi.useFakeTimers();
+    const publish = vi.fn(async () => { throw new Error("Framer down"); });
+    const d = createPublishDebouncer({ delayMs: 1000, publish, onError: vi.fn(async () => {}) });
+    d.schedule();
+    const done = d.flushNow().then(() => "resolved", (e: Error) => e.message);
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(await done).toMatch(/Framer down/);
+    vi.useRealTimers();
+  });
 });
+

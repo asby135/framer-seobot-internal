@@ -200,3 +200,29 @@ describe("acknowledging the callback", () => {
     expect(answerCallback).toHaveBeenCalledWith("tg-query-id", undefined);
   });
 });
+
+describe("Approve all carries its digest", () => {
+  it("passes the digest id from the button to the handler", async () => {
+    const onApproveAll = vi.fn(async () => {});
+    await buildTelegramRoute({
+      secret: "s",
+      chatId: "42",
+      awaitHandler: true,
+      handlers: {
+        onApproveTitle: vi.fn(async () => {}),
+        onRerollTitle: vi.fn(async () => {}),
+        onRejectTopic: vi.fn(async () => {}),
+        onPublish: vi.fn(async () => {}),
+        onRegenerate: vi.fn(async () => {}),
+        onDelete: vi.fn(async () => {}),
+        onApproveAll,
+        onPublishAll: vi.fn(async () => {}),
+      },
+    }).request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Telegram-Bot-Api-Secret-Token": "s" },
+      body: JSON.stringify({ callback_query: { id: "q", data: "genall:dig-1", message: { message_id: 7, chat: { id: 42 } } } }),
+    });
+    expect(onApproveAll).toHaveBeenCalledWith(7, "dig-1");
+  });
+});

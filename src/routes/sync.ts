@@ -160,9 +160,11 @@ sync.post("/framer", async (c) => {
     // Items in the collection are not a published site. Arm the same debounced
     // deploy the Telegram gate uses, or a manual sync leaves the changes
     // sitting in Framer as pending and the live site quietly stale.
-    if (result.written > 0) {
+    // Removals count too: a sync that only took an article down left it on the
+    // live site until some unrelated deploy.
+    if (result.written > 0 || result.removed > 0) {
       schedulePublishSite();
-      logger.info({ written: result.written }, "Deploy armed after manual sync");
+      logger.info({ written: result.written, removed: result.removed }, "Deploy armed after manual sync");
     }
     return c.json({ success: true, ...result });
   } catch (e) {

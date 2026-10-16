@@ -8,6 +8,10 @@ export function TopicQueue() {
   const [error, setError] = useState("");
   const [customQuery, setCustomQuery] = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const [customConflict, setCustomConflict] = useState("");
+  // Its own line, shown in both views: the seed panel's message is only
+  // rendered while that panel is open, so the confirmation never appeared.
+  const [customMessage, setCustomMessage] = useState("");
   const [showSeed, setShowSeed] = useState(false);
   const [seedAudience, setSeedAudience] = useState("");
   const [seeding, setSeeding] = useState(false);
@@ -68,17 +72,28 @@ export function TopicQueue() {
     loadTopics();
   }
 
-  async function handleCustomSubmit() {
+  // The added topic goes straight to 'approved', so it never appears in this
+  // pending list — say where it went, or it looks like nothing happened.
+  async function handleCustomSubmit(force = false) {
     if (!customQuery.trim()) return;
+    const query = customQuery.trim();
     try {
-      await api.createCustomTopic(customQuery.trim());
+      await api.createCustomTopic(query, force);
       setCustomQuery("");
       setShowCustom(false);
+      setCustomConflict("");
+      setCustomMessage(`Added “${query}” — it's approved and waiting in the Generate tab.`);
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        // A repeat of an existing topic or article: show it, offer to add anyway.
+        setCustomConflict(e.message);
+        return;
+      }
       setError(e instanceof ApiError ? e.message : "Failed to add topic");
     }
     loadTopics();
   }
+
 
   async function handleSeed() {
     if (!seedAudience.trim() || seeding) return;
@@ -122,14 +137,21 @@ export function TopicQueue() {
           <div style={styles.customRow}>
             <input
               value={customQuery}
-              onChange={(e) => setCustomQuery(e.target.value)}
+              onChange={(e) => { setCustomQuery(e.target.value); setCustomConflict(""); setCustomMessage(""); }}
               placeholder="Enter a keyword..."
               style={styles.customInput}
               onKeyDown={(e) => e.key === "Enter" && handleCustomSubmit()}
             />
-            <button onClick={handleCustomSubmit} style={styles.smallButton}>Add</button>
+            <button onClick={() => handleCustomSubmit()} style={styles.smallButton}>Add</button>
           </div>
         )}
+        {showCustom && customConflict && (
+          <p style={styles.seedResult}>
+            {customConflict}{" "}
+            <button onClick={() => handleCustomSubmit(true)} style={styles.smallButton}>Add anyway</button>
+          </p>
+        )}
+        {customMessage && <p style={styles.seedResult}>{customMessage}</p>}
       </div>
     );
   }
@@ -243,15 +265,22 @@ export function TopicQueue() {
           <div style={styles.customRow}>
             <input
               value={customQuery}
-              onChange={(e) => setCustomQuery(e.target.value)}
+              onChange={(e) => { setCustomQuery(e.target.value); setCustomConflict(""); setCustomMessage(""); }}
               placeholder="Enter a keyword…"
               style={styles.customInput}
               onKeyDown={(e) => e.key === "Enter" && handleCustomSubmit()}
               autoFocus
             />
-            <button onClick={handleCustomSubmit} style={styles.smallButton}>Add</button>
+            <button onClick={() => handleCustomSubmit()} style={styles.smallButton}>Add</button>
           </div>
         )}
+        {showCustom && customConflict && (
+          <p style={styles.seedResult}>
+            {customConflict}{" "}
+            <button onClick={() => handleCustomSubmit(true)} style={styles.smallButton}>Add anyway</button>
+          </p>
+        )}
+        {customMessage && <p style={styles.seedResult}>{customMessage}</p>}
 
         {showSeed && (
           <div style={styles.seedPanel}>

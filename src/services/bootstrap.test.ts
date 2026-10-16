@@ -26,6 +26,11 @@ let recoverInterruptedGenerations: typeof import("./bootstrap.js").recoverInterr
 let articlesSyncedSince: typeof import("./bootstrap.js").articlesSyncedSince;
 let unpublishArticleRow: typeof import("./bootstrap.js").unpublishArticleRow;
 let describeFlags: typeof import("./bootstrap.js").describeFlags;
+let recordDigest: typeof import("./bootstrap.js").recordDigest;
+let pendingInDigest: typeof import("./bootstrap.js").pendingInDigest;
+let forgetDigest: typeof import("./bootstrap.js").forgetDigest;
+let digestItems: typeof import("./bootstrap.js").digestItems;
+let failureNotice: typeof import("./bootstrap.js").failureNotice;
 
 beforeAll(async () => {
   // env.ts snapshots process.env at import time, so this must be set before
@@ -34,7 +39,7 @@ beforeAll(async () => {
   const dbMod = await import("../db/index.js");
   dbMod.initDb();
   getDb = dbMod.getDb;
-  ({ buildGateHandlers, publishIsOverdue, articlesAwaitingAnnouncement, markAnnounced, articleUrl, articlesReadyForReview, recoverOrphanedReviews, recoverInterruptedGenerations, articlesSyncedSince, unpublishArticleRow, describeFlags } =
+  ({ buildGateHandlers, publishIsOverdue, articlesAwaitingAnnouncement, markAnnounced, articleUrl, articlesReadyForReview, recoverOrphanedReviews, recoverInterruptedGenerations, articlesSyncedSince, unpublishArticleRow, describeFlags, recordDigest, pendingInDigest, forgetDigest, digestItems, failureNotice } =
     await import("./bootstrap.js"));
 });
 
@@ -391,5 +396,78 @@ describe("describeFlags — what gate 2 tells the operator", () => {
     const lines = describeFlags({ ungrounded_claims: Array.from({ length: 10 }, (_, i) => `claim ${i} ${"x".repeat(400)}`) });
     expect(lines.length).toBeLessThanOrEqual(5);
     expect(lines.every((l) => l.length < 260)).toBe(true);
+  });
+});
+
+describe("digests are tracked one by one", () => {
+  const kw = (id: string, status = "pending") =>
+    getDb().prepare("INSERT INTO keywords (id, query, status) VALUES (?, ?, ?)").run(id, `topic ${id}`, status);
+
+  it("Approve all on an older digest finds that digest's titles, not the newest one's", () => {
+    kw("old1"); kw("old2"); kw("new1");
+    const older = recordDigest([{ keywordId: "old1", query: "topic old1", title: "topic old1" }, { keywordId: "old2", query: "topic old2", title: "topic old2" }]);
+    recordDigest([{ keywordId: "new1", query: "topic new1", title: "topic new1" }]);
+    expect(pendingInDigest(older)?.sort()).toEqual(["old1", "old2"]);
+  });
+
+  it("leaves out titles already decided", () => {
+    kw("a"); kw("b", "approved");
+    const id = recordDigest([{ keywordId: "a", query: "topic a", title: "topic a" }, { keywordId: "b", query: "topic b", title: "topic b" }]);
+    expect(pendingInDigest(id)).toEqual(["a"]);
+  });
+
+  it("returns null for a button with no digest, or one no longer tracked", () => {
+    expect(pendingInDigest("")).toBeNull();
+    expect(pendingInDigest("never-recorded")).toBeNull();
+  });
+
+  it("stamps the proposed titles, and forgetting undoes it", () => {
+    kw("a");
+    const id = recordDigest([{ keywordId: "a", query: "topic a", title: "The Headline" }]);
+    const proposed = () => (getDb().prepare("SELECT proposed_title FROM keywords WHERE id = 'a'").get() as { proposed_title: string | null }).proposed_title;
+    expect(proposed()).toBe("The Headline");
+    forgetDigest(id, ["a"]);
+    expect(proposed()).toBeNull();
+    expect(pendingInDigest(id)).toBeNull();
+  });
+});
+
+describe("digestItems", () => {
+  it("does not print a title twice when it is the topic itself", () => {
+    // Every digest showed each title in bold and again in italics.
+    expect(digestItems([{ keywordId: "k", query: "How to Tag Leads", title: "How to Tag Leads" }])).toEqual([
+      { label: "How to Tag Leads" },
+    ]);
+  });
+
+  it("still shows the topic under a title that differs", () => {
+    expect(digestItems([{ keywordId: "k", query: "tag leads", title: "How to Tag Leads" }])).toEqual([
+      { label: "How to Tag Leads", sub: "tag leads" },
+    ]);
+  });
+});
+
+describe("failureNotice", () => {
+  it("offers Retry and Delete for a failed generation", () => {
+    // It was a bare alert, so the operator could neither retry nor clear it
+    // from Telegram, and the topic was simply used up.
+    const n = failureNotice({ id: "a1", title: "Failed: How to <Tag> Leads", slug: "failed-a1" });
+    expect(n.text).toContain("How to &lt;Tag&gt; Leads");
+    const data = n.buttons.flat().map((b) => b.data);
+    expect(data).toEqual(["rgn:a1", "del:a1"]);
+  });
+});
+
+describe("digests sent before per-digest tracking", () => {
+  it("lets a bare Approve-all button act on the legacy list until a tracked digest exists", async () => {
+    // Tonight's digest may already be in the chat when this ships; its button
+    // carries no id. Until the first tracked digest is sent, honour the old list.
+    const { setSetting } = await import("./settings.js");
+    getDb().prepare("INSERT INTO keywords (id, query, status) VALUES ('L1', 'topic L1', 'pending')").run();
+    setSetting("digests", []);
+    setSetting("lastDigestKeywordIds", ["L1"]);
+    expect(pendingInDigest("")).toEqual(["L1"]);
+    recordDigest([{ keywordId: "L1", query: "topic L1", title: "topic L1" }]);
+    expect(pendingInDigest("")).toBeNull();
   });
 });

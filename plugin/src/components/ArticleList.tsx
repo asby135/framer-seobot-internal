@@ -134,23 +134,16 @@ export function ArticleList() {
       setTranslateMessage("No selected articles are in draft / review.");
       return;
     }
-    setTranslateMessage("");
-    let ok = 0;
-    let failed = 0;
-    for (const a of publishable) {
-      try {
-        await api.publishArticle(a.id);
-        ok++;
-      } catch {
-        failed++;
-      }
+    setTranslateMessage(`Publishing ${publishable.length}…`);
+    // One request, one Framer sync for the whole selection. Publishing one at
+    // a time paid Framer's ~70s connection warm-up per article.
+    try {
+      const { published } = await api.publishBatch(publishable.map((a) => a.id));
+      setTranslateMessage(`Published ${published.length} article${published.length === 1 ? "" : "s"}.`);
+    } catch (e) {
+      setTranslateMessage(e instanceof ApiError ? e.message : "Publishing failed.");
     }
     setBatchSelected(new Set());
-    setTranslateMessage(
-      failed > 0
-        ? `Published ${ok}, ${failed} failed.`
-        : `Published ${ok} article${ok === 1 ? "" : "s"}.`
-    );
     loadArticles();
   }
 

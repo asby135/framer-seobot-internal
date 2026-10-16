@@ -226,10 +226,14 @@ describe("acknowledging a tapped button", () => {
     expect(msgs(d).join(" ")).toMatch(/approved/i);
   });
 
-  it("says nothing when the approval was a no-op", async () => {
+  it("says why when the approval was a no-op, and starts nothing", async () => {
+    // It used to stay silent, which kept a double tap quiet but left an
+    // approval made elsewhere (in the plugin) looking like a dead button — the
+    // exact failure this suite exists to prevent. One short line, no generation.
     const d = deps({ getKeyword: () => ({ id: "k1", query: "q", status: "approved", proposed_title: null }) });
     await createGateHandlers(d).onApproveTitle("k1", 0);
-    expect(d.progress).not.toHaveBeenCalled();
+    expect(msgs(d)).toEqual([expect.stringMatching(/already approved/i)]);
+    expect(d.enqueueGeneration).not.toHaveBeenCalled();
   });
 
   it("sends ONE summary for approve-all, not one message per title", async () => {
@@ -385,5 +389,87 @@ describe("approving when the queue refuses the topic", () => {
     const said = (d.progress as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
     expect(said.some((m) => /writing/i.test(m))).toBe(false);
     expect(said.some((m) => /already/i.test(m))).toBe(true);
+  });
+});
+
+describe("Approve all belongs to its own digest", () => {
+  // The button carried no digest id and acted on whatever digest was newest,
+  // so tapping it on yesterday's message approved tonight's titles.
+  it("approves the titles of the digest the button is on", async () => {
+    const d = deps({ pendingProposedKeywordIds: vi.fn(() => ["kw1"]) });
+    await createGateHandlers(d).onApproveAll(0, "dig-1");
+    expect(d.pendingProposedKeywordIds).toHaveBeenCalledWith("dig-1");
+    expect(d.enqueueGeneration).toHaveBeenCalledOnce();
+  });
+
+  it("says so, and approves nothing, for a digest it no longer tracks", async () => {
+    const d = deps({ pendingProposedKeywordIds: vi.fn(() => null) });
+    await createGateHandlers(d).onApproveAll(0, "");
+    expect(d.enqueueGeneration).not.toHaveBeenCalled();
+    expect(d.alert).toHaveBeenCalledWith(expect.stringMatching(/individually/i));
+  });
+});
+
+describe("approving a topic that is no longer pending", () => {
+  it("says it is already approved instead of staying silent", async () => {
+    const d = deps({ getKeyword: vi.fn(() => ({ id: "kw1", query: "q", status: "approved", proposed_title: "H" })) });
+    await createGateHandlers(d).onApproveTitle("kw1", 5);
+    expect(d.progress).toHaveBeenCalledWith(expect.stringMatching(/already approved/i));
+  });
+});
+
+describe("reroll racing an approval", () => {
+  it("does not swap the title of a topic approved while the new one was being written", async () => {
+    // The approval queued generation under the old title; the reroll then
+    // stored the new one and told the operator to approve it — a dead button.
+    let status = "pending";
+    const d = deps({
+      getKeyword: vi.fn(() => ({ id: "kw1", query: "q", status, proposed_title: "Old" })),
+      proposeTitle: vi.fn(async () => { status = "approved"; return "New"; }),
+    });
+    await createGateHandlers(d).onRerollTitle("kw1", 5);
+    expect(d.saveProposedTitle).not.toHaveBeenCalled();
+    const said = (d.progress as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0])).join("\n");
+    expect(said).toMatch(/already approved/i);
+    expect(said).not.toMatch(/Approve it/);
+  });
+});
+
+describe("regenerate", () => {
+  it("can retry a failed generation", async () => {
+    const d = deps({ getArticle: vi.fn(() => ({ id: "a1", title: "Failed: q", slug: "s", status: "generation_failed", content: "" })) });
+    await createGateHandlers(d).onRegenerate("a1", 0);
+    expect(d.regenerateArticle).toHaveBeenCalledWith("a1");
+  });
+
+  it("acts before it speaks, so a publish landing meanwhile is not deleted", async () => {
+    // It checked the status, awaited the Telegram message, then regenerated
+    // from the stale check — deleting an article published in between.
+    const order: string[] = [];
+    const d = deps({
+      regenerateArticle: vi.fn(() => { order.push("regenerate"); }),
+      progress: vi.fn(async () => { order.push("progress"); }),
+    });
+    await createGateHandlers(d).onRegenerate("art1", 0);
+    expect(order).toEqual(["regenerate", "progress"]);
+  });
+});
+
+describe("publishMany — the plugin's batch publish", () => {
+  // The plugin published a selection one article at a time, each with its own
+  // Framer sync and its ~70s warm-up. This is Publish all's path for a chosen
+  // list: mark all, sync once.
+  it("marks every article, syncs once, and reports what went out", async () => {
+    const d = deps();
+    const r = await createGateHandlers(d).publishMany(["a1", "a2"]);
+    expect(d.publishArticle).toHaveBeenCalledTimes(2);
+    expect(d.syncToFramer).toHaveBeenCalledOnce();
+    expect(r).toEqual({ published: ["a1", "a2"], reverted: [] });
+  });
+
+  it("reports what was rolled back when the sync fails", async () => {
+    const d = deps({ syncToFramer: vi.fn(async () => { throw new Error("x"); }) });
+    const r = await createGateHandlers(d).publishMany(["a1", "a2"]);
+    expect(r).toEqual({ published: [], reverted: ["a1", "a2"] });
   });
 });

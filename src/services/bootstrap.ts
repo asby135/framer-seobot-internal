@@ -10,13 +10,12 @@ import { proposeTitle } from "./title.js";
 import { enqueueGeneration } from "./queue.js";
 import { syncToFramer } from "./framer-sync.js";
 import { createPublishDebouncer } from "./publish-debounce.js";
-import { createRunner, type Runner } from "./scheduler.js";
+import { createRunner, localDateKey, type Runner } from "./scheduler.js";
 import { createGateHandlers, type KeywordRow, type ArticleRow } from "./gates.js";
 import { runNightly, type TitleProposal } from "./autopilot.js";
 import { poolTarget } from "./selection.js";
 import { buildDigest, buildKeyboard, sendMessage, sendDocument, editMessage, alert, escapeHtml } from "./notify.js";
-import { setArticleReadyHandler, setGenerationCrashHandler, enqueueTranslation } from "./queue.js";
-import type { CallbackHandlers } from "../routes/telegram.js";
+import { setArticleReadyHandler, setGenerationCrashHandler, setTranslationCompleteHandler, enqueueTranslation } from "./queue.js";
 
 /**
  * Assembles the real dependencies for the autopilot.
@@ -124,6 +123,112 @@ async function publishFramerSite(): Promise<void> {
 export function articleUrl(slug: string, siteUrl: string = env.SITE_URL): string {
   const base = siteUrl.replace(/\/+$/, "");
   return base ? `${base}/${slug}` : `/${slug}`;
+}
+
+/** How many digests' Approve-all buttons keep working. Two weeks of nights. */
+const TRACKED_DIGESTS = 14;
+
+interface TrackedDigest {
+  id: string;
+  keywordIds: string[];
+}
+
+/**
+ * Record a digest about to be sent: stamp each topic's proposed title (Approve
+ * pins it, and selection skips topics already offered), and remember which
+ * topics this digest holds, under an id its Approve-all button carries.
+ *
+ * Approve all used to read one global "latest digest" list, so tapping it on
+ * yesterday's message approved tonight's titles.
+ */
+export function recordDigest(proposals: TitleProposal[]): string {
+  const db = getDb();
+  const stmt = db.prepare("UPDATE keywords SET proposed_title = ?, updated_at = datetime('now') WHERE id = ?");
+  db.transaction((rows: TitleProposal[]) => {
+    for (const p of rows) stmt.run(p.title, p.keywordId);
+  })(proposals);
+
+  const id = nanoid(10);
+  const digests = getSetting<TrackedDigest[]>("digests", []);
+  digests.push({ id, keywordIds: proposals.map((p) => p.keywordId) });
+  setSetting("digests", digests.slice(-TRACKED_DIGESTS));
+  return id;
+}
+
+/** Keyword ids of one digest still pending; null if the digest is unknown. */
+export function pendingInDigest(digestId: string | undefined): string[] | null {
+  if (!digestId) {
+    // Digests sent before per-digest tracking carry a bare button. Until the
+    // first tracked digest goes out, the old single list is still the right
+    // one — tonight's digest may already be in the chat when this ships.
+    if (getSetting<TrackedDigest[]>("digests", []).length > 0) return null;
+    const legacy = getSetting<string[]>("lastDigestKeywordIds", []);
+    if (legacy.length === 0) return null;
+    const placeholders = legacy.map(() => "?").join(",");
+    const pending = new Set(
+      (getDb().prepare(`SELECT id FROM keywords WHERE id IN (${placeholders}) AND status = 'pending'`).all(...legacy) as { id: string }[]).map((r) => r.id)
+    );
+    return legacy.filter((k) => pending.has(k));
+  }
+  const digest = getSetting<TrackedDigest[]>("digests", []).find((d) => d.id === digestId);
+  if (!digest || digest.keywordIds.length === 0) return digest ? [] : null;
+  const placeholders = digest.keywordIds.map(() => "?").join(",");
+  const pending = new Set(
+    (
+      getDb()
+        .prepare(`SELECT id FROM keywords WHERE id IN (${placeholders}) AND status = 'pending'`)
+        .all(...digest.keywordIds) as { id: string }[]
+    ).map((r) => r.id)
+  );
+  // In digest order, so Approve all generates them in the order shown.
+  return digest.keywordIds.filter((k) => pending.has(k));
+}
+
+/** Undo recordDigest for a digest that could not be sent. */
+export function forgetDigest(digestId: string, keywordIds: string[]): void {
+  if (keywordIds.length > 0) {
+    const placeholders = keywordIds.map(() => "?").join(",");
+    getDb()
+      .prepare(`UPDATE keywords SET proposed_title = NULL WHERE id IN (${placeholders}) AND status = 'pending'`)
+      .run(...keywordIds);
+  }
+  setSetting(
+    "digests",
+    getSetting<TrackedDigest[]>("digests", []).filter((d) => d.id !== digestId)
+  );
+}
+
+/**
+ * Digest lines. The topic is shown under the title only when it differs:
+ * since titles became the seeded topics themselves, every digest printed each
+ * title twice, in bold and again in italics.
+ */
+export function digestItems(proposals: TitleProposal[]): Array<{ label: string; sub?: string }> {
+  return proposals.map((p) =>
+    p.title.trim().toLowerCase() === p.query.trim().toLowerCase() ? { label: p.title } : { label: p.title, sub: p.query }
+  );
+}
+
+/**
+ * The gate-2 message for a failed generation, with Retry and Delete. It was a
+ * bare alert, so the failure could be neither retried nor cleared from
+ * Telegram, and the topic was simply used up.
+ */
+export function failureNotice(article: { id: string; title: string; slug: string; error?: string }): {
+  text: string;
+  buttons: Array<Array<{ text: string; data: string }>>;
+} {
+  const topic = article.title.replace(/^Failed: /, "");
+  const reason = article.error ? `\n\n<i>${escapeHtml(article.error.slice(0, 300))}</i>` : "";
+  return {
+    text: `⚠️ <b>Generation failed</b>\n\n${escapeHtml(topic)}${reason}`,
+    buttons: [
+      [
+        { text: "🔄 Retry", data: `rgn:${article.id}` },
+        { text: "🗑 Delete", data: `del:${article.id}` },
+      ],
+    ],
+  };
 }
 
 /**
@@ -315,12 +420,13 @@ async function announceSitePublished(): Promise<void> {
     lines.push(`…and ${shipped.length - shown.length} more`);
   }
 
-  await sendMessage(
+  const delivered = await sendMessage(
     `🚀 <b>Site published</b> — ${shipped.length} article${shipped.length === 1 ? "" : "s"} live\n\n${lines.join("\n")}`
   );
   // Stamped only after the send succeeds: a failed message must not silence
-  // these articles forever.
-  markAnnounced(shipped.map((a) => a.id));
+  // these articles forever. sendMessage reports a rejection by returning false
+  // rather than throwing, which the stamp used to ignore.
+  if (delivered) markAnnounced(shipped.map((a) => a.id));
 }
 
 const debouncer = createPublishDebouncer({
@@ -355,6 +461,31 @@ function schedulePublishPersisted(): void {
     setSetting("publishPendingSince", new Date().toISOString());
   }
   debouncer.schedule();
+}
+
+/**
+ * Push a changed LIVE article to the site: sync, then the debounced deploy.
+ * No-op for an article that is not published. Never rejects — a failure is
+ * alerted, since nobody awaits this.
+ *
+ * Edits and re-translations of published articles used to stop at the
+ * database: the site kept the old text until some unrelated publish carried
+ * the change out, unannounced.
+ */
+export async function resyncPublishedArticle(articleId: string): Promise<void> {
+  const row = getDb().prepare("SELECT status, title FROM articles WHERE id = ?").get(articleId) as
+    | { status: string; title: string }
+    | undefined;
+  if (!row || row.status !== "published") return;
+  try {
+    const result = await syncToFramer();
+    // Nothing written means nothing to deploy — and a deploy announces itself.
+    if (result.written > 0 || result.removed > 0) schedulePublishPersisted();
+  } catch (e) {
+    await alert(
+      `Saved a change to “${row.title}”, but the Framer sync failed: ${e instanceof Error ? e.message : "unknown"}. The live site still has the old version.`
+    ).catch(() => undefined);
+  }
 }
 
 /**
@@ -399,7 +530,8 @@ export function recoverPendingPublish(): void {
       { pendingSince: pending },
       "Publish owed longer than the debounce window — deploying now instead of re-arming"
     );
-    void publishSiteNow();
+    // Failure is already alerted by the debouncer; nothing awaits this.
+    publishSiteNow().catch(() => undefined);
     return;
   }
 
@@ -407,9 +539,9 @@ export function recoverPendingPublish(): void {
   debouncer.schedule();
 }
 
-/** Flush a pending deploy on shutdown rather than losing it. */
+/** Flush a pending deploy on shutdown rather than losing it. Never rejects. */
 export async function flushPendingPublish(): Promise<void> {
-  if (debouncer.isPending()) await debouncer.flushNow();
+  if (debouncer.isPending()) await debouncer.flushNow().catch(() => undefined);
 }
 
 function recentPublishedTitles(limit = 100): string[] {
@@ -444,7 +576,7 @@ function deleteArticleRow(id: string): void {
   })();
 }
 
-export function buildGateHandlers(): CallbackHandlers {
+export function buildGateHandlers(): ReturnType<typeof createGateHandlers> {
   const db = () => getDb();
 
   return createGateHandlers({
@@ -517,20 +649,11 @@ export function buildGateHandlers(): CallbackHandlers {
     syncedSince: articlesSyncedSince,
 
     /**
-     * The topics from the most recent digest that are still awaiting a
-     * decision. Approving one, rejecting it, or generating from it drops it out
-     * of the list, so Approve All stays idempotent under a double tap.
+     * The topics of the digest a tapped Approve-all belongs to that are still
+     * awaiting a decision. Approving, rejecting or generating one drops it out,
+     * so Approve all stays idempotent under a double tap.
      */
-    pendingProposedKeywordIds: () => {
-      const ids = getSetting<string[]>("lastDigestKeywordIds", []);
-      if (ids.length === 0) return [];
-      const placeholders = ids.map(() => "?").join(",");
-      return (
-        db()
-          .prepare(`SELECT id FROM keywords WHERE id IN (${placeholders}) AND status = 'pending'`)
-          .all(...ids) as { id: string }[]
-      ).map((r) => r.id);
-    },
+    pendingProposedKeywordIds: (digestId) => pendingInDigest(digestId),
 
     reviewArticleIds: () => articlesReadyForReview(),
 
@@ -554,10 +677,10 @@ export function buildGateHandlers(): CallbackHandlers {
 }
 
 /** Send the gate-1 digest and return its Telegram message id. */
-async function sendTitleDigest(proposals: TitleProposal[]): Promise<number> {
+async function sendTitleDigest(proposals: TitleProposal[], digestId?: string): Promise<number> {
   const text = buildDigest(
     `${proposals.length} title${proposals.length === 1 ? "" : "s"} proposed`,
-    proposals.map((p) => ({ label: p.title, sub: p.query }))
+    digestItems(proposals)
   );
 
   const rows = proposals.map((p, i) => [
@@ -565,7 +688,9 @@ async function sendTitleDigest(proposals: TitleProposal[]): Promise<number> {
     { text: `🔄 ${i + 1}`, data: `rrl:${p.keywordId}` },
     { text: `❌ ${i + 1}`, data: `rej:${p.keywordId}` },
   ]);
-  rows.push([{ text: "✅ Approve all", data: "genall:" }]);
+  // The digest's own id, so the button approves THIS digest's titles however
+  // many digests have been sent since.
+  rows.push([{ text: "✅ Approve all", data: `genall:${digestId ?? ""}` }]);
 
   const delivered = await sendMessage(text, buildKeyboard(rows));
   if (!delivered) {
@@ -643,7 +768,14 @@ export async function sendArticleReadyDigest(articleId: string): Promise<void> {
   }
 
   if (article.status === "generation_failed") {
-    await alert(`Generation failed for "${article.title}" (${article.slug}).`);
+    let error: string | undefined;
+    try {
+      error = (JSON.parse(article.flags ?? "{}") as { error?: string }).error;
+    } catch {
+      /* best-effort */
+    }
+    const notice = failureNotice({ ...article, error });
+    await sendMessage(notice.text, buildKeyboard(notice.buttons));
     return;
   }
 
@@ -725,6 +857,8 @@ ${ruContent ? `<hr><p class="locale">Russian</p><h1>${escapeHtml(ruTitle ?? "")}
 
 /** Register the queue hook so finished articles reach gate 2. */
 export function registerArticleReadyHandler(): void {
+  // A live article's new translation goes to the site; drafts are unaffected.
+  setTranslationCompleteHandler((articleId) => resyncPublishedArticle(articleId));
   // A job that throws past the generator's own failure handling leaves its
   // topic 'approved' with no article; say so rather than let it vanish.
   setGenerationCrashHandler(async (query, message) => {
@@ -785,21 +919,9 @@ export async function runNightlyJob(dryRun: boolean): Promise<TitleProposal[]> {
         },
         getCovered: () => getCoveredTopics(),
 
-        recordProposals: (proposals) => {
-          const stmt = getDb().prepare(
-            "UPDATE keywords SET proposed_title = ?, updated_at = datetime('now') WHERE id = ?"
-          );
-          getDb().transaction((rows: TitleProposal[]) => {
-            for (const p of rows) stmt.run(p.title, p.keywordId);
-          })(proposals);
-          // Scope Approve All to THIS digest. Matching on "pending with a
-          // proposed title" instead would grow: topics from earlier digests
-          // that were never approved or rejected accumulate, and one tap weeks
-          // later would approve a backlog the operator has forgotten, at cost.
-          setSetting(
-            "lastDigestKeywordIds",
-            proposals.map((p) => p.keywordId)
-          );
+        recordProposals: (proposals) => recordDigest(proposals),
+        forgetProposals: (proposals, digestId) => {
+          if (digestId) forgetDigest(digestId, proposals.map((p) => p.keywordId));
         },
 
         sendTitleDigest,
@@ -821,18 +943,39 @@ export async function runNightlyOnce(
     nightlyInFlight = null;
   });
   const proposals = await nightlyInFlight;
+  // A real run IS today's digest, manual or scheduled. Without this, a manual
+  // run shortly before the hour was followed by a second digest at the hour.
+  if (!dryRun) {
+    setSetting(
+      "lastRunDate",
+      localDateKey(new Date(), getSetting<string | null>("timezone", null) ?? undefined)
+    );
+  }
   return { started: true, proposals };
+}
+
+/**
+ * The scheduled run, never alongside a manual one: it waits for any manual run
+ * in flight to finish, then runs its own. It used to call runNightlyJob
+ * directly, past the guard the manual trigger respects, so a manual run during
+ * the scheduled one could send two overlapping digests.
+ */
+async function runNightlyScheduled(dryRun: boolean): Promise<void> {
+  while (nightlyInFlight) await nightlyInFlight.catch(() => undefined);
+  await runNightlyOnce(dryRun);
 }
 
 export function createNightlyRunner(): Runner {
   return createRunner({
-    hour: getSetting("scheduleHour", 20),
+    // Re-read on every tick, so a change in the plugin applies without a redeploy.
+    hour: () => getSetting("scheduleHour", 20),
+    timeZone: () => getSetting<string | null>("timezone", null) ?? undefined,
     getLastRun: () => getSetting<string | null>("lastRunDate", null),
     setLastRun: (date) => setSetting("lastRunDate", date),
     maxAttemptsPerDay: getSetting("maxAttemptsPerDay", 3),
     onExhausted: alert,
     job: async () => {
-      await runNightlyJob(process.env.SCHEDULER_DRY_RUN === "1");
+      await runNightlyScheduled(process.env.SCHEDULER_DRY_RUN === "1");
     },
   });
 }

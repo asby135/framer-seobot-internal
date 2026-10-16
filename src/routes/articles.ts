@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
 import { faqVerdict } from "../lib/jsonld.js";
-import { buildGateHandlers } from "../services/bootstrap.js";
+import { buildGateHandlers, resyncPublishedArticle } from "../services/bootstrap.js";
+import { sanitizeHTML } from "../services/generator.js";
 import {
   enqueueGeneration,
   enqueueTranslation,
@@ -158,6 +159,29 @@ articles.get("/:id", (c) => {
   return c.json({ ...article, assets, translatedLocales });
 });
 
+// Publish a selection together: mark all, sync once. Registered before the
+// /:id routes. The plugin published a selection one article at a time, each
+// paying its own Framer sync and warm-up.
+articles.post("/publish-batch", async (c) => {
+  const body = await c.req.json<{ article_ids?: unknown }>().catch(() => ({}) as { article_ids?: unknown });
+  if (!Array.isArray(body.article_ids) || body.article_ids.length === 0) {
+    return c.json({ error: "article_ids array required" }, 400);
+  }
+  const ids = [...new Set(body.article_ids.filter((x): x is string => typeof x === "string"))].slice(0, 50);
+  const result = await buildGateHandlers().publishMany(ids);
+  // Reverted means the Framer sync failed for them; the caller must know.
+  if (result.reverted.length > 0) {
+    return c.json(
+      {
+        ...result,
+        error: `Framer sync failed — ${result.published.length} published, ${result.reverted.length} still in review. Retry once the sync issue clears.`,
+      },
+      502
+    );
+  }
+  return c.json(result);
+});
+
 // Mark article as published
 articles.post("/:id/publish", async (c) => {
   const db = getDb();
@@ -262,7 +286,8 @@ articles.post("/:id/update", async (c) => {
   }
   if (body.content !== undefined) {
     updates.push("content = ?");
-    values.push(body.content);
+    // The same sanitizer generated content goes through; edits skipped it.
+    values.push(sanitizeHTML(body.content));
   }
 
   if (updates.length === 0) {
@@ -276,6 +301,13 @@ articles.post("/:id/update", async (c) => {
 
   const updated = db.prepare("SELECT * FROM articles WHERE id = ?").get(id);
   logger.info({ articleId: id, fields: updates.length - 1 }, "Article updated manually");
+
+  // The RU version was a translation of the old text; redo it. Its completion
+  // pushes the new RU to the site too, if the article is live.
+  enqueueTranslation({ articleId: id, force: true });
+  // And the edit itself goes live now rather than with some unrelated publish.
+  if (article.status === "published") void resyncPublishedArticle(id);
+
   return c.json(updated);
 });
 

@@ -27,6 +27,17 @@ interface Payload {
   maxPerNight?: unknown;
   scheduleHour?: unknown;
   poolThreshold?: unknown;
+  timezone?: unknown;
+}
+
+/** Is `tz` an IANA zone this runtime knows? */
+function isTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function validateNiches(value: unknown): string | null {
@@ -61,6 +72,12 @@ settings.get("/", (c) => {
     poolThreshold: getSetting("poolThreshold", 10),
     rotationCursor: getSetting("rotationCursor", 0),
     lastRunDate: getSetting<string | null>("lastRunDate", null),
+    // The zone the digest hour is counted in. `timezone` is what was set (null
+    // = none); `effectiveTimezone` is what applies — the server's own zone when
+    // none is set — so the plugin can say which clock "20:00" means.
+    timezone: getSetting<string | null>("timezone", null),
+    effectiveTimezone:
+      getSetting<string | null>("timezone", null) ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
   });
 });
 
@@ -111,6 +128,19 @@ settings.post("/", async (c) => {
     }
     setSetting("poolThreshold", t);
     updated.push("poolThreshold");
+  }
+
+  if (body.timezone !== undefined) {
+    const tz = body.timezone;
+    if (tz === null || tz === "") {
+      setSetting("timezone", null);
+    } else if (typeof tz !== "string" || !isTimeZone(tz)) {
+      return c.json({ error: 'timezone must be an IANA zone name such as "Europe/Lisbon"' }, 400);
+    } else {
+      // Canonical spelling ("europe/lisbon" → "Europe/Lisbon"), as shown back.
+      setSetting("timezone", new Intl.DateTimeFormat("en-US", { timeZone: tz }).resolvedOptions().timeZone);
+    }
+    updated.push("timezone");
   }
 
   logger.info({ updated }, "Generator settings updated");

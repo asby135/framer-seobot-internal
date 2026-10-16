@@ -14,10 +14,18 @@ export function Settings({ onBack }: Props) {
   const [gen, setGen] = useState<GeneratorSettings | null>(null);
   const [genStatus, setGenStatus] = useState("");
   const [openNiche, setOpenNiche] = useState<number | null>(null);
+  const [genLoadError, setGenLoadError] = useState("");
 
   useEffect(() => {
     loadSettings();
-    api.getSettings().then(setGen).catch(() => setGen(null));
+    // A failure used to hide the whole Generator section without a word.
+    api
+      .getSettings()
+      .then(setGen)
+      .catch((e) => {
+        setGen(null);
+        setGenLoadError(e instanceof Error ? e.message : "Could not load generator settings");
+      });
   }, []);
 
   async function saveGenerator(patch: Partial<GeneratorSettings>) {
@@ -121,6 +129,10 @@ export function Settings({ onBack }: Props) {
         Disconnect
       </button>
 
+      {!gen && genLoadError && (
+        <p style={{ ...styles.keyHint, color: "#f88" }}>Generator settings could not be loaded: {genLoadError}</p>
+      )}
+
       {gen && (
         <div style={styles.field}>
           <h4 style={styles.sectionTitle}>Generator</h4>
@@ -146,7 +158,11 @@ export function Settings({ onBack }: Props) {
             </button>
           </div>
 
-          <label style={{ ...styles.label, marginTop: 16 }}>Digest hour (24h, local)</label>
+          {/* The hour is counted in the server's zone unless one is set — the
+              label used to say "local" while the server ran on UTC. */}
+          <label style={{ ...styles.label, marginTop: 16 }}>
+            Digest hour (24h, {gen.effectiveTimezone})
+          </label>
           <div style={styles.row}>
             <input
               type="number" min={0} max={23} value={gen.scheduleHour}
@@ -154,6 +170,37 @@ export function Settings({ onBack }: Props) {
               style={styles.numberInput}
             />
             <button style={styles.smallButton} onClick={() => saveGenerator({ scheduleHour: gen.scheduleHour })}>
+              Save
+            </button>
+          </div>
+
+          <label style={{ ...styles.label, marginTop: 16 }}>Timezone</label>
+          <div style={styles.row}>
+            <input
+              value={gen.timezone ?? ""}
+              onChange={(e) => setGen({ ...gen, timezone: e.target.value })}
+              style={{ ...styles.subnicheInput, marginTop: 0 }}
+              placeholder={`e.g. Europe/Lisbon — blank uses the server's (${gen.effectiveTimezone})`}
+            />
+            <button
+              style={styles.smallButton}
+              onClick={async () => {
+                const tz = (gen.timezone ?? "").trim() || null;
+                setGenStatus("Saving…");
+                try {
+                  await api.updateSettings({ timezone: tz });
+                  // Merge only the zone fields: replacing the whole state wiped
+                  // unsaved edits elsewhere (niches, personas).
+                  const fresh = await api.getSettings();
+                  setGen((g) => (g ? { ...g, timezone: fresh.timezone, effectiveTimezone: fresh.effectiveTimezone } : g));
+                  setGenStatus("Saved ✓");
+                } catch (e) {
+                  // Keep what was typed so it can be corrected.
+                  setGenStatus(e instanceof Error ? e.message : "Save failed");
+                }
+                setTimeout(() => setGenStatus(""), 3000);
+              }}
+            >
               Save
             </button>
           </div>

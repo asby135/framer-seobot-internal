@@ -150,6 +150,26 @@ describe("syncCollection — locale fallback", () => {
     const res = await syncCollection(port, [item("a")], ["ru"], locales, opts);
     expect(res.withLocales).toBe(false);
   });
+
+  it("rewrites only what was being written, not the whole collection", async () => {
+    // The fallback rewrote EVERY item without translations — ~310 items, about
+    // half an hour, stripping RU from all of them — and recorded hashes of that
+    // shape, so the next ordinary sync rewrote all of them again.
+    const port = fakePort(["a", "b", "c", "d"]);
+    const writes: string[][] = [];
+    let first = true;
+    port.addItems = vi.fn(async (items: CollectionItem[]) => {
+      if (first) {
+        first = false;
+        throw new Error("Unknown locale id for variable reference");
+      }
+      writes.push(items.map((i) => i.id));
+    });
+    // Framer already holds a-d; only e is new (adoption records a-d as-is).
+    const res = await syncCollection(port, ["a", "b", "c", "d", "e"].map(item), ["ru"], locales, opts);
+    expect(res.withLocales).toBe(false);
+    expect(writes.flat()).toEqual(["e"]);
+  });
 });
 
 describe("previewSync — see the arithmetic before granting a write", () => {

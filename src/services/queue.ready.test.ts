@@ -157,3 +157,68 @@ describe("a failed generation", () => {
     expect(jobDuringNotify).toBeNull();
   });
 });
+
+describe("after a translation", () => {
+  it("tells whoever is listening, so a live article's new RU reaches the site", async () => {
+    const onTranslated = vi.fn();
+    queue.setTranslationCompleteHandler(onTranslated);
+    translate.mockResolvedValue({ translated: ["ru"], skipped: [], failed: [] });
+    queue.enqueueTranslation({ articleId: "a1", force: true });
+    await queue.onQueuesIdle();
+    expect(onTranslated).toHaveBeenCalledWith("a1");
+    queue.setTranslationCompleteHandler(null);
+  });
+
+  it("stays quiet when the translation failed", async () => {
+    const onTranslated = vi.fn();
+    queue.setTranslationCompleteHandler(onTranslated);
+    translate.mockRejectedValue(new Error("down"));
+    queue.enqueueTranslation({ articleId: "a1", force: true });
+    await queue.onQueuesIdle();
+    expect(onTranslated).not.toHaveBeenCalled();
+    queue.setTranslationCompleteHandler(null);
+  });
+});
+
+describe("translation hook and queue hygiene", () => {
+  it("does not fire for a translation that changed nothing", async () => {
+    // Fired after every translation, so a bulk re-translate of already-
+    // translated live articles ran one Framer sync and a deploy each.
+    const onTranslated = vi.fn();
+    queue.setTranslationCompleteHandler(onTranslated);
+    translate.mockResolvedValue({ translated: [], skipped: ["ru"], failed: [] });
+    queue.enqueueTranslation({ articleId: "a1", force: false });
+    await queue.onQueuesIdle();
+    expect(onTranslated).not.toHaveBeenCalled();
+    queue.setTranslationCompleteHandler(null);
+  });
+
+  it("does not hold the translation queue while the hook works", async () => {
+    // The hook syncs to Framer (~70s warm-up); awaiting it stalled every
+    // translation queued behind, including new articles bound for gate 2.
+    let release!: () => void;
+    queue.setTranslationCompleteHandler(() => new Promise<void>((r) => { release = r; }));
+    translate.mockResolvedValue({ translated: ["ru"], skipped: [], failed: [] });
+    queue.enqueueTranslation({ articleId: "a1", force: true });
+    queue.enqueueTranslation({ articleId: "a2", force: true });
+    await queue.onQueuesIdle(); // would hang if the hook were awaited
+    expect(translate).toHaveBeenCalledTimes(2);
+    release();
+    queue.setTranslationCompleteHandler(null);
+  });
+
+  it("queues one forced re-translation per article, however many saves", async () => {
+    let release!: () => void;
+    translate.mockImplementation(() => new Promise((r) => { release = () => r({ translated: ["ru"] }); }));
+    queue.enqueueTranslation({ articleId: "busy", force: true }); // occupies the queue
+    queue.enqueueTranslation({ articleId: "a1", force: true });
+    queue.enqueueTranslation({ articleId: "a1", force: true });
+    queue.enqueueTranslation({ articleId: "a1", force: true });
+    await new Promise((r) => setTimeout(r, 0));
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    release();
+    await queue.onQueuesIdle();
+    expect(translate.mock.calls.filter((c) => c[0] === "a1")).toHaveLength(1);
+  });
+});

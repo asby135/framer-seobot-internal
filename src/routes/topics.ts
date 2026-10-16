@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
+import { loadTitleCorpus } from "../services/seeder.js";
+import { createTitleIndex } from "../services/similarity.js";
 
 const topics = new Hono();
 
@@ -86,10 +88,55 @@ topics.post("/:id/reject", (c) => {
 // Submit a custom topic
 topics.post("/custom", async (c) => {
   const db = getDb();
-  const body = await c.req.json<{ query: string }>();
+  const body = await c.req.json<{ query: string; force?: boolean }>();
 
   if (!body.query?.trim()) {
     return c.json({ error: "Query is required" }, 400);
+  }
+
+  // The same checks seeded topics get. Custom topics had none, so a repeat of
+  // a published article — or the same topic added twice, since it vanished
+  // from the screen it was added on — went straight to generation. `force`
+  // is the operator overriding a match they have seen.
+  const query = body.query.trim();
+
+  // An existing topic with the exact text decides what happens: say its state;
+  // and with `force`, act on THAT row rather than adding a second one —
+  // two rows for one topic risk two articles.
+  const existing = db
+    .prepare("SELECT id, query, status FROM keywords WHERE lower(query) = lower(?) ORDER BY created_at LIMIT 1")
+    .get(query) as { id: string; query: string; status: string } | undefined;
+  if (existing) {
+    if (body.force && (existing.status === "pending" || existing.status === "rejected")) {
+      db.prepare("UPDATE keywords SET status = 'approved', updated_at = datetime('now') WHERE id = ?").run(existing.id);
+      return c.json({ id: existing.id, status: "approved" }, 201);
+    }
+    return c.json(
+      {
+        error: `Already exists as a ${existing.status} topic: “${existing.query}”${
+          existing.status === "pending" || existing.status === "rejected" ? " — Add anyway approves it" : ""
+        }`,
+        matched: existing.query,
+        matchedStatus: existing.status,
+      },
+      409
+    );
+  }
+
+  // The same checks seeded topics get. Custom topics had none, so a repeat of
+  // a published article — or the same topic added twice, since it vanished
+  // from the screen it was added on — went straight to generation. `force`
+  // is the operator overriding a near match they have seen.
+  if (!body.force) {
+    const corpus = loadTitleCorpus();
+    const exact = corpus.find((t) => t.trim().toLowerCase() === query.toLowerCase());
+    const matched = exact ?? createTitleIndex(corpus).match(query);
+    if (matched) {
+      return c.json(
+        { error: exact ? `Already exists: “${matched}”` : `Too close to an existing topic or article: “${matched}”`, matched },
+        409
+      );
+    }
   }
 
   const id = nanoid();

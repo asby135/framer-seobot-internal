@@ -69,7 +69,8 @@ export interface CallbackHandlers {
   onPublish(articleId: string, messageId: number): Promise<void>;
   onRegenerate(articleId: string, messageId: number): Promise<void>;
   onDelete(articleId: string, messageId: number): Promise<void>;
-  onApproveAll(messageId: number): Promise<void>;
+  /** `digestId` comes from the button; empty on digests sent before it did. */
+  onApproveAll(messageId: number, digestId?: string): Promise<void>;
   onPublishAll(messageId: number): Promise<void>;
 }
 
@@ -134,7 +135,7 @@ export function buildTelegramRoute(config: RouteConfig): Hono {
           case "pub": await h.onPublish(cb.id, messageId); break;
           case "rgn": await h.onRegenerate(cb.id, messageId); break;
           case "del": await h.onDelete(cb.id, messageId); break;
-          case "genall": await h.onApproveAll(messageId); break;
+          case "genall": await h.onApproveAll(messageId, cb.id); break;
           case "puball": await h.onPublishAll(messageId); break;
         }
       } catch (e) {

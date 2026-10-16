@@ -108,6 +108,19 @@ function releaseClaim(keywordId: string): void {
   }
 }
 
+/**
+ * Called after every successful translation. Bootstrap uses it to push a LIVE
+ * article's new translation to the site — a re-translation from the plugin
+ * used to stop at the database. A hook, like the ready handler, to keep the
+ * queue free of Framer.
+ */
+type TranslationCompleteHandler = (articleId: string) => void | Promise<void>;
+let onTranslationComplete: TranslationCompleteHandler | null = null;
+
+export function setTranslationCompleteHandler(handler: TranslationCompleteHandler | null): void {
+  onTranslationComplete = handler;
+}
+
 /** Resolves once both queues are empty and idle. */
 export async function onQueuesIdle(): Promise<void> {
   // A finished generation queues its translation before the generation queue
@@ -203,10 +216,24 @@ export function enqueueGeneration(job: GenerationJob): boolean {
  * Runs after any currently-translating article completes — never in parallel,
  * so peak Anthropic calls stay bounded even when bulk-translating.
  */
+/**
+ * Articles with a forced re-translation waiting to start. Each plugin Save
+ * queued its own: five quick saves meant five full translations and five
+ * Framer syncs. One waiting job translates whatever the article says when it
+ * starts, so later requests join it. Freed when the job starts, so an edit made
+ * during a translation still gets its own.
+ */
+const waitingForced = new Set<string>();
+
 export function enqueueTranslation(job: TranslationJob): void {
+  if (job.force && !job.notifyWhenReady) {
+    if (waitingForced.has(job.articleId)) return;
+    waitingForced.add(job.articleId);
+  }
   // Like the generation job, the body catches everything it can throw; the
   // void marks that nothing awaits add()'s promise on purpose.
   void translationQueue.add(async () => {
+    if (job.force && !job.notifyWhenReady) waitingForced.delete(job.articleId);
     logger.info({ articleId: job.articleId, force: job.force }, "Translation starting");
 
     try {
@@ -217,6 +244,17 @@ export function enqueueTranslation(job: TranslationJob): void {
         "Translation complete"
       );
       if (job.notifyWhenReady) await handToReview(job.articleId);
+      // Only when something was actually translated, and not awaited: the hook
+      // syncs to Framer (~70s warm-up), and awaiting it stalled every
+      // translation queued behind — including new articles bound for gate 2.
+      // Firing on no-op translations ran a sync and a deploy per article.
+      if (onTranslationComplete && (result?.translated?.length ?? 0) > 0) {
+        Promise.resolve()
+          .then(() => onTranslationComplete?.(job.articleId))
+          .catch((e) =>
+            logger.error({ articleId: job.articleId, error: e instanceof Error ? e.message : "unknown" }, "Translation-complete handler failed")
+          );
+      }
     } catch (e) {
       lastTranslationResult = { articleId: job.articleId, status: "failed" };
       logger.error(

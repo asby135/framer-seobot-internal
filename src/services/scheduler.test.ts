@@ -195,3 +195,66 @@ describe("createRunner — failure handling", () => {
     expect(saved).not.toBeNull(); // succeeded on the retry
   });
 });
+
+describe("the digest hour in a named timezone", () => {
+  // The hour used to be evaluated in the container's clock (UTC on Railway,
+  // no TZ set) while the plugin labelled it "local".
+  const utc = (h: number, m = 0) => new Date(Date.UTC(2026, 9, 16, h, m));
+
+  it("runs at 20:00 in the configured zone", () => {
+    expect(shouldRun(utc(11), null, 20, "Asia/Tokyo")).toBe(true); // 20:00 in Tokyo
+    expect(shouldRun(utc(10, 59), null, 20, "Asia/Tokyo")).toBe(false);
+  });
+
+  it("keys the day in the configured zone", () => {
+    // 23:30 UTC on the 16th is already the 17th in Tokyo.
+    expect(localDateKey(utc(23, 30), "Asia/Tokyo")).toBe("2026-10-17");
+    expect(localDateKey(utc(23, 30), "UTC")).toBe("2026-10-16");
+  });
+});
+
+describe("createRunner reads the hour on every tick", () => {
+  it("picks up a changed hour without a restart", async () => {
+    // Read once at boot, a change saved in the plugin did nothing until the
+    // next deploy.
+    let hour = 22;
+    const job = vi.fn(async () => {});
+    const runner = createRunner({
+      job,
+      hour: () => hour,
+      getLastRun: () => null,
+      setLastRun: () => {},
+      now: () => at(2026, 8, 19, 21),
+    });
+    await runner.tick();
+    expect(job).not.toHaveBeenCalled();
+    hour = 20;
+    await runner.tick();
+    expect(job).toHaveBeenCalledOnce();
+  });
+});
+
+describe("a timezone the runtime does not know", () => {
+  it("falls back to the process zone instead of throwing", () => {
+    // tick() runs from a timer with nothing to catch a throw: a bad stored
+    // zone would crash the process on every boot.
+    expect(() => shouldRun(new Date(), null, 20, "Mars/Olympus")).not.toThrow();
+    expect(localDateKey(new Date(Date.UTC(2026, 9, 16, 12)), "Mars/Olympus")).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe("createRunner records the day in the configured zone", () => {
+  it("stamps lastRunDate with the zone's date", async () => {
+    let saved = "";
+    const runner = createRunner({
+      job: async () => {},
+      hour: 0,
+      timeZone: () => "Asia/Tokyo",
+      getLastRun: () => null,
+      setLastRun: (d) => { saved = d; },
+      now: () => new Date(Date.UTC(2026, 9, 16, 23, 30)), // already the 17th in Tokyo
+    });
+    await runner.tick();
+    expect(saved).toBe("2026-10-17");
+  });
+});

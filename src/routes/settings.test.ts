@@ -54,6 +54,8 @@ describe("GET /api/settings", () => {
         "poolThreshold",
         "rotationCursor",
         "scheduleHour",
+        "timezone",
+        "effectiveTimezone",
       ].sort()
     );
   });
@@ -121,5 +123,38 @@ describe("POST /api/settings", () => {
   it("reports which keys it wrote", async () => {
     const body = (await (await put({ scheduleHour: 21 })).json()) as { updated: string[] };
     expect(body.updated).toEqual(["scheduleHour"]);
+  });
+});
+
+describe("the digest timezone", () => {
+  it("reports the zone actually in effect when none is configured", async () => {
+    // The plugin said "local" while the server ran in its own (UTC) clock.
+    const body = (await (await get()).json()) as Record<string, unknown>;
+    expect(body.timezone).toBeNull();
+    expect(typeof body.effectiveTimezone).toBe("string");
+  });
+
+  it("stores a valid IANA zone and reports it as in effect", async () => {
+    expect((await put({ timezone: "Europe/Lisbon" })).status).toBe(200);
+    const body = (await (await get()).json()) as Record<string, unknown>;
+    expect(body.timezone).toBe("Europe/Lisbon");
+    expect(body.effectiveTimezone).toBe("Europe/Lisbon");
+  });
+
+  it("rejects a zone that does not exist", async () => {
+    expect((await put({ timezone: "Mars/Olympus" })).status).toBe(400);
+  });
+
+  it("clears the zone with null", async () => {
+    await put({ timezone: "Europe/Lisbon" });
+    await put({ timezone: null });
+    expect(((await (await get()).json()) as Record<string, unknown>).timezone).toBeNull();
+  });
+});
+
+describe("timezone spelling", () => {
+  it("stores the canonical name, whatever the case typed", async () => {
+    await put({ timezone: "europe/lisbon" });
+    expect(((await (await get()).json()) as Record<string, unknown>).timezone).toBe("Europe/Lisbon");
   });
 });

@@ -21,7 +21,10 @@ export interface DebouncerConfig {
 export interface PublishDebouncer {
   /** Arm or re-arm the countdown. */
   schedule(): void;
-  /** Publish now, cancelling any pending timer. */
+  /**
+   * Publish now, cancelling any pending timer. Rejects if the publish failed
+   * even after its retry (the operator is alerted either way).
+   */
   flushNow(): Promise<void>;
   /** Discard a pending publish without running it. */
   cancel(): void;
@@ -31,6 +34,7 @@ export interface PublishDebouncer {
 export function createPublishDebouncer(config: DebouncerConfig): PublishDebouncer {
   let timer: ReturnType<typeof setTimeout> | null = null;
 
+  /** Resolves when published; rejects with the last error after a failed retry. */
   const runWithRetry = async (): Promise<void> => {
     try {
       await config.publish();
@@ -49,6 +53,7 @@ export function createPublishDebouncer(config: DebouncerConfig): PublishDebounce
         const second = e2 instanceof Error ? e2.message : "unknown";
         logger.error({ first, second }, "Framer publish failed twice — giving up");
         await config.onError(`Framer publish failed twice: ${second}`);
+        throw e2;
       }
     }
   };
@@ -65,7 +70,8 @@ export function createPublishDebouncer(config: DebouncerConfig): PublishDebounce
       clear();
       timer = setTimeout(() => {
         timer = null;
-        void runWithRetry();
+        // Already alerted on failure; nothing awaits a timer-fired publish.
+        runWithRetry().catch(() => undefined);
       }, config.delayMs);
     },
 

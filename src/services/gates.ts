@@ -47,8 +47,11 @@ export interface GateDeps {
   /** Of `ids`, those written to Framer at or after `since` (see articlesSyncedSince). */
   syncedSince(ids: string[], since: string): string[];
 
-  /** Keyword ids still pending with a proposed title — for Approve all. */
-  pendingProposedKeywordIds(): string[];
+  /**
+   * Keyword ids of one digest still awaiting a decision — for its Approve-all
+   * button. null when the digest is unknown (no id on the button, or too old).
+   */
+  pendingProposedKeywordIds(digestId?: string): string[] | null;
   /** Article ids sitting in review — for Publish all. */
   reviewArticleIds(): string[];
 
@@ -69,7 +72,9 @@ export interface GateDeps {
   progress(message: string): Promise<void>;
 }
 
-export function createGateHandlers(deps: GateDeps): CallbackHandlers {
+export function createGateHandlers(
+  deps: GateDeps
+): CallbackHandlers & { publishMany(ids: string[]): Promise<{ published: string[]; reverted: string[] }> } {
   /**
    * `quiet` suppresses the per-item acknowledgement so the bulk handlers can
    * send one summary instead of one message per article.
@@ -83,6 +88,11 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
     // Idempotency: only a still-pending keyword may enter generation.
     if (kw.status !== "pending") {
       logger.info({ keywordId, status: kw.status }, "Approve title: already actioned");
+      // Silence read as a broken button (e.g. it was approved in the plugin).
+      if (!quiet) {
+        const what = { approved: "is already approved", rejected: "was rejected", generated: "is already written" }[kw.status] ?? `is ${kw.status}`;
+        await deps.progress(`ℹ️ “${kw.proposed_title ?? kw.query}” ${what}.`);
+      }
       return false;
     }
 
@@ -130,7 +140,54 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
     return { landed, reverted };
   };
 
-  const handlers: CallbackHandlers = {
+  /**
+   * Publish a list of articles together: mark all, sync ONCE, settle a failed
+   * sync. Shared by Telegram's Publish all and the plugin's batch publish —
+   * the plugin used to publish a selection one article at a time, each with
+   * its own Framer sync and ~70s warm-up.
+   */
+  const publishMany = async (ids: string[]): Promise<{ published: string[]; reverted: string[] }> => {
+    // Mark everything first, then sync ONCE. Syncing per article opened a new
+    // Framer connection each time, and Framer's session takes about 70s to
+    // accept its first write after connecting — so 26 articles paid that
+    // warm-up 26 times, some 50 minutes for what is a single batch of writes.
+    // One sync pays it once and writes the rest in batches.
+    const marked = ids.filter((id) => deps.publishArticle(id));
+    if (marked.length === 0) {
+      logger.info("Publish-all: nothing was in a publishable state");
+      return { published: [], reverted: [] };
+    }
+
+    const since = deps.syncClock();
+    try {
+      const result = await deps.syncToFramer();
+      logger.info({ articles: marked.length, ...result }, "Publish-all synced to Framer");
+      if (!result.withLocales) {
+        await deps.alert(
+          `Synced ${marked.length} article${marked.length === 1 ? "" : "s"} WITHOUT translations — RU is missing on the site.`
+        );
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "unknown";
+      logger.error({ articles: marked.length, error: message }, "Framer sync failed after publish-all");
+
+      // Only what THIS tap marked is considered, and of that only what did
+      // not reach Framer is rolled back.
+      const { landed, reverted } = settleFailedSync(marked, since);
+      const plural = (n: number) => `${n} article${n === 1 ? "" : "s"}`;
+      await deps.alert(
+        landed.length === 0
+          ? `Publish all failed: ${message} — ${plural(marked.length)} still in review — retry the publish once this clears.`
+          : `Publish all partly failed: ${message} — ${landed.length} of ${marked.length} went out; ${reverted.length} still in review — retry the publish once this clears.`
+      );
+      return { published: landed, reverted };
+    }
+
+    deps.schedulePublish();
+    return { published: marked, reverted: [] };
+  };
+
+  const handlers: CallbackHandlers & { publishMany: typeof publishMany } = {
     async onApproveTitle(keywordId) {
       await approveOne(keywordId, false);
     },
@@ -143,6 +200,19 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
       await deps.progress(`🔄 Rewriting “${kw.proposed_title ?? kw.query}”…`);
 
       const next = await deps.proposeTitle(kw.query, deps.recentTitles(), rejected);
+      // Approved while the new title was being written: generation is already
+      // queued under the old one, so storing the new title would only offer a
+      // ✅ that does nothing.
+      const now = deps.getKeyword(keywordId);
+      if (!now || now.status !== "pending") {
+        logger.info({ keywordId, status: now?.status }, "Reroll discarded — topic decided meanwhile");
+        await deps.progress(
+          now?.status === "approved" || now?.status === "generated"
+            ? `ℹ️ “${kw.proposed_title ?? kw.query}” was already approved — it is being written under that title.`
+            : `ℹ️ “${kw.proposed_title ?? kw.query}” was ${now ? now.status : "removed"} meanwhile — the new title was not kept.`
+        );
+        return;
+      }
       deps.saveProposedTitle(keywordId, next);
       logger.info({ keywordId, from: kw.proposed_title, to: next }, "Title rerolled");
       // The new title only ever reached the log, so a reroll silently changed
@@ -201,17 +271,18 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
 
     async onRegenerate(articleId) {
       const article = deps.getArticle(articleId);
-      if (article && ["draft", "review"].includes(article.status)) {
-        await deps.progress(`🔄 Regenerating “${article.title}” from scratch — this takes a few minutes.`);
-      }
-      // Idempotency: only an unpublished article may be regenerated. Without
-      // this a double-tap runs two full generations, and the second collides
-      // on the unique slug and lands as generation_failed.
-      if (!article || !["draft", "review"].includes(article.status)) {
+      // Idempotency: only an unpublished article — or a failed generation, to
+      // retry it — may be regenerated. Without this a double-tap runs two full
+      // generations, and the second collides on the unique slug.
+      if (!article || !["draft", "review", "generation_failed"].includes(article.status)) {
         logger.info({ articleId, status: article?.status }, "Regenerate: not in a regenerable state");
         return;
       }
+      // Act before speaking. Checking, awaiting the Telegram message, then
+      // regenerating from the stale check deleted an article that a Publish
+      // tap had made live in between.
       deps.regenerateArticle(articleId);
+      await deps.progress(`🔄 Regenerating “${article.title.replace(/^Failed: /, "")}” from scratch — this takes a few minutes.`);
     },
 
     async onDelete(articleId) {
@@ -223,15 +294,23 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
       deps.deleteArticle(articleId);
     },
 
-    async onApproveAll() {
-      const ids = deps.pendingProposedKeywordIds();
+    async onApproveAll(_messageId, digestId) {
+      const ids = deps.pendingProposedKeywordIds(digestId);
+      if (ids === null) {
+        // Acting on "the newest digest" instead is how tapping Approve all on
+        // yesterday's message used to approve tonight's titles.
+        await deps.alert(
+          "Approve all: this button belongs to a digest I no longer track (or one sent before digests carried an id). Approve its titles individually, or use Approve all on the latest digest."
+        );
+        return;
+      }
       logger.info({ count: ids.length }, "Approve-all requested");
       // A bulk button that quietly does nothing reads as a broken bot. Say why:
       // an empty list means every title in the digest has already been decided,
       // or the digest predates the code that records them.
       if (ids.length === 0) {
         await deps.alert(
-          "Approve all: nothing left to approve in the latest digest. Either every title has already been approved or rejected, or this digest predates title recording — approve them individually."
+          "Approve all: nothing left to approve in this digest — every title in it has already been approved or rejected."
         );
         return;
       }
@@ -250,6 +329,8 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
       logger.info({ requested: ids.length, approved }, "Approve-all complete");
     },
 
+    publishMany,
+
     async onPublishAll() {
       const ids = deps.reviewArticleIds();
       logger.info({ count: ids.length }, "Publish-all requested");
@@ -262,43 +343,7 @@ export function createGateHandlers(deps: GateDeps): CallbackHandlers {
         `🚀 Publishing ${ids.length} article${ids.length === 1 ? "" : "s"} — syncing each to Framer, then one site deploy covers them all.`
       );
 
-      // Mark everything first, then sync ONCE. Syncing per article opened a new
-      // Framer connection each time, and Framer's session takes about 70s to
-      // accept its first write after connecting — so 26 articles paid that
-      // warm-up 26 times, some 50 minutes for what is a single batch of writes.
-      // One sync pays it once and writes the rest in batches.
-      const marked = ids.filter((id) => deps.publishArticle(id));
-      if (marked.length === 0) {
-        logger.info("Publish-all: nothing was in a publishable state");
-        return;
-      }
-
-      const since = deps.syncClock();
-      try {
-        const result = await deps.syncToFramer();
-        logger.info({ articles: marked.length, ...result }, "Publish-all synced to Framer");
-        if (!result.withLocales) {
-          await deps.alert(
-            `Synced ${marked.length} article${marked.length === 1 ? "" : "s"} WITHOUT translations — RU is missing on the site.`
-          );
-        }
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "unknown";
-        logger.error({ articles: marked.length, error: message }, "Framer sync failed after publish-all");
-
-        // Only what THIS tap marked is considered, and of that only what did
-        // not reach Framer is rolled back.
-        const { landed, reverted } = settleFailedSync(marked, since);
-        const plural = (n: number) => `${n} article${n === 1 ? "" : "s"}`;
-        await deps.alert(
-          landed.length === 0
-            ? `Publish all failed: ${message} — ${plural(marked.length)} still in review, tap Publish all to retry.`
-            : `Publish all partly failed: ${message} — ${landed.length} of ${marked.length} went out; ${reverted.length} still in review, tap Publish all to retry.`
-        );
-        return;
-      }
-
-      deps.schedulePublish();
+      await publishMany(ids);
     },
   };
 

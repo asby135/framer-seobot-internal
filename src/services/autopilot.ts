@@ -48,9 +48,17 @@ export interface AutopilotDeps {
    * All finds tonight's topics by it, and approving pins it as the generated
    * article's title.
    */
-  recordProposals(proposals: TitleProposal[]): void;
+  recordProposals(proposals: TitleProposal[]): string | void;
 
-  sendTitleDigest(proposals: TitleProposal[]): Promise<number>;
+  /** `digestId` is what recordProposals returned; the Approve-all button carries it. */
+  sendTitleDigest(proposals: TitleProposal[], digestId?: string): Promise<number>;
+
+  /**
+   * Undo recordProposals for a digest that could not be sent. Recording comes
+   * first so the buttons work, but a digest nobody saw must not leave its
+   * topics marked as offered — they would only ever fill short nights.
+   */
+  forgetProposals?(proposals: TitleProposal[], digestId?: string): void;
 
   /**
    * Tell the operator something they need to act on — here, a night with
@@ -246,9 +254,15 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
 
   // Record before sending: the digest's buttons act on these rows, so a
   // digest the operator can see but not act on is worse than no digest.
-  deps.recordProposals(proposals);
+  const digestId = deps.recordProposals(proposals) ?? undefined;
 
-  const messageId = await deps.sendTitleDigest(proposals);
+  let messageId: number;
+  try {
+    messageId = await deps.sendTitleDigest(proposals, digestId);
+  } catch (e) {
+    deps.forgetProposals?.(proposals, digestId);
+    throw e;
+  }
   deps.saveDigestMessageId(messageId);
 
   logger.info({ proposed: proposals.length }, "Gate 1 digest sent");

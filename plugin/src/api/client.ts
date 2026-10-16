@@ -154,10 +154,11 @@ class ApiClient {
     });
   }
 
-  async createCustomTopic(query: string) {
+  /** 409 when it repeats an existing topic or article; `force` adds it anyway. */
+  async createCustomTopic(query: string, force: boolean = false) {
     return this.request<{ id: string; status: string }>("/api/topics/custom", {
       method: "POST",
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, force }),
     });
   }
 
@@ -174,6 +175,14 @@ class ApiClient {
   async publishArticle(id: string) {
     return this.request<{ success: boolean }>(`/api/articles/${id}/publish`, {
       method: "POST",
+    });
+  }
+
+  /** Publish a selection with one Framer sync. Throws ApiError (502) if the sync failed. */
+  async publishBatch(ids: string[]) {
+    return this.request<{ published: string[]; reverted: string[] }>("/api/articles/publish-batch", {
+      method: "POST",
+      body: JSON.stringify({ article_ids: ids }),
     });
   }
 
@@ -314,6 +323,10 @@ export interface GeneratorSettings {
   poolThreshold: number;
   rotationCursor: number;
   lastRunDate: string | null;
+  /** IANA zone set for the digest hour, or null for the server's own. */
+  timezone: string | null;
+  /** The zone actually in effect. */
+  effectiveTimezone: string;
 }
 
 export class ApiError extends Error {
