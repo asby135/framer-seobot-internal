@@ -335,6 +335,13 @@ describe("recoverInterruptedGenerations — the queue survives a redeploy", () =
     expect(enqueue).toHaveBeenCalledWith({ keywordId: "k1", query: "topic k1" });
   });
 
+  it("replays recorded editing instructions", () => {
+    kw("k1", { query: "topic k1", instructions: "Shorter intro" });
+    const enqueue = vi.fn(() => true);
+    recoverInterruptedGenerations(enqueue);
+    expect(enqueue).toHaveBeenCalledWith({ keywordId: "k1", query: "topic k1", instructions: "Shorter intro" });
+  });
+
   it("leaves finished articles alone", () => {
     kw("k1", { query: "topic k1" });
     art("shown", "k1", "review", true);

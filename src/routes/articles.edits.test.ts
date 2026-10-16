@@ -16,8 +16,9 @@ import { join } from "node:path";
 const enqueueTranslation = vi.fn();
 const resyncPublishedArticle = vi.fn(async () => {});
 const publishMany = vi.fn(async (ids: string[]) => ({ published: ids, reverted: [] as string[] }));
+const enqueueGeneration = vi.fn((_job: unknown) => true);
 vi.mock("../services/queue.js", () => ({
-  enqueueGeneration: vi.fn(() => true),
+  enqueueGeneration: (job: unknown) => enqueueGeneration(job),
   enqueueTranslation: (job: unknown) => enqueueTranslation(job),
   getQueueStatus: () => ({ pending: 0, active: 0, lastResult: null }),
   getTranslationQueueStatus: () => ({ pending: 0, active: 0, lastResult: null }),
@@ -92,5 +93,15 @@ describe("POST /publish-batch", () => {
     publishMany.mockImplementationOnce(async (ids: string[]) => ({ published: [], reverted: ids }));
     const res = await post("/publish-batch", { article_ids: ["a"] });
     expect(res.status).toBe(502);
+  });
+});
+
+describe("POST /:id/regenerate with instructions", () => {
+  it("keeps the topic clean and sends the instructions separately", async () => {
+    // They were pasted into the topic: "<topic> [EDITING INSTRUCTIONS: …]" then
+    // drove knowledge-base search, the quality checks and the thumbnail prompt.
+    add("a", "review");
+    await post("/a/regenerate", { instructions: "Drop the pricing table" });
+    expect(enqueueGeneration).toHaveBeenCalledWith({ keywordId: "k1", query: "q", instructions: "Drop the pricing table" });
   });
 });

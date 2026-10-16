@@ -49,9 +49,10 @@ export function contentWords(phrase: string): string[] {
 /**
  * Does the headline still carry its keyword?
  *
- * TITLE CRAFT rule 1 is two-sided: "the target keyword MUST appear (Google
- * still ranks on it), BUT reframe it". proposeTitle originally shipped only the
- * reframe half, and titles drifted until the topic was unrecognisable — "How to
+ * The generator's old TITLE CRAFT rule (since replaced by TITLE_RULES) was
+ * two-sided: "the target keyword MUST appear, BUT reframe it". proposeTitle
+ * shipped only the reframe half, and titles drifted until the topic was
+ * unrecognisable — "How to
  * research startup founders before a VC intro call" became "You Get 15 Minutes
  * With a Founder", which shares nothing a searcher would type.
  *

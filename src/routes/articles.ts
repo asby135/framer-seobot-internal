@@ -357,22 +357,17 @@ articles.post("/:id/regenerate", async (c) => {
   // Reset keyword to approved so generator picks it up
   db.prepare("UPDATE keywords SET status = 'approved' WHERE id = ?").run(keyword.id);
 
-  let queued: boolean;
-  // If instructions provided, store them temporarily on the keyword
-  if (body.instructions?.trim()) {
-    db.prepare("UPDATE keywords SET search_volume = NULL WHERE id = ?").run(keyword.id);
-    // Store instructions in a temp field — we'll pass it via the query
-    const modifiedQuery = `${keyword.query} [EDITING INSTRUCTIONS: ${body.instructions.trim()}]`;
-    // No pinned title here: the instructions may well be about the title.
-    queued = enqueueGeneration({ keywordId: keyword.id, query: modifiedQuery });
-  } else {
-    // Keep the headline approved at gate 1, as the Telegram regenerate does.
-    queued = enqueueGeneration({
-      keywordId: keyword.id,
-      query: keyword.query,
-      titleOverride: keyword.proposed_title ?? undefined,
-    });
-  }
+  // Instructions travel as their own field to the prompt. They used to be
+  // pasted into the query ("<topic> [EDITING INSTRUCTIONS: …]"), which then
+  // drove knowledge-base search, the keyword checks, the thumbnail and slug.
+  const instructions = body.instructions?.trim();
+  const queued = enqueueGeneration(
+    instructions
+      ? // No pinned title: the instructions may well be about the title.
+        { keywordId: keyword.id, query: keyword.query, instructions }
+      : // Keep the headline approved at gate 1, as the Telegram regenerate does.
+        { keywordId: keyword.id, query: keyword.query, titleOverride: keyword.proposed_title ?? undefined }
+  );
 
   logger.info({ articleId: id, keywordId: keyword.id, hasInstructions: !!body.instructions, queued }, "Article regeneration enqueued");
   // False only when a job for this topic is already recorded — that job will

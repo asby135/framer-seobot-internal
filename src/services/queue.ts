@@ -9,6 +9,8 @@ interface GenerationJob {
   query: string;
   /** Headline approved by the operator at gate 1, pinned through generation. */
   titleOverride?: string;
+  /** Operator's editing instructions for a regeneration — kept out of the query. */
+  instructions?: string;
 }
 
 interface TranslationJob {
@@ -145,7 +147,14 @@ export function enqueueGeneration(job: GenerationJob): boolean {
   const claimed =
     getDb()
       .prepare("UPDATE keywords SET generation_job = ? WHERE id = ? AND generation_job IS NULL")
-      .run(JSON.stringify({ query: job.query, titleOverride: job.titleOverride ?? null }), job.keywordId).changes > 0;
+      .run(
+        JSON.stringify({
+          query: job.query,
+          titleOverride: job.titleOverride ?? null,
+          ...(job.instructions ? { instructions: job.instructions } : {}),
+        }),
+        job.keywordId
+      ).changes > 0;
   if (!claimed) {
     const exists = getDb().prepare("SELECT 1 FROM keywords WHERE id = ?").get(job.keywordId);
     logger.info(
@@ -163,7 +172,7 @@ export function enqueueGeneration(job: GenerationJob): boolean {
     try {
       logger.info({ keywordId: job.keywordId, query: job.query }, "Generation starting");
 
-      const result = await generateArticle(job.keywordId, job.query, job.titleOverride);
+      const result = await generateArticle(job.keywordId, job.query, job.titleOverride, job.instructions);
 
       lastGenerationResult = {
         articleId: result.articleId,

@@ -294,7 +294,7 @@ export function articlesSyncedSince(ids: string[], since: string): string[] {
  * recoverOrphanedReviews, which would otherwise send that draft to review.
  */
 export function recoverInterruptedGenerations(
-  enqueue: (job: { keywordId: string; query: string; titleOverride?: string }) => boolean = enqueueGeneration
+  enqueue: (job: { keywordId: string; query: string; titleOverride?: string; instructions?: string }) => boolean = enqueueGeneration
 ): string[] {
   const db = getDb();
   const rows = db
@@ -322,7 +322,7 @@ export function recoverInterruptedGenerations(
       const hasArticle = db.prepare("SELECT 1 FROM articles WHERE keyword_id = ?").get(row.id);
       if (current.status === "rejected" || hasArticle) continue;
 
-      let recorded: { query?: unknown; titleOverride?: unknown } = {};
+      let recorded: { query?: unknown; titleOverride?: unknown; instructions?: unknown } = {};
       try {
         const parsed: unknown = JSON.parse(row.generation_job);
         if (parsed && typeof parsed === "object") recorded = parsed as typeof recorded;
@@ -333,6 +333,7 @@ export function recoverInterruptedGenerations(
         keywordId: row.id,
         query: typeof recorded.query === "string" ? recorded.query : row.query,
         ...(typeof recorded.titleOverride === "string" ? { titleOverride: recorded.titleOverride } : {}),
+        ...(typeof recorded.instructions === "string" ? { instructions: recorded.instructions } : {}),
       });
       requeued.push(row.id);
     } catch (e) {

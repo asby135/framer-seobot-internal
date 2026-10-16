@@ -222,3 +222,17 @@ describe("translation hook and queue hygiene", () => {
     expect(translate.mock.calls.filter((c) => c[0] === "a1")).toHaveLength(1);
   });
 });
+
+describe("instructions travel with the job", () => {
+  it("reach the generator and are recorded for a restart", async () => {
+    let release!: () => void;
+    generate.mockImplementation(() => new Promise((r) => { release = () => r({ articleId: "a1", status: "generation_failed" }); }));
+    queue.enqueueGeneration({ keywordId: "k1", query: "q", instructions: "Shorter intro" });
+    const recorded = (getDb().prepare("SELECT generation_job FROM keywords WHERE id = 'k1'").get() as { generation_job: string }).generation_job;
+    expect(JSON.parse(recorded).instructions).toBe("Shorter intro");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(generate).toHaveBeenCalledWith("k1", "q", undefined, "Shorter intro");
+    release();
+    await queue.onQueuesIdle();
+  });
+});

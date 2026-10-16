@@ -56,7 +56,9 @@ export async function generateArticle(
    * verbatim and the post-generation tic check is skipped — silently rewriting
    * an approved title would break the gate's contract.
    */
-  approvedTitle?: string
+  approvedTitle?: string,
+  /** Operator's editing instructions for a regeneration (see editingInstructionsBlock). */
+  instructions?: string
 ): Promise<GenerationResult> {
   const flags: Record<string, unknown> = {};
 
@@ -74,7 +76,7 @@ export async function generateArticle(
     const existingArticles = getExistingArticlesForLinking();
 
     // Step 2: Claude generation (with retry on timeout/500)
-    const article = await callClaudeWithRetry(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle);
+    const article = await callClaudeWithRetry(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle, instructions);
 
     // Step 3: Quality checks
     const qualityIssues = runQualityChecks(article, query, existingSlugs);
@@ -173,10 +175,11 @@ async function callClaudeWithRetry(
   relatedQueries: string[],
   existingSlugs: Set<string>,
   existingArticles: Array<{ slug: string; title: string }>,
-  approvedTitle?: string
+  approvedTitle?: string,
+  instructions?: string
 ): Promise<GeneratedArticle> {
   try {
-    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle);
+    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle, instructions);
   } catch (e) {
     const isRetryable =
       e instanceof Error &&
@@ -189,7 +192,7 @@ async function callClaudeWithRetry(
 
     logger.warn({ query, error: e instanceof Error ? e.message : "unknown" }, "Claude API failed, retrying in 30s");
     await new Promise((resolve) => setTimeout(resolve, 30_000));
-    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle);
+    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle, instructions);
   }
 }
 
@@ -278,79 +281,16 @@ export function buildTitleInstruction(approvedTitle?: string): string {
   return `Article title, following these rules exactly:\n\n${TITLE_RULES}`;
 }
 
-async function callClaude(
-  query: string,
-  kbResults: Array<{ title: string; content: string }>,
-  relatedQueries: string[],
-  existingSlugs: Set<string>,
-  existingArticles: Array<{ slug: string; title: string }>,
-  approvedTitle?: string
-): Promise<GeneratedArticle> {
-  const kbContext = kbResults
-    .map(
-      (kb, i) =>
-        `--- KB Article ${i + 1}: ${kb.title} ---\n${kbExcerpt(kb.content)}`
-    )
-    .join("\n\n");
-
-  // Competitor topics get a web-search research pass for accurate, current
-  // competitor facts (the KB only covers CRMChat's own product).
-  const competitorContext = namesCompetitor(query)
-    ? await researchCompetitorContext(query)
-    : "";
-
-  const relatedContext =
-    relatedQueries.length > 0
-      ? `\nRelated search queries people also search: ${relatedQueries.join(", ")}`
-      : "";
-
-  const existingArticlesList =
-    existingArticles.length > 0
-      ? `\nExisting blog articles — use these for TWO purposes:
-  (a) Internal linking: insert 2-4 <a href="/blog/slug"> links inside the body to relevant titles below.
-  (b) Title shape variety: scan these titles and follow TITLE CRAFT rule 5 — do NOT repeat the same opening word, hook, or shape.
-${existingArticles.map((a) => `- /blog/${a.slug} — "${a.title}"`).join("\n")}`
-      : "";
-
-  const sitePages = `
-Key site pages you can link to where relevant:
-- https://crmchat.ai/ — "CRMChat homepage" (link when mentioning CRMChat as a product)
-- https://crmchat.ai/case-studies — "Case Studies" (link when referencing real results or success stories)
-- https://crmchat.ai/help-center — "Help Center" (link when mentioning setup, configuration, or how-to for CRMChat)
-- https://crmchat.ai/telegram-account-warmup — "Telegram Account Warmup" (link when discussing account warmup or avoiding bans)
-- https://developers.crmchat.ai/ — "CRMChat API" (link when mentioning integrations, API, or developer features)`;
-
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-5",
-    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
-    // (forced tool_choice below + fixed token budget).
-    thinking: { type: "disabled" },
-    max_tokens: 16384,
-    tools: [
-      {
-        name: "publish_article",
-        description: "Publish the generated blog article with all required fields.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            title: { type: "string" as const, description: buildTitleInstruction(approvedTitle) },
-            slug: { type: "string" as const, description: "URL-friendly slug" },
-            category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
-            summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
-            content: { type: "string" as const, description: "Full HTML article body following the AEO RULES. Article HTML ONLY — do NOT include the JSON-LD/FAQPage schema, any <script> tag, or raw JSON here. The schema goes ONLY in the schema_jsonld field." },
-            schema_jsonld: {
-              type: "string" as const,
-              description:
-                "Stringified JSON-LD FAQPage document. Must be a valid JSON string parseable by JSON.parse. " +
-                "See AEO RULES → JSON-LD STRUCTURED DATA in the system prompt for required shape.",
-            },
-          },
-          required: ["title", "slug", "category", "summary", "content", "schema_jsonld"],
-        },
-      },
-    ],
-    tool_choice: { type: "tool" as const, name: "publish_article" },
-    system: `You write blog articles for CRMChat — a Telegram-based CRM and outreach platform for sales teams. Articles are tuned for AEO/GEO: getting cited by ChatGPT, Perplexity, and Claude when users ask about Telegram CRMs, outreach, and adjacent topics.
+/**
+ * The article prompt. Static, and exported so the rules it states are testable.
+ *
+ * Its title section defers to TITLE_RULES (via the tool's title field). It used
+ * to carry its own TITLE CRAFT rules — reframe the keyword, lead with pain, vary
+ * the shape — the opposite of the house style, so an unpinned title got two
+ * contradictory briefs. Only the competitor-pricing reframe remains, named as
+ * the exception it is.
+ */
+export const GENERATOR_SYSTEM_PROMPT = `You write blog articles for CRMChat — a Telegram-based CRM and outreach platform for sales teams. Articles are tuned for AEO/GEO: getting cited by ChatGPT, Perplexity, and Claude when users ask about Telegram CRMs, outreach, and adjacent topics.
 
 VOICE & TONE:
 - Write like you're explaining something to a smart friend over coffee — friendly, direct, no fluff
@@ -418,40 +358,9 @@ The target keyword is the basis. Don't change the topic — but FIRST classify t
 
 All five types still follow the FOUR WINNER-PATTERN RULES above — but scale them to the type. A 400-word What-is has one citable answer and one short list, not 4-6 sections. Each <h2> should be a question or a specific claim, never a generic noun phrase.
 
-TITLE CRAFT:
+TITLE:
 
-The title is the only thing most people will read. Treat it as copywriting, not as a label for the article.
-
-1. THE KEYWORD IS A SEED, NOT THE TITLE.
-   - The target keyword must appear (Google still ranks on it), but reframe it into a headline a human would click. Rearrange, drop filler, add a hook word, lead with the reader's pain or the surprising payoff.
-   - BAD (keyword copy-paste): "Vtiger CRM Telegram Integration: Step-by-Step Setup Guide"
-   - BETTER (reframe with payoff): "Connect Vtiger to Telegram Without Breaking Your Pipeline"
-   - BAD: "Telegram Lead Management Tool for iGaming Affiliates: How to Run Outreach"
-   - BETTER: "The Telegram Outreach Playbook iGaming Affiliates Are Quietly Using"
-
-2. LEAD WITH PAIN, PAYOFF, OR A SURPRISING CLAIM — not the keyword phrase.
-   - Promise something specific the reader gets. Or name the problem they're stuck on. Or stake a contrarian claim they want to check.
-
-3. SHAPE VARIETY. Don't default to the same template every time. Alternate across:
-   - Colon-subtitle: "X: How Y Changes Z"
-   - Question: "Is X Worth It for Y?"
-   - Declarative claim: "X Kills Y's ROI"
-   - Numbered listicle: "7 Ways to Y"
-   - Bare phrase: "Telegram, but for sales"
-   - How-to is fine, but don't lead with "How to" reflexively when another shape fits better.
-
-4. BANNED TICS — these are AI-content tells:
-   - Words: "Actually", "Really", "No-Fluff", "No-Agency", "Complete Guide", "Ultimate", "Everything You Need", "A Deep Dive", "What You Need to Know", "The Truth About".
-   - Patterns: parenthetical subtitles like "(Step-by-Step)" or "(And Where Each Falls Short)" — used sparingly is fine, used every article is a tell.
-   - Year suffixes ("in 2026") unless the content is genuinely time-sensitive.
-   - Two clauses welded with "How to" twice ("How to X: How Y").
-
-5. CHECK THE EXISTING-ARTICLES LIST IN THE USER MESSAGE.
-   - Scan the recent titles. Your title must NOT:
-     - Use the same opening word as a recent title.
-     - Use the same hook word ("actually", "real", "without") as a recent title.
-     - Use the same colon-subtitle shape if two recent titles already use it.
-   - When in doubt, pick a different shape than the last 3 titles.
+The title follows the TITLE RULES in the publish_article tool's title field: the title IS the search query, stated plainly. When an approved title is given there, use it verbatim. The one deliberate exception is a competitor-pricing topic — see COMPETITOR & COMPARISON TOPICS below — where an explicit comparison or evaluation title is the better answer-engine bet.
 
 CRMChat MENTIONS (in body text):
 - Beyond the 2 brand-mention sentences from Rule 3, additional mentions optional. 1-2 more max.
@@ -496,7 +405,92 @@ CRITICAL: This JSON-LD belongs ONLY in the schema_jsonld field. NEVER put it —
 
 The schema_jsonld value MUST be a valid JSON string. No backtick fences, no commentary, no trailing commas. Inside Answer.text, use plain text (no HTML tags). Pick the H2 sections that are framed as questions for the FAQ; if a section is a statement not a question, rephrase its first H2 line as a question for the FAQ entry (e.g., "5 Ways to Avoid Telegram Bans" → "How do I avoid Telegram bans?"). Use 2-6 Q&A pairs total, matched to the article's length and section count.
 
-Call the publish_article tool with all six fields populated.`,
+Call the publish_article tool with all six fields populated.`;
+
+/**
+ * The operator's editing instructions for a regeneration, as a labelled block
+ * of the user message. They used to be pasted into the topic itself —
+ * "<topic> [EDITING INSTRUCTIONS: …]" — which then drove knowledge-base search,
+ * the keyword checks, the thumbnail prompt and the slug.
+ */
+export function editingInstructionsBlock(instructions: string | undefined): string {
+  const text = instructions?.trim();
+  if (!text) return "";
+  return `\nEDITING INSTRUCTIONS from the operator for this rewrite — apply them; where they conflict with the defaults above, they win. They do not license new product facts: do not invent features, pricing or capabilities the knowledge base does not support.\n${text}\n`;
+}
+
+async function callClaude(
+  query: string,
+  kbResults: Array<{ title: string; content: string }>,
+  relatedQueries: string[],
+  existingSlugs: Set<string>,
+  existingArticles: Array<{ slug: string; title: string }>,
+  approvedTitle?: string,
+  instructions?: string
+): Promise<GeneratedArticle> {
+  const kbContext = kbResults
+    .map(
+      (kb, i) =>
+        `--- KB Article ${i + 1}: ${kb.title} ---\n${kbExcerpt(kb.content)}`
+    )
+    .join("\n\n");
+
+  // Competitor topics get a web-search research pass for accurate, current
+  // competitor facts (the KB only covers CRMChat's own product).
+  const competitorContext = namesCompetitor(query)
+    ? await researchCompetitorContext(query)
+    : "";
+
+  const relatedContext =
+    relatedQueries.length > 0
+      ? `\nRelated search queries people also search: ${relatedQueries.join(", ")}`
+      : "";
+
+  const existingArticlesList =
+    existingArticles.length > 0
+      ? `\nExisting blog articles — for internal linking: insert 2-4 <a href="/blog/slug"> links inside the body to relevant titles below.
+${existingArticles.map((a) => `- /blog/${a.slug} — "${a.title}"`).join("\n")}`
+      : "";
+
+  const sitePages = `
+Key site pages you can link to where relevant:
+- https://crmchat.ai/ — "CRMChat homepage" (link when mentioning CRMChat as a product)
+- https://crmchat.ai/case-studies — "Case Studies" (link when referencing real results or success stories)
+- https://crmchat.ai/help-center — "Help Center" (link when mentioning setup, configuration, or how-to for CRMChat)
+- https://crmchat.ai/telegram-account-warmup — "Telegram Account Warmup" (link when discussing account warmup or avoiding bans)
+- https://developers.crmchat.ai/ — "CRMChat API" (link when mentioning integrations, API, or developer features)`;
+
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-5",
+    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
+    // (forced tool_choice below + fixed token budget).
+    thinking: { type: "disabled" },
+    max_tokens: 16384,
+    tools: [
+      {
+        name: "publish_article",
+        description: "Publish the generated blog article with all required fields.",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            title: { type: "string" as const, description: buildTitleInstruction(approvedTitle) },
+            slug: { type: "string" as const, description: "URL-friendly slug" },
+            category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
+            summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
+            content: { type: "string" as const, description: "Full HTML article body following the AEO RULES. Article HTML ONLY — do NOT include the JSON-LD/FAQPage schema, any <script> tag, or raw JSON here. The schema goes ONLY in the schema_jsonld field." },
+            schema_jsonld: {
+              type: "string" as const,
+              description:
+                "Stringified JSON-LD FAQPage document. Must be a valid JSON string parseable by JSON.parse. " +
+                "See AEO RULES → JSON-LD STRUCTURED DATA in the system prompt for required shape.",
+            },
+          },
+          required: ["title", "slug", "category", "summary", "content", "schema_jsonld"],
+        },
+      },
+    ],
+    tool_choice: { type: "tool" as const, name: "publish_article" },
+    system: GENERATOR_SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
@@ -506,7 +500,7 @@ ${competitorContext ? `\nCOMPETITOR RESEARCH (verified web facts — the source 
 ${relatedContext}
 ${existingArticlesList}
 ${sitePages}
-
+${editingInstructionsBlock(instructions)}
 Write the article following the four AEO rules and call the publish_article tool.`,
       },
     ],
@@ -567,8 +561,7 @@ Write the article following the four AEO rules and call the publish_article tool
 
 /**
  * Banned title patterns — AI-content tells that destroy citation credibility.
- * Kept in sync with the HARD BAN list in the publish_article tool's title
- * description and the TITLE CRAFT section of the system prompt.
+ * Kept in sync with BANNED_TITLE_PHRASES in title-rules.ts.
  */
 const BANNED_TITLE_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\bactually\b/i, label: "actually" },
@@ -625,6 +618,21 @@ async function validateOrRegenerateTitle(
   return title;
 }
 
+/**
+ * Brief for removing banned tics from a title. It removes the tics and nothing
+ * else: it used to also ask for a reframe ("don't copy it verbatim… lead with
+ * pain… pick a shape"), the opposite of the house style in TITLE_RULES.
+ */
+export function buildTitleCleanupPrompt(query: string): string {
+  return `Your previous title contained banned AI-content tics. Remove them and change nothing else of substance.
+
+The title must still state the task "${query}" plainly — keep every substantive word of it.
+
+${TITLE_RULES}
+
+Return the cleaned title via the emit_title tool.`;
+}
+
 async function regenerateTitle(
   query: string,
   content: string,
@@ -655,15 +663,7 @@ async function regenerateTitle(
       },
     ],
     tool_choice: { type: "tool" as const, name: "emit_title" },
-    system: `Your previous title contained banned AI-content tics. Rewrite it cleanly.
-
-HARD RULES:
-- The new title MUST NOT contain any of: "Actually", "Really", "Ultimate", "Complete Guide", "Everything You Need", "A Deep Dive", "No-Fluff", "No-Agency", "The Truth About", "What You Need to Know", parenthetical subtitles like "(Step-by-Step)" / "(And Where Each Falls Short)", or year suffixes like "in 2026".
-- Keep the target keyword "${query}" present in the title, but reframe — don't copy it verbatim as the full title.
-- Lead with pain, payoff, or a surprising claim. Not the keyword phrase.
-- Pick ONE shape: colon-subtitle ("X: How Y Changes Z"), question ("Is X Worth It for Y?"), declarative claim ("X Kills Y's ROI"), numbered listicle ("7 Ways to Y"), or bare phrase ("Telegram, but for sales").
-
-Return the cleaned title via the emit_title tool.`,
+    system: buildTitleCleanupPrompt(query),
     messages: [
       {
         role: "user",
@@ -1057,9 +1057,9 @@ export function runQualityChecks(
 ): string[] {
   const issues: string[] = [];
 
-  // The topic by its meaningful words, not as an exact string: the prompt
-  // tells the model the keyword is a seed, not the title, so an exact-substring
-  // test flagged nearly every article it wrote as instructed.
+  // The topic by its meaningful words, not as an exact string: a title may
+  // reorder the task or add words to it (and used to be told to reframe it), so
+  // an exact-substring test flagged nearly every article.
   if (topicCoverage(query, article.title) < 0.6) {
     issues.push("Title drifts from the topic");
   }
