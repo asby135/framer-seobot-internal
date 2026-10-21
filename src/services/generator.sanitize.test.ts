@@ -34,6 +34,18 @@ describe("stripLeakedJsonLd", () => {
     expect(stripLeakedJsonLd(html)).toBe(html);
   });
 
+  // The model sometimes ends the body with a bare tag named after the tool
+  // field. "_" is not tag syntax to the sanitizer, so it was escaped and shipped
+  // as visible text: 8 live articles ended in "<schema_jsonld>".
+  it.each([
+    "<p>&lt;schema_jsonld&gt;</p>",
+    "<p><schema_jsonld></p>",
+    "<schema_jsonld></schema_jsonld>",
+    "<p>&lt;schema_jsonld_placeholder/&gt;</p>",
+  ])("removes a leaked schema field tag: %s", (leak) => {
+    expect(sanitizeHTML(`<p>Last line.</p>${leak}`)).toBe("<p>Last line.</p>");
+  });
+
   it("sanitizeHTML also strips leaked schema end-to-end", () => {
     const html =
       `<h2>Convert phone numbers</h2><p>Here is how.</p>` +
@@ -130,6 +142,14 @@ describe("sanitizeHTML — comments", () => {
 
   it("drops any other comment", () => {
     expect(sanitizeHTML("<p>a</p><!-- note to self --><p>b</p>")).toBe("<p>a</p><p>b</p>");
+  });
+});
+
+describe("sanitizeHTML — brand", () => {
+  it("writes the brand in lowercase in text, leaving links intact", () => {
+    expect(sanitizeHTML('<p><a href="https://crmchat.ai/">CRMChat</a> and CRMchat.</p>')).toBe(
+      '<p><a href="https://crmchat.ai/">crmchat</a> and crmchat.</p>'
+    );
   });
 });
 

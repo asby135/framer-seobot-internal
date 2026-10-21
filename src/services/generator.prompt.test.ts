@@ -26,7 +26,7 @@ describe("the article prompt agrees with the house title rules", () => {
   });
 
   it("still carries the competitor-pricing reframe itself", () => {
-    expect(GENERATOR_SYSTEM_PROMPT).toContain("Manychat vs CRMChat: Real Pricing Breakdown");
+    expect(GENERATOR_SYSTEM_PROMPT).toContain("Manychat vs crmchat: Real Pricing Breakdown");
   });
 });
 

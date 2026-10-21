@@ -4,6 +4,7 @@ import { getDb } from "../db/index.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
+import { normalizeBrand } from "../lib/brand.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -25,7 +26,7 @@ const GLOSSARY: Array<{ en: string; ru: string }> = [
   { en: "Broadcast", ru: "Рассылка" },
   { en: "Contact", ru: "Контакт" },
   { en: "CRM", ru: "CRM" },
-  { en: "CRMChat", ru: "CRMChat" },
+  { en: "crmchat", ru: "crmchat" },
   { en: "Dashboard", ru: "Дашборд" },
   { en: "Deal", ru: "Сделка" },
   { en: "Funnel", ru: "Воронка" },
@@ -134,7 +135,16 @@ async function doTranslateArticle(
            summary = excluded.summary,
            content = excluded.content,
            schema_jsonld = excluded.schema_jsonld`
-      ).run(nanoid(), articleId, locale, result.title, result.slug, result.summary, result.content, validatedSchema);
+      ).run(
+        nanoid(),
+        articleId,
+        locale,
+        normalizeBrand(result.title),
+        result.slug,
+        normalizeBrand(result.summary),
+        normalizeBrand(result.content),
+        normalizeBrand(validatedSchema)
+      );
 
       translated.push(locale);
       logger.info({ articleId, locale }, "Article translated");
@@ -179,7 +189,7 @@ Translate the provided article into ${langName}.
 
 Rules:
 - Translate naturally, not word-for-word. The result should read like it was originally written in ${langName}.
-- Keep brand names (CRMChat, Telegram) unchanged.
+- Keep brand names (crmchat, Telegram) unchanged. Write crmchat all lowercase, also at the start of a sentence; never transliterate it.
 - Preserve all HTML tags and structure exactly — only translate the text content.
 - Keep URLs, links, and code blocks unchanged.
 - For technical terms with no common ${langName} equivalent, use the English term.
