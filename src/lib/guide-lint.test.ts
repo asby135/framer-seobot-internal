@@ -80,7 +80,9 @@ describe("lintArticle", () => {
     expect(lintArticle(goodArticle("<p>Plans cost $49 a month.</p>"), { needsTable: true }).join(" ")).toMatch(
       /Link the source/
     );
-    const benign = "<p>We checked each site on 21 October 2026 and filed Form 8949 for a team of 10.</p>";
+    const benign =
+      "<p>We checked each site on 21 October 2026 and filed Form 8949 for a team of 10.</p>" +
+      "<p>An MT103 maps to pacs.008 under ISO 20022, and 103 names the message type.</p>";
     expect(lintArticle(goodArticle(benign), { needsTable: true })).toEqual([]);
   });
 });

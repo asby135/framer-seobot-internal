@@ -125,11 +125,21 @@ export function lintArticle(html: string, opts: GuideLintOptions): string[] {
   // numbers count: money, percentages, thousands and millions, 100 and up.
   // Dates ("21 October 2026"), team sizes ("team of 10") and form numbers
   // ("Form 8949") are not claims.
-  const CLAIM = /\$\s?\d|\d+(?:[.,]\d+)?\s?%|\b\d{1,3}(?:,\d{3})+\b|\b\d+(?:\.\d+)?\s?[KkMm]\b\+?|\b(?!(?:19|20)\d{2}\b)\d{3,}\+?/;
+  const CLAIM = /\$\s?\d|\d+(?:[.,]\d+)?\s?%|\b\d{1,3}(?:,\d{3})+\b|\b\d+(?:\.\d+)?\s?[KkMm]\b\+?|\b(?!(?:19|20)\d{2}\b)(?!0)\d{3,}\+?/;
+  // Numbers that name things rather than claim them: "MT103", "pacs.008",
+  // "ISO 20022". Once a number appears as part of a name in the article, a
+  // bare mention of it ("103 identifies the message type") is a name too.
+  const nameNumbers = new Set(
+    [...plain.matchAll(/\b[A-Za-z]{2,}[.-]?(\d{2,})\b|\bISO\s+(\d+)/g)].map((m) => m[1] ?? m[2])
+  );
+  const withoutNames = (t: string) =>
+    t
+      .replace(/\b(?:Form|Schedule|Section|guideline|ISO)\s+[\w.()-]+/gi, "")
+      .replace(/\b\d+\b/g, (n) => (nameNumbers.has(n) ? "" : n));
   const unsourced = [...body.matchAll(/<(p|li|td)>([\s\S]*?)<\/\1>/g)]
     .filter((m) => !/<a\s/i.test(m[2]))
     .map((m) => text(m[2]))
-    .filter((t) => CLAIM.test(t.replace(/\b(?:Form|Schedule|Section|guideline)\s+[\w.()-]+/gi, "")));
+    .filter((t) => CLAIM.test(withoutNames(t)));
   if (unsourced.length) {
     issues.push(`Link the source of every number; ${unsourced.length} block(s) have none, e.g. "${clip(unsourced[0])}".`);
   }

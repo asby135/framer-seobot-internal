@@ -9,6 +9,7 @@ import { isPureCompetitorTopic } from "../lib/competitors.js";
 import { queryToSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
+import { callJson, MODELS } from "../lib/claude.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -45,7 +46,7 @@ ${TITLE_RULES}
 
 Write every title in English, even for a Russian-speaking audience — the blog is English and is translated afterwards.
 
-Return exactly ${count} titles via the emit_topics tool.`;
+Return exactly ${count} titles in the JSON reply.`;
 }
 
 const DEFAULT_COUNT = 10;
@@ -375,48 +376,32 @@ export function insertSeededTopics(
 
 async function generateTopicCandidates(input: SeederPromptInput): Promise<string[]> {
   const { audience, count } = input;
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-5",
-    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
-    // (forced tool_choice below + fixed token budget).
-    thinking: { type: "disabled" },
-    max_tokens: 2048,
-    tools: [
-      {
-        name: "emit_topics",
-        description: "Emit the list of proposed article topic titles.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            topics: {
-              type: "array" as const,
-              items: { type: "string" as const },
-              description: "Array of finished article titles, one per element.",
-            },
+  let reply: unknown;
+  try {
+    reply = await callJson<{ topics: string[] }>(anthropic, {
+      model: MODELS.worker,
+      thinking: "off",
+      maxTokens: 2048,
+      system: buildSeederSystemPrompt(count),
+      schema: {
+        type: "object",
+        properties: {
+          topics: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of finished article titles, one per element.",
           },
-          required: ["topics"],
         },
+        required: ["topics"],
+        additionalProperties: false,
       },
-    ],
-    tool_choice: { type: "tool" as const, name: "emit_topics" },
-    system: buildSeederSystemPrompt(count),
-    messages: [
-      {
-        role: "user",
-        content: buildSeederPrompt(input),
-      },
-    ],
-  });
-
-  const toolBlock = response.content.find((b) => b.type === "tool_use");
-  if (!toolBlock || toolBlock.type !== "tool_use") {
-    logger.error(
-      { audience, stopReason: response.stop_reason },
-      "Seeder: Claude did not return tool_use block"
-    );
+      user: buildSeederPrompt(input),
+    });
+  } catch (e) {
+    logger.error({ audience, error: e instanceof Error ? e.message : "unknown" }, "Seeder: topic proposal failed");
     return [];
   }
-  return parseTopicCandidates(toolBlock.input, count);
+  return parseTopicCandidates(reply, count);
 }
 
 /**
@@ -539,39 +524,40 @@ async function judgeDuplicatesWithHaiku(
         `[${i}] PROPOSED: ${item.candidate}\n${item.neighbors.map((n) => `    EXISTING: ${n}`).join("\n")}`
     )
     .join("\n\n");
-  const response = await anthropic.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 1024,
-    tools: [
-      {
-        name: "report_duplicates",
-        description: "Report, for each numbered item, which existing title it repeats, or null.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            results: {
-              type: "array" as const,
-              items: {
-                type: "object" as const,
-                properties: {
-                  index: { type: "integer" as const },
-                  duplicate_of: { type: ["string", "null"] as unknown as "string" },
-                },
-                required: ["index", "duplicate_of"],
+  let reply: unknown;
+  try {
+    reply = await callJson<{ results: Array<{ index: number; duplicate_of: string | null }> }>(anthropic, {
+      model: MODELS.light,
+      effort: "low",
+      maxTokens: 4096,
+      system: DUPLICATE_JUDGE_SYSTEM,
+      schema: {
+        type: "object",
+        properties: {
+          results: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                index: { type: "integer" },
+                duplicate_of: { anyOf: [{ type: "string" }, { type: "null" }] },
               },
+              required: ["index", "duplicate_of"],
+              additionalProperties: false,
             },
           },
-          required: ["results"],
         },
+        required: ["results"],
+        additionalProperties: false,
       },
-    ],
-    tool_choice: { type: "tool" as const, name: "report_duplicates" },
-    system: DUPLICATE_JUDGE_SYSTEM,
-    messages: [{ role: "user", content: listing }],
-  },
-  // A stuck call must not hold up a nightly run: the SDK default is a
-  // 10-minute timeout with 2 retries. Failing fast just skips the judge.
-  { timeout: 30_000, maxRetries: 1 });
-  const block = response.content.find((b) => b.type === "tool_use");
-  return parseDuplicateVerdicts(block && block.type === "tool_use" ? block.input : undefined, items.length);
+      user: listing,
+      // A stuck call must not hold up a nightly run: fail fast and the judge
+      // is skipped (every verdict stays null).
+      timeoutMs: 30_000,
+      maxRetries: 1,
+    });
+  } catch (e) {
+    logger.warn({ error: e instanceof Error ? e.message : "unknown" }, "Duplicate judge failed — skipping it");
+  }
+  return parseDuplicateVerdicts(reply, items.length);
 }

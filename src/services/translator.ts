@@ -5,6 +5,7 @@ import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
 import { normalizeBrand } from "../lib/brand.js";
+import { callJson, MODELS } from "../lib/claude.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -178,12 +179,13 @@ ${article.schema_jsonld}
 `
     : "";
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-5",
-    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
-    // (the existing max_tokens truncation guard assumes thinking-off output).
-    thinking: { type: "disabled" },
-    max_tokens: 16384,
+  // Structured output guarantees parseable JSON, which retires the old
+  // fence-stripping and regex field-recovery fallbacks.
+  const result = await callJson<TranslationResult>(anthropic, {
+    model: MODELS.worker,
+    thinking: "off",
+    // A Russian article runs to more tokens than its English source.
+    maxTokens: 32000,
     system: `You are a professional translator specializing in marketing and tech content.
 Translate the provided article into ${langName}.
 
@@ -219,10 +221,19 @@ Respond with valid JSON:
   "content": "translated HTML content",
   "schema_jsonld": "stringified JSON-LD with localized fields (or empty string if no source provided)"
 }`,
-    messages: [
-      {
-        role: "user",
-        content: `Translate this article into ${langName}:
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        slug: { type: "string" },
+        summary: { type: "string" },
+        content: { type: "string" },
+        schema_jsonld: { type: "string" },
+      },
+      required: ["title", "slug", "summary", "content", "schema_jsonld"],
+      additionalProperties: false,
+    },
+    user: `Translate this article into ${langName}:
 
 TITLE: ${article.title}
 
@@ -232,68 +243,9 @@ CONTENT:
 ${article.content}
 ${schemaBlock}
 Respond with JSON only, no markdown fences.`,
-      },
-    ],
   });
-
-  const text =
-    response.content[0].type === "text" ? response.content[0].text : "";
-  const stopReason = response.stop_reason;
-
-  if (stopReason === "max_tokens") {
-    logger.warn({ locale, textLength: text.length }, "Translation hit max_tokens limit — response truncated");
-  }
-
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json)?\s*/, "")
-    .replace(/\s*```$/, "")
-    // Remove control characters that break JSON parsing (except \n, \r, \t)
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
-
-  try {
-    const result = JSON.parse(cleaned) as TranslationResult;
-    result.slug = sanitizeSlug(result.slug || "");
-    return result;
-  } catch (parseError) {
-    const parseMsg = parseError instanceof Error ? parseError.message : "unknown";
-    logger.warn({ locale, parseError: parseMsg }, "Initial JSON parse failed, trying recovery");
-
-    // Try to extract JSON block
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        const result = JSON.parse(match[0]) as TranslationResult;
-        result.slug = sanitizeSlug(result.slug || "");
-        return result;
-      } catch { /* fall through */ }
-    }
-
-    // Try to extract fields manually as a last resort.
-    // schema_jsonld is intentionally NOT recovered here — the recovery path
-    // is brittle and schema is optional; we'd rather drop it than corrupt it.
-    try {
-      const titleMatch = cleaned.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-      const slugMatch = cleaned.match(/"slug"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-      const summaryMatch = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-      const contentMatch = cleaned.match(/"content"\s*:\s*"([\s\S]*?)"\s*,\s*"schema_jsonld"/);
-      const contentFallbackMatch = contentMatch || cleaned.match(/"content"\s*:\s*"([\s\S]*)"\s*\}?\s*$/);
-
-      if (titleMatch && summaryMatch && contentFallbackMatch) {
-        logger.info({ locale }, "Recovered translation via field extraction (schema_jsonld dropped)");
-        return {
-          title: titleMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
-          slug: sanitizeSlug(slugMatch?.[1] || ""),
-          summary: summaryMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
-          content: contentFallbackMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
-          schema_jsonld: "",
-        };
-      }
-    } catch { /* fall through */ }
-
-    logger.error({ locale, stopReason, parseError: parseMsg, responseLength: text.length, first500: text.slice(0, 500) }, "Translation returned invalid JSON");
-    throw new Error(`Translation returned invalid JSON for ${locale}`);
-  }
+  result.slug = sanitizeSlug(result.slug || "");
+  return result;
 }
 
 function sanitizeSlug(raw: string): string {

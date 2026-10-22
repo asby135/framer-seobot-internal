@@ -8,6 +8,9 @@ export const env = {
 
   // Claude
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || "",
+  // The model that writes and revises articles. Set to claude-opus-5-5 to
+  // trade roughly double the per-token cost for stronger long-form writing.
+  ARTICLE_MODEL: process.env.ARTICLE_MODEL || "claude-sonnet-5-5",
 
   // OpenAI (gpt-image-2 thumbnails)
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",

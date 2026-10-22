@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
+import { MODELS, thinkingFor } from "../lib/claude.js";
 
 /**
  * Web research before an article is written: a fact sheet in which every fact
@@ -17,8 +18,8 @@ import { logger } from "../lib/logger.js";
  * for everything else: a few facts about Telegram or the tools the topic names.
  * crmchat itself is left out; the knowledge base covers it.
  *
- * A separate call because the article call forces the publish_article tool and
- * leaves no turn for searching. Non-blocking: on any failure the article is
+ * A separate call because the article call replies with structured JSON and
+ * has no turn for searching. Non-blocking: on any failure the article is
  * written without the block.
  */
 
@@ -177,10 +178,10 @@ export async function researchTopic(query: string, depth: ResearchDepth): Promis
     const texts: string[] = [];
     for (let turn = 0; turn <= MAX_CONTINUATIONS; turn++) {
       response = await anthropic.messages.create({
-        model: "claude-sonnet-5",
-        // Thinking stays off, as on every other call in the pipeline: the
-        // fact sheet is gathered by tools, not by long reasoning.
-        thinking: { type: "disabled" },
+        model: MODELS.worker,
+        // Thinking off (between_tools on Sonnet 5.5): the fact sheet is
+        // gathered by tools, not by long reasoning.
+        thinking: thinkingFor(MODELS.worker, "off") as unknown as Anthropic.ThinkingConfigParam,
         max_tokens: 8000,
         tools,
         system: researchSystemPrompt(depth, new Date().toISOString().slice(0, 10)),
@@ -189,6 +190,10 @@ export async function researchTopic(query: string, depth: ResearchDepth): Promis
       for (const b of response.content) if (b.type === "text") texts.push(b.text);
       // The server-side tool loop hit its iteration cap: send the paused turn
       // back as is and the server resumes it. No extra "continue" message.
+      if (response.stop_reason === "refusal") {
+        logger.warn({ query, depth }, "Research refused by the model — writing without it");
+        return "";
+      }
       if (response.stop_reason !== "pause_turn") break;
       messages.push({ role: "assistant", content: response.content });
     }

@@ -9,6 +9,7 @@ import { logger } from "../lib/logger.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
 import { namesCompetitor } from "../lib/competitors.js";
 import { normalizeBrand } from "../lib/brand.js";
+import { callJson, MODELS } from "../lib/claude.js";
 import { lintArticle } from "../lib/guide-lint.js";
 import { researchTopic, type ResearchDepth } from "./research.js";
 import { findBrokenLinks } from "./link-check.js";
@@ -246,7 +247,7 @@ export function researchDepthFor(topic: string): ResearchDepth {
 }
 
 /**
- * The `title` field instruction for the publish_article tool.
+ * The `title` field instruction in the article reply's schema.
  *
  * When the operator has approved a headline at gate 1, it is pinned verbatim
  * and the ban-list is deliberately NOT restated — repeating it invites the
@@ -367,7 +368,7 @@ All five types follow the AEO/GEO RULES above, scaled to the type. A 400-word Wh
 
 TITLE:
 
-The title follows the TITLE RULES in the publish_article tool's title field: the title IS the search query, stated plainly. When an approved title is given there, use it verbatim. The one deliberate exception is a competitor-pricing topic — see COMPETITOR & COMPARISON TOPICS below — where an explicit comparison or evaluation title is the better answer-engine bet.
+The title follows the TITLE RULES in the description of the reply's title field: the title IS the search query, stated plainly. When an approved title is given there, use it verbatim. The one deliberate exception is a competitor-pricing topic — see COMPETITOR & COMPARISON TOPICS below — where an explicit comparison or evaluation title is the better answer-engine bet.
 
 crmchat MENTIONS (in body text):
 - Write the brand exactly as "crmchat": all lowercase, also at the start of a sentence, in headings, link text, the title, the summary and the schema. Never "CRMChat" or "CRMchat", even where the knowledge base spells it that way.
@@ -414,7 +415,7 @@ CRITICAL: This JSON-LD belongs ONLY in the schema_jsonld field. NEVER put it —
 
 The schema_jsonld value MUST be a valid JSON string. No backtick fences, no commentary, no trailing commas. Inside Answer.text, use plain text (no HTML tags). Pick the H2 sections that are framed as questions for the FAQ; if a section is a statement not a question, rephrase its first H2 line as a question for the FAQ entry (e.g., "5 Ways to Avoid Telegram Bans" → "How do I avoid Telegram bans?"). Use 2-6 Q&A pairs total, matched to the article's length and section count.
 
-Call the publish_article tool with all six fields populated.`;
+Return all six fields in the JSON reply.`;
 
 /**
  * The operator's editing instructions for a regeneration, as a labelled block
@@ -435,28 +436,25 @@ function researchBlock(research: string): string {
     : "";
 }
 
-/** The structured-output tool both the article call and the revision call use. */
-function publishArticleTool(approvedTitle?: string) {
+/** The JSON shape both the article call and the revision call reply with. */
+function articleSchema(approvedTitle?: string) {
   return {
-    name: "publish_article",
-    description: "Publish the generated blog article with all required fields.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        title: { type: "string" as const, description: buildTitleInstruction(approvedTitle) },
-        slug: { type: "string" as const, description: "URL-friendly slug" },
-        category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
-        summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
-        content: { type: "string" as const, description: "Full HTML article body following the AEO/GEO RULES. Article HTML ONLY — do NOT include the JSON-LD/FAQPage schema, any <script> tag, or raw JSON here. The schema goes ONLY in the schema_jsonld field." },
-        schema_jsonld: {
-          type: "string" as const,
-          description:
-            "Stringified JSON-LD FAQPage document. Must be a valid JSON string parseable by JSON.parse. " +
-            "See AEO RULES → JSON-LD STRUCTURED DATA in the system prompt for required shape.",
-        },
+    type: "object" as const,
+    properties: {
+      title: { type: "string" as const, description: buildTitleInstruction(approvedTitle) },
+      slug: { type: "string" as const, description: "URL-friendly slug" },
+      category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
+      summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
+      content: { type: "string" as const, description: "Full HTML article body following the AEO/GEO RULES. Article HTML ONLY — do NOT include the JSON-LD/FAQPage schema, any <script> tag, or raw JSON here. The schema goes ONLY in the schema_jsonld field." },
+      schema_jsonld: {
+        type: "string" as const,
+        description:
+          "Stringified JSON-LD FAQPage document. Must be a valid JSON string parseable by JSON.parse. " +
+          "See AEO RULES → JSON-LD STRUCTURED DATA in the system prompt for required shape.",
       },
-      required: ["title", "slug", "category", "summary", "content", "schema_jsonld"],
     },
+    required: ["title", "slug", "category", "summary", "content", "schema_jsonld"],
+    additionalProperties: false,
   };
 }
 
@@ -496,44 +494,26 @@ Key site pages you can link to where relevant:
 - https://crmchat.ai/telegram-account-warmup — "Telegram Account Warmup" (link when discussing account warmup or avoiding bans)
 - https://developers.crmchat.ai/ — "crmchat API" (link when mentioning integrations, API, or developer features)`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-5",
-    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
-    // (forced tool_choice below + fixed token budget).
-    thinking: { type: "disabled" },
-    max_tokens: 16384,
-    tools: [publishArticleTool(approvedTitle)],
-    tool_choice: { type: "tool" as const, name: "publish_article" },
+  const parsed = await callJson<GeneratedArticle>(anthropic, {
+    model: MODELS.writer,
+    // Adaptive thinking at medium effort: the article is the one call where
+    // reasoning pays; the 5.5 models cannot turn it off anyway.
+    effort: "medium",
+    maxTokens: 32000,
     system: GENERATOR_SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: `Target keyword: "${query}"
+    schema: articleSchema(approvedTitle),
+    user: `Target keyword: "${query}"
 ${kbContext ? `\ncrmchat knowledge base (use for accuracy — do NOT invent features):\n${kbContext}` : ""}
 ${researchBlock(research)}
 ${relatedContext}
 ${existingArticlesList}
 ${sitePages}
 ${editingInstructionsBlock(instructions)}
-Write the article following the AEO/GEO rules and call the publish_article tool.`,
-      },
-    ],
+Write the article following the AEO/GEO rules and return it as the JSON object.`,
   });
 
-  if (response.stop_reason === "max_tokens") {
-    logger.error({ stopReason: response.stop_reason }, "Claude response truncated — tool_use output may be incomplete");
-  }
-
-  // Extract structured output from tool_use response
-  const toolBlock = response.content.find((b) => b.type === "tool_use");
-  if (!toolBlock || toolBlock.type !== "tool_use") {
-    logger.error({ stopReason: response.stop_reason, contentTypes: response.content.map((b) => b.type) }, "Claude did not return tool_use block");
-    throw new Error("Claude did not return structured article output");
-  }
-
-  const parsed = toolBlock.input as GeneratedArticle;
   if (!parsed.title || !parsed.content) {
-    logger.error({ input: JSON.stringify(parsed).slice(0, 500) }, "Tool output missing required fields");
+    logger.error({ input: JSON.stringify(parsed).slice(0, 500) }, "Article reply missing required fields");
     throw new Error("Claude returned incomplete article data");
   }
 
@@ -578,7 +558,7 @@ Write the article following the AEO/GEO rules and call the publish_article tool.
  * One revision pass on the problems lintArticle found.
  *
  * The draft goes back with the list and the same research block, and comes
- * back whole through publish_article. The title is pinned (it may have been
+ * back whole as the same JSON object. The title is pinned (it may have been
  * approved at gate 1) and the model may not add facts: the pass restructures
  * and rewords, it does not research. Throws when the revision is unusable; the
  * caller then keeps the draft.
@@ -590,21 +570,17 @@ async function reviseArticle(
   approvedTitle?: string,
   linkTargets: Array<{ slug: string; title: string }> = []
 ): Promise<GeneratedArticle> {
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-5",
-    // Same settings as the article call: forced tool_choice + fixed budget.
-    thinking: { type: "disabled" },
-    max_tokens: 16384,
-    tools: [publishArticleTool(approvedTitle ?? draft.title)],
-    tool_choice: { type: "tool" as const, name: "publish_article" },
+  const revised = await callJson<GeneratedArticle>(anthropic, {
+    model: MODELS.writer,
+    effort: "medium",
+    maxTokens: 32000,
     system: GENERATOR_SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: `Revise this draft. Fix ONLY these problems with the writing guide:
+    // The title is pinned: it may have been approved at gate 1.
+    schema: articleSchema(approvedTitle ?? draft.title),
+    user: `Revise this draft. Fix ONLY these problems with the writing guide:
 ${issues.map((i) => `- ${i}`).join("\n")}
 
-Keep everything else: the title, every sourced fact, number and link, and what each section says. Do not add facts, numbers or claims that are not already in the draft or in the research block below. A number with no source link and no source in the research block is removed or rewritten without the number, never kept unsourced. Replace a broken internal link with one from the list below or drop the link. Return the whole article through publish_article.
+Keep everything else: the title, every sourced fact, number and link, and what each section says. Do not add facts, numbers or claims that are not already in the draft or in the research block below. A number with no source link and no source in the research block is removed or rewritten without the number, never kept unsourced. Replace a broken internal link with one from the list below or drop the link. Return the whole article as the JSON object.
 ${researchBlock(research)}
 ${linkTargets.length ? `\nArticles you may link to:\n${linkTargets.map((a) => `- /blog/${a.slug} — "${a.title}"`).join("\n")}` : ""}
 
@@ -614,14 +590,7 @@ Summary: ${draft.summary}
 Schema: ${draft.schema_jsonld}
 Content:
 ${draft.content}`,
-      },
-    ],
   });
-
-  if (response.stop_reason === "max_tokens") throw new Error("Revision truncated");
-  const toolBlock = response.content.find((b) => b.type === "tool_use");
-  if (!toolBlock || toolBlock.type !== "tool_use") throw new Error("Revision returned no article");
-  const revised = toolBlock.input as GeneratedArticle;
   if (!revised.content) throw new Error("Revision returned no content");
 
   return {
@@ -704,7 +673,7 @@ The title must still state the task "${query}" plainly — keep every substantiv
 
 ${TITLE_RULES}
 
-Return the cleaned title via the emit_title tool.`;
+Return the cleaned title in the JSON reply.`;
 }
 
 async function regenerateTitle(
@@ -713,50 +682,32 @@ async function regenerateTitle(
   originalTitle: string,
   violations: string[]
 ): Promise<string> {
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-5",
-    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
-    // (forced tool_choice below + tight 512-token budget).
-    thinking: { type: "disabled" },
-    max_tokens: 512,
-    tools: [
-      {
-        name: "emit_title",
-        description: "Emit a single cleaned-up article title.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            title: {
-              type: "string" as const,
-              description:
-                "Cleaned article title with the banned tics removed. Must not contain 'Actually', 'Really', 'Ultimate', 'Complete Guide', 'Everything You Need', 'A Deep Dive', 'No-Fluff', 'No-Agency', 'The Truth About', '(Step-by-Step)'-style parentheticals, or year suffixes.",
-            },
-          },
-          required: ["title"],
+  const reply = await callJson<{ title?: string }>(anthropic, {
+    model: MODELS.worker,
+    thinking: "off",
+    maxTokens: 512,
+    system: buildTitleCleanupPrompt(query),
+    schema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description:
+            "Cleaned article title with the banned tics removed. Must not contain 'Actually', 'Really', 'Ultimate', 'Complete Guide', 'Everything You Need', 'A Deep Dive', 'No-Fluff', 'No-Agency', 'The Truth About', '(Step-by-Step)'-style parentheticals, or year suffixes.",
         },
       },
-    ],
-    tool_choice: { type: "tool" as const, name: "emit_title" },
-    system: buildTitleCleanupPrompt(query),
-    messages: [
-      {
-        role: "user",
-        content: `ORIGINAL TITLE (rewrite this): ${originalTitle}
+      required: ["title"],
+      additionalProperties: false,
+    },
+    user: `ORIGINAL TITLE (rewrite this): ${originalTitle}
 VIOLATIONS FOUND: ${violations.join(", ")}
 
 ARTICLE FIRST 1500 CHARS (for context — anchor the rewrite in the actual content):
 ${content.slice(0, 1500)}
 
-Emit a clean replacement title via the emit_title tool.`,
-      },
-    ],
+Return a clean replacement title.`,
   });
-
-  const toolBlock = response.content.find((b) => b.type === "tool_use");
-  if (!toolBlock || toolBlock.type !== "tool_use") {
-    throw new Error("Title regeneration did not return tool_use block");
-  }
-  const out = (toolBlock.input as { title?: string }).title;
+  const out = reply.title;
   if (!out || typeof out !== "string") {
     throw new Error("Title regeneration returned no title");
   }
@@ -809,29 +760,18 @@ async function regenerateSchemaJsonld(
   title: string,
   content: string
 ): Promise<string> {
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-5",
-    // Sonnet 5 defaults to adaptive thinking; disable to preserve 4.6 behavior
-    // (forced tool_choice below + fixed token budget).
-    thinking: { type: "disabled" },
-    max_tokens: 2048,
-    tools: [
-      {
-        name: "emit_schema",
-        description: "Emit valid JSON-LD as a stringified JSON document.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            schema_jsonld: {
-              type: "string" as const,
-              description: "Stringified JSON-LD FAQPage. MUST parse as JSON.",
-            },
-          },
-          required: ["schema_jsonld"],
-        },
+  const reply = await callJson<{ schema_jsonld?: string }>(anthropic, {
+    model: MODELS.worker,
+    thinking: "off",
+    maxTokens: 2048,
+    schema: {
+      type: "object",
+      properties: {
+        schema_jsonld: { type: "string", description: "Stringified JSON-LD FAQPage. MUST parse as JSON." },
       },
-    ],
-    tool_choice: { type: "tool" as const, name: "emit_schema" },
+      required: ["schema_jsonld"],
+      additionalProperties: false,
+    },
     system: `Your previous schema_jsonld output was unparseable as JSON. Emit a valid JSON-LD FAQPage document for the article below.
 
 Required shape:
@@ -846,25 +786,14 @@ Required shape:
 
 Emit ONLY the FAQPage — no BlogPosting or Article node (Framer generates that automatically).
 Return ONLY the stringified JSON. No backticks, no commentary, no trailing commas. Inside Answer.text use plain text only.`,
-    messages: [
-      {
-        role: "user",
-        content: `TITLE: ${title}
+    user: `TITLE: ${title}
 
 ARTICLE HTML (extract H2 questions and first-paragraph answers for the FAQPage):
 ${content.slice(0, 8000)}
 
-Emit valid JSON-LD via the emit_schema tool.`,
-      },
-    ],
+Return valid JSON-LD in the schema_jsonld field.`,
   });
-
-  const toolBlock = response.content.find((b) => b.type === "tool_use");
-  if (!toolBlock || toolBlock.type !== "tool_use") {
-    throw new Error("Schema retry: tool_use block missing");
-  }
-  const input = toolBlock.input as { schema_jsonld?: string };
-  return input.schema_jsonld || "";
+  return reply.schema_jsonld || "";
 }
 
 async function validateGrounding(
@@ -877,45 +806,25 @@ async function validateGrounding(
       .map((kb) => `--- ${kb.title} ---\n${kbExcerpt(kb.content)}`)
       .join("\n\n");
 
-    const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
+    // Structured output: Haiku 5.5 thinks by default, so the reply can open
+    // with a thinking block; reading content[0] as text silently returned [].
+    const reply = await callJson<{ claims: string[] }>(anthropic, {
+      model: MODELS.light,
+      effort: "low",
+      maxTokens: 4096,
       system: `You are a fact-checker. Compare the article against the product knowledge base.
 Identify any specific product claims (pricing, features, capabilities, limitations) in the article that are NOT supported by the knowledge base.
-Respond with a JSON array of strings, each being an ungrounded claim.
-If all claims are grounded, respond with an empty array: []
+Return them in "claims", one ungrounded claim per string; an empty list when every claim is grounded.
 Only flag specific, verifiable product claims. General marketing language or industry knowledge is fine.`,
-      messages: [
-        {
-          role: "user",
-          content: `ARTICLE:\n${articleTextForFactCheck(articleContent)}\n\nKNOWLEDGE BASE:\n${kbContext}`,
-        },
-      ],
+      schema: {
+        type: "object",
+        properties: { claims: { type: "array", items: { type: "string" } } },
+        required: ["claims"],
+        additionalProperties: false,
+      },
+      user: `ARTICLE:\n${articleTextForFactCheck(articleContent)}\n\nKNOWLEDGE BASE:\n${kbContext}`,
     });
-
-    const text =
-      response.content[0].type === "text" ? response.content[0].text : "[]";
-    const cleaned = text
-      .trim()
-      .replace(/^```(?:json)?\s*/, "")
-      .replace(/\s*```$/, "");
-
-    try {
-      const parsed = JSON.parse(cleaned);
-      if (Array.isArray(parsed)) return parsed as string[];
-      return [];
-    } catch {
-      // Try to extract JSON array from the response
-      const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
-      if (arrayMatch) {
-        try {
-          const parsed = JSON.parse(arrayMatch[0]);
-          if (Array.isArray(parsed)) return parsed as string[];
-        } catch { /* fall through */ }
-      }
-      logger.error({ text: cleaned.slice(0, 200) }, "Grounding check returned invalid JSON");
-      return ["Grounding validation returned invalid response - manual review recommended"];
-    }
+    return Array.isArray(reply.claims) ? reply.claims.filter((c) => typeof c === "string") : [];
   } catch (e) {
     logger.error(
       { error: e instanceof Error ? e.message : "unknown" },
@@ -934,7 +843,7 @@ Only flag specific, verifiable product claims. General marketing language or ind
 /**
  * Strip JSON-LD schema the model sometimes leaks into the article body.
  *
- * The publish_article tool has a separate `schema_jsonld` field, but the model
+ * The article reply has a separate `schema_jsonld` field, but the model
  * occasionally ALSO appends the FAQPage JSON-LD as trailing raw text inside the
  * `content` field. That JSON belongs only in schema_jsonld (Framer injects it as
  * a <script type="application/ld+json"> tag) — in the body it renders as visible

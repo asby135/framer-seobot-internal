@@ -3,6 +3,7 @@ import { findTitleTics } from "./generator.js";
 import { TITLE_RULES } from "./title-rules.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
+import { MODELS, thinkingFor } from "../lib/claude.js";
 
 /**
  * Headline proposal for the pre-generation approval gate.
@@ -115,10 +116,10 @@ function defaultClient(): TitleClient {
   return {
     async propose({ topic, recentTitles, rejected }) {
       const res = await anthropic.messages.create({
-        model: "claude-sonnet-5",
-        // Match the seeder/generator: disable adaptive thinking for a short,
+        model: MODELS.worker,
+        // Thinking off (between_tools on Sonnet 5.5) for a short,
         // deterministic single-output call.
-        thinking: { type: "disabled" },
+        thinking: thinkingFor(MODELS.worker, "off") as unknown as Anthropic.ThinkingConfigParam,
         max_tokens: 256,
         system: `You write article titles for the CRMChat blog — a long-tail task library for sales teams working in Telegram.
 
