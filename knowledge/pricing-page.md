@@ -2,9 +2,13 @@
 
 > Source: https://crmchat.ai/pricing
 
-Compare CRMChat Plans & Features | CRMChat.ai
+"A complete
 
-"A complete game-changer for our business, 10/10 recommend."
+game-changer
+
+for our business, 10/10 recommend."
+
+Alex Khvalko
 
 Priority Client Manager @ FINPR
 
@@ -14,33 +18,47 @@ Your business growth investment
 
 Pricing Plans
 
-From one-man sales teams to large enterprises. 1-week trial for any plan.
+From one-man sales teams to leadgen agencies and large enterprises.
+
+1-week trial for any plan.
+
+From one-man sales teams to leadgen agencies and large enterprises. 1-week trial for any plan.
 
 CRMChat Pricing
 
 Monthly
 
-Yearly Save 30%
+Quarterly
+
+Save 15%
+
+Yearly
+
+Save 30%
 
 Starter
 
 Start closing deals faster with time-saving sales tools you can use for free
 
-No credit card required
-
 Free
 
-forever
+forever · no credit card required
 
 All core CRM Features
 
+1 Telegram account connection
+
 50 CRM leads
 
-Connect 1 Telegram Account
+Unlimited Campaigns
 
 CRM & Chat on one screen
 
 Telegram Folder Sync to CRM
+
+Multiple workspaces
+
+Custom Proxy for each account
 
 Get Started Free
 
@@ -48,15 +66,19 @@ Personal
 
 Essential sales and CRM tools for a single-person sales team
 
-$28
+$20
 
-/month
+per month, billed yearly
+
+All in Free Plan plus
+
+1 Telegram account connection
 
 Unlimited CRM leads
 
 Access to 7,000+ integrations via Zapier
 
-Multiple workspaces
+Telegram MCP and API for AI workflows
 
 1-week Trial
 
@@ -64,15 +86,17 @@ Team
 
 Comprehensive CRM and outreach tools built for collaborative sales teams
 
-Starting from
+$34
 
-$56
+per seat per month, billed yearly
 
 All in Personal Plan plus
 
-Connect multiple TG accounts
+Unlimited TG account connections, 1 included
 
-Team collaboration (3 users included)
++$10 per additional TG account connection/mo
+
+Team collaboration
 
 AI account warmup
 
@@ -82,6 +106,8 @@ Advanced reporting & analytics
 
 Calculate your pricing
 
+1-week Trial
+
 Agency
 
 Custom solutions for large-volume outreach engine with dedicated support
@@ -90,7 +116,7 @@ Talk to Us
 
 All in Team plan plus
 
-50+ outreach accounts
+20+ members or 50+ outreach accounts
 
 Custom pricing & onboarding
 
@@ -98,87 +124,141 @@ Dedicated account manager
 
 Priority support
 
+Talk to Us
+
 Calculate your Team pricing
 
 Adjust the sliders to see your estimated monthly cost
 
-Telegram Outreach Accounts*
+Monthly
 
-Team Members (3 free, then $7/member)
+Quarterly
+
+Save 15%
+
+Yearly
+
+Save 30%
+
+Team Members ($49/seat)
+
+1
+
+Connected Telegram Accounts (1 free, then $10/connection)
+
+1
 
 Base features (Personal Plan)
 
 All included
 
-1 Outreach Account(s)
+1
 
-$56.00
+Team Member(s)
 
-3 Team Member(s)
+$49.00
+
+1
+
+Connected Telegram Account(s)
 
 Included
 
 Total per month
 
-* We only count active accounts, not frozen ones
+$49.00
+
+Estimated monthly outreach capacity
+
+Cold lead reach
+
+210
+
+leads/month
+
+Warm lead reach
+
+1,050
+
+leads/month
+
+Based on account safety limits of 10 cold &amp; 50 warm leads per account per day.
 
 How did we calculate this?
 
-Outreach Account Pricing Tiers
+How Team pricing works
 
-We use a tiered pricing model where the price per account decreases as your usage increases. When you reach each new tier threshold, additional accounts are billed at the lower rate.
+Team pricing has two simple parts: a per-seat fee for each team member, plus a flat fee per Telegram account connection — your first connection is included free. A connection can be a Telegram account we provide or your own.
 
-Accounts
+Item
 
-Price per Account
+Price
 
-1-3 accounts
+Team member (seat)
 
-$79/account
+$49/seat/month
 
-4-6 accounts
+Telegram account connection
 
-$59/account
+1st free, then $10/connection/month
 
-7-9 accounts
+Everything in Personal:
 
-$49/account
+Every Team plan includes all Personal plan features.
 
-10-12 accounts
+Billing Discounts:
 
-$39/account
+Prices shown are for monthly billing. Quarterly billing receives a 15% discount and yearly billing a 30% discount — on both seats and accounts.
 
-13-15 accounts
+More than 20 members or 50 outreach accounts?
 
-$29/account
-
-16-18 accounts
-
-$19/account
-
-19-20 accounts
-
-$9/account
-
-21+ accounts
-
-$5/account
-
-Team Members: The first 3 team members are included at no additional cost. Each additional team member costs $10/month (monthly plan) or $7/month (yearly plan).
-
-Yearly Discount: All prices shown in the table above are for monthly billing. Yearly billing receives a 30% discount on all tiers.
-
-Need more than 50 accounts? Talk to Us
+Talk to Us
 
 “CRMChat has transformed our Telegram B2B outreach workflow”
 
+CRMChat eliminated all the context switching between Google Sheets, Telegram, and custom scripts. Now we manage our entire B2B outreach process in one platform - from data import to deal closure.
+
+Yakov Kovalev
+
 Co-Founder, Lead Sniper
+
+Trusted by 500+ Telegram-first Businesses Worldwide
 
 FinPR
 
 Futurum
 
+fractl
+
+Solana Superteam
+
+Global Blockchain Show
+
 Ga^3in Ventures
+
+Explore Case Studies
+
+Grow your business on Telegram
+
+CRM, Outreach & Lead Research. Get started with 1-week free trial.
+
+Try for Free
+
+Grow your business on Telegram
+
+CRM, Outreach & Lead Research. Get started with 1-week free trial.
+
+Try for Free
+
+Grow your business on Telegram
+
+CRM, Outreach & Lead Research. Get started with 1-week free trial.
+
+Try for Free
+
+Frequently Asked Questions
+
+Most common questions answered
 
 Can I trust you?
 
@@ -190,7 +270,13 @@ How many messages can I send per day with CRMChat?
 
 Can I use CRMChat on mobile?
 
+How does the Telegram Group Parser work for lead generation?
+
+What integrations does CRMChat support?
+
 How does team collaboration work in CRMChat?
+
+What results can I expect from CRMChat's outreach features?
 
 Is CRMChat suitable for non-Web3 businesses?
 

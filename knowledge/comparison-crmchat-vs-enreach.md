@@ -28,7 +28,7 @@ Pricing & Volume
 
 Entry price
 
-$28/mo
+$20/mo billed yearly ($29 monthly)
 
 $1,500/mo
 

@@ -28,7 +28,7 @@ Pricing & Accessibility
 
 Entry price
 
-$28
+$20/mo billed yearly ($29 monthly)
 
 Custom
 

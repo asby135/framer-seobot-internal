@@ -30,7 +30,7 @@ A: CSV format with clear headers, especially Username and First Name columns.
 A: Yes, required for outreach accounts to increase cold messaging limits.
 
 **Q: How many users can I have on the Team plan?**
-A: Up to 3 users included, $10 per additional user.
+A: As many as you need. Each team member is a seat at $49/month ($34/month billed yearly); 1 Telegram account connection is included, then $10/month per additional account. Above 20 members or 50 accounts, see the Agency plan.
 
 **Q: How many workspaces can I create?**
 A: 5 workspaces per subscription.
