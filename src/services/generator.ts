@@ -9,6 +9,9 @@ import { logger } from "../lib/logger.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
 import { namesCompetitor } from "../lib/competitors.js";
 import { normalizeBrand } from "../lib/brand.js";
+import { lintArticle } from "../lib/guide-lint.js";
+import { researchTopic, type ResearchDepth } from "./research.js";
+import { findBrokenLinks } from "./link-check.js";
 import { TITLE_RULES } from "./title-rules.js";
 import { titleTokens, TROUBLESHOOTING_SHAPE } from "./similarity.js";
 
@@ -76,11 +79,38 @@ export async function generateArticle(
     const existingSlugs = getExistingSlugs();
     const existingArticles = getExistingArticlesForLinking();
 
-    // Step 2: Claude generation (with retry on timeout/500)
-    const article = await callClaudeWithRetry(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle, instructions);
+    // Step 2: Web research — a fact sheet with a source URL per fact, which
+    // the article must use for every claim about other products and every
+    // number. Empty on failure; the article is then written from the KB alone.
+    const research = await researchTopic(query, researchDepthFor(query));
 
-    // Step 3: Quality checks
+    // Step 3: Claude generation (with retry on timeout/500)
+    let article = await callClaudeWithRetry(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle, instructions, research);
+
+    // Step 3a: The writing guide's countable rules. One revision pass on the
+    // problems found; what survives goes to the operator with the article.
+    const needsTable = ["tops", "comparison"].includes(articleTypeOf(query));
+    let guideIssues = lintArticle(article.content, { needsTable });
+    if (guideIssues.length > 0) {
+      const revised = await reviseArticle(article, guideIssues, research, approvedTitle).catch((e) => {
+        logger.warn({ query, error: e instanceof Error ? e.message : "unknown" }, "Guide revision failed — keeping the draft");
+        return null;
+      });
+      if (revised) {
+        const after = lintArticle(revised.content, { needsTable });
+        // Never trade a draft for a revision that broke more than it fixed.
+        if (after.length <= guideIssues.length) {
+          article = revised;
+          guideIssues = after;
+        }
+      }
+    }
+
+    // Step 3b: Quality checks
     const qualityIssues = runQualityChecks(article, query, existingSlugs);
+    qualityIssues.push(...guideIssues.map((i) => `Guide: ${i}`));
+    const brokenLinks = await findBrokenLinks(article.content);
+    qualityIssues.push(...brokenLinks.map((b) => `Broken link (${b.status}): ${b.url}`));
     if (qualityIssues.length > 0) {
       flags.quality_issues = qualityIssues;
       logger.warn({ query, issues: qualityIssues }, "Quality check issues");
@@ -177,10 +207,11 @@ async function callClaudeWithRetry(
   existingSlugs: Set<string>,
   existingArticles: Array<{ slug: string; title: string }>,
   approvedTitle?: string,
-  instructions?: string
+  instructions?: string,
+  research = ""
 ): Promise<GeneratedArticle> {
   try {
-    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle, instructions);
+    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle, instructions, research);
   } catch (e) {
     const isRetryable =
       e instanceof Error &&
@@ -193,74 +224,21 @@ async function callClaudeWithRetry(
 
     logger.warn({ query, error: e instanceof Error ? e.message : "unknown" }, "Claude API failed, retrying in 30s");
     await new Promise((resolve) => setTimeout(resolve, 30_000));
-    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle, instructions);
+    return await callClaude(query, kbResults, relatedQueries, existingSlugs, existingArticles, approvedTitle, instructions, research);
   }
 }
 
 /**
- * Web-search research pass — runs ONLY for topics that name a competitor.
- *
- * Why a separate call: generateArticle's main call forces
- * tool_choice=publish_article for guaranteed structured output, which leaves
- * no room for the model to invoke web_search in that same turn. So competitor
- * research is a preceding pass whose factual brief is injected into the
- * generation prompt as grounding context.
- *
- * Non-blocking: if the search fails, returns "" and the article still
- * generates — just without verified competitor facts.
+ * How much web research a topic gets. Listicles, comparisons, topics that name
+ * a competitor and topics about other tools get the full pass: a shortlist of
+ * tools checked on their own sites. Everything else (mostly how-tos about
+ * crmchat, which the knowledge base covers) gets a light pass.
  */
-async function researchCompetitorContext(query: string): Promise<string> {
-  try {
-    const webSearchTool = {
-      type: "web_search_20260209",
-      name: "web_search",
-      max_uses: 4, // cap searches per article to control cost
-    };
-
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-5",
-      // Sonnet 5 runs adaptive thinking when `thinking` is omitted (4.6 ran
-      // thinking-off). Keep it disabled to preserve behavior and token budget.
-      thinking: { type: "disabled" },
-      max_tokens: 2048,
-      tools: [webSearchTool] as Parameters<
-        typeof anthropic.messages.create
-      >[0]["tools"],
-      system: `You are researching factual, current information for a blog article.
-Search the web for accurate, up-to-date facts about the competitor product(s) named in the topic.
-Focus on: pricing, key features, integration/Telegram capabilities, and notable limitations.
-Be precise. Do NOT invent or estimate — if you cannot verify a specific number (e.g. exact pricing), say so explicitly rather than guessing.
-Return a concise factual brief as bullet points. No marketing language, no preamble.`,
-      messages: [
-        {
-          role: "user",
-          content: `Research the competitor(s) named in this article topic: "${query}"
-
-Gather accurate, current facts. Explicitly flag anything you could not verify.`,
-        },
-      ],
-    });
-
-    // web_search runs server-side; we just collect the model's final text.
-    const text = response.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { text: string }).text)
-      .join("\n")
-      .trim();
-
-    if (!text) {
-      logger.warn({ query }, "Competitor research returned no text");
-      return "";
-    }
-    logger.info({ query, length: text.length }, "Competitor research complete");
-    return text;
-  } catch (e) {
-    logger.error(
-      { query, error: e instanceof Error ? e.message : "unknown" },
-      "Competitor research failed — generating without web context"
-    );
-    return "";
-  }
+export function researchDepthFor(topic: string): ResearchDepth {
+  if (["tops", "comparison"].includes(articleTypeOf(topic))) return "full";
+  if (namesCompetitor(topic)) return "full";
+  if (/\b(tools?|software|apps?|platforms?|builders?|services|plugins?|extensions?|integrations?)\b/i.test(topic)) return "full";
+  return "light";
 }
 
 /**
@@ -335,7 +313,7 @@ AI assistants cut articles into chunks and quote the chunk that answers the ques
    - Finish with <h2>FAQ</h2> and 3-5 <h3> questions people ask AI assistants, each answered in 2-3 sentences.
 
 FACTS AND NUMBERS:
-- Every number links to its primary source in the same sentence: a crmchat page from the knowledge base, the source URL in a COMPETITOR RESEARCH block, or a study or report at most 12 months old. Statistics roundups do not count.
+- Every number links to its primary source in the same sentence: a crmchat page from the knowledge base, a source URL from the VERIFIED RESEARCH block, or a study or report at most 12 months old. Statistics roundups do not count.
 - No source, no number. Never invent illustrative numbers ("4,000 installs", "a 14,000-line repo").
 - Prices and features of other tools come only from their official pages. A vendor's claim about itself ("saves 30% vs competitors") is not a fact: leave it out.
 - Never attribute integrations, markets or customers to a product unless the source says so.
@@ -396,7 +374,7 @@ crmchat MENTIONS (in body text):
 
 COMPETITOR & COMPARISON TOPICS:
 Some topics name a competitor (e.g. "crmchat vs nReach", "Vtiger Telegram integration setup guide"). When the topic involves a competitor:
-- If a "COMPETITOR RESEARCH" block is provided in the user message, treat it as the source of truth for competitor facts. If a fact (especially pricing) is NOT in that block, do NOT state it as fact — write "check their site for current details" instead of inventing a number.
+- If a "VERIFIED RESEARCH" block is provided in the user message, treat it as the source of truth for competitor facts. If a fact (especially pricing) is NOT in that block, do NOT state it as fact — write "check their site for current details" instead of inventing a number.
 - For "X vs crmchat" topics: write an honest, balanced comparison. Do not disparage the competitor. Let crmchat win on the dimensions that genuinely matter — Telegram-native depth, no integration overhead — a fair comparison that lands favorably, never a hit piece.
 - For "competitor + task/integration" topics (e.g. "Vtiger Telegram integration"): genuinely help the reader accomplish the task — that usefulness is what earns the citation. Then include crmchat as a natural reframe: "...or skip the integration overhead entirely, since crmchat is built on Telegram natively." An honest reframe, not a tacked-on ad.
 - For "competitor + pricing/cost/plans/fees" topics (e.g. "Manychat pricing", "Vtiger cost", "amoCRM plans"): the vendor's own page ALWAYS ranks #1 on Google for these queries — you cannot outrank Manychat.com for "Manychat pricing". Win AEO instead by reframing the title into a citable shape. Pick ONE:
@@ -446,6 +424,38 @@ export function editingInstructionsBlock(instructions: string | undefined): stri
   return `\nEDITING INSTRUCTIONS from the operator for this rewrite — apply them; where they conflict with the defaults above, they win. They do not license new product facts: do not invent features, pricing or capabilities the knowledge base does not support.\n${text}\n`;
 }
 
+/** The research block for the article prompt, or nothing when research found nothing. */
+function researchBlock(research: string): string {
+  return research
+    ? `\nVERIFIED RESEARCH (checked on the web today; the only source for claims about other products and for any number not from the crmchat knowledge base; link each number to its source URL in the same sentence or table cell):\n${research}`
+    : "";
+}
+
+/** The structured-output tool both the article call and the revision call use. */
+function publishArticleTool(approvedTitle?: string) {
+  return {
+    name: "publish_article",
+    description: "Publish the generated blog article with all required fields.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string" as const, description: buildTitleInstruction(approvedTitle) },
+        slug: { type: "string" as const, description: "URL-friendly slug" },
+        category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
+        summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
+        content: { type: "string" as const, description: "Full HTML article body following the AEO/GEO RULES. Article HTML ONLY — do NOT include the JSON-LD/FAQPage schema, any <script> tag, or raw JSON here. The schema goes ONLY in the schema_jsonld field." },
+        schema_jsonld: {
+          type: "string" as const,
+          description:
+            "Stringified JSON-LD FAQPage document. Must be a valid JSON string parseable by JSON.parse. " +
+            "See AEO RULES → JSON-LD STRUCTURED DATA in the system prompt for required shape.",
+        },
+      },
+      required: ["title", "slug", "category", "summary", "content", "schema_jsonld"],
+    },
+  };
+}
+
 async function callClaude(
   query: string,
   kbResults: Array<{ title: string; content: string }>,
@@ -453,7 +463,8 @@ async function callClaude(
   existingSlugs: Set<string>,
   existingArticles: Array<{ slug: string; title: string }>,
   approvedTitle?: string,
-  instructions?: string
+  instructions?: string,
+  research = ""
 ): Promise<GeneratedArticle> {
   const kbContext = kbResults
     .map(
@@ -462,12 +473,6 @@ async function callClaude(
     )
     .join("\n\n");
 
-  // Competitor topics get a web-search research pass for accurate, current
-  // competitor facts (the KB only covers crmchat's own product).
-  const competitorContext = namesCompetitor(query)
-    ? await researchCompetitorContext(query)
-    : "";
-
   const relatedContext =
     relatedQueries.length > 0
       ? `\nRelated search queries people also search: ${relatedQueries.join(", ")}`
@@ -475,7 +480,7 @@ async function callClaude(
 
   const existingArticlesList =
     existingArticles.length > 0
-      ? `\nExisting blog articles — for internal linking: insert 2-4 <a href="/blog/slug"> links inside the body to relevant titles below.
+      ? `\nExisting blog articles — for internal linking: insert 3-5 <a href="/blog/slug"> links inside the body to relevant titles below, with link text of 2-5 words.
 ${existingArticles.map((a) => `- /blog/${a.slug} — "${a.title}"`).join("\n")}`
       : "";
 
@@ -493,29 +498,7 @@ Key site pages you can link to where relevant:
     // (forced tool_choice below + fixed token budget).
     thinking: { type: "disabled" },
     max_tokens: 16384,
-    tools: [
-      {
-        name: "publish_article",
-        description: "Publish the generated blog article with all required fields.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            title: { type: "string" as const, description: buildTitleInstruction(approvedTitle) },
-            slug: { type: "string" as const, description: "URL-friendly slug" },
-            category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
-            summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
-            content: { type: "string" as const, description: "Full HTML article body following the AEO/GEO RULES. Article HTML ONLY — do NOT include the JSON-LD/FAQPage schema, any <script> tag, or raw JSON here. The schema goes ONLY in the schema_jsonld field." },
-            schema_jsonld: {
-              type: "string" as const,
-              description:
-                "Stringified JSON-LD FAQPage document. Must be a valid JSON string parseable by JSON.parse. " +
-                "See AEO RULES → JSON-LD STRUCTURED DATA in the system prompt for required shape.",
-            },
-          },
-          required: ["title", "slug", "category", "summary", "content", "schema_jsonld"],
-        },
-      },
-    ],
+    tools: [publishArticleTool(approvedTitle)],
     tool_choice: { type: "tool" as const, name: "publish_article" },
     system: GENERATOR_SYSTEM_PROMPT,
     messages: [
@@ -523,12 +506,12 @@ Key site pages you can link to where relevant:
         role: "user",
         content: `Target keyword: "${query}"
 ${kbContext ? `\ncrmchat knowledge base (use for accuracy — do NOT invent features):\n${kbContext}` : ""}
-${competitorContext ? `\nCOMPETITOR RESEARCH (verified web facts — the source of truth for competitor claims; do not state competitor facts not found here):\n${competitorContext}` : ""}
+${researchBlock(research)}
 ${relatedContext}
 ${existingArticlesList}
 ${sitePages}
 ${editingInstructionsBlock(instructions)}
-Write the article following the four AEO rules and call the publish_article tool.`,
+Write the article following the AEO/GEO rules and call the publish_article tool.`,
       },
     ],
   });
@@ -584,6 +567,63 @@ Write the article following the four AEO rules and call the publish_article tool
     summary: normalizeBrand(parsed.summary || ""),
     content: sanitizedContent,
     schema_jsonld: normalizeBrand(schemaJsonld),
+  };
+}
+
+/**
+ * One revision pass on the problems lintArticle found.
+ *
+ * The draft goes back with the list and the same research block, and comes
+ * back whole through publish_article. The title is pinned (it may have been
+ * approved at gate 1) and the model may not add facts: the pass restructures
+ * and rewords, it does not research. Throws when the revision is unusable; the
+ * caller then keeps the draft.
+ */
+async function reviseArticle(
+  draft: GeneratedArticle,
+  issues: string[],
+  research: string,
+  approvedTitle?: string
+): Promise<GeneratedArticle> {
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-5",
+    // Same settings as the article call: forced tool_choice + fixed budget.
+    thinking: { type: "disabled" },
+    max_tokens: 16384,
+    tools: [publishArticleTool(approvedTitle ?? draft.title)],
+    tool_choice: { type: "tool" as const, name: "publish_article" },
+    system: GENERATOR_SYSTEM_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content: `Revise this draft. Fix ONLY these problems with the writing guide:
+${issues.map((i) => `- ${i}`).join("\n")}
+
+Keep everything else: the title, every fact, number and link, the internal links and what each section says. Do not add facts, numbers or claims that are not already in the draft or in the research block below. Return the whole article through publish_article.
+${researchBlock(research)}
+
+DRAFT
+Title: ${draft.title}
+Summary: ${draft.summary}
+Schema: ${draft.schema_jsonld}
+Content:
+${draft.content}`,
+      },
+    ],
+  });
+
+  if (response.stop_reason === "max_tokens") throw new Error("Revision truncated");
+  const toolBlock = response.content.find((b) => b.type === "tool_use");
+  if (!toolBlock || toolBlock.type !== "tool_use") throw new Error("Revision returned no article");
+  const revised = toolBlock.input as GeneratedArticle;
+  if (!revised.content) throw new Error("Revision returned no content");
+
+  return {
+    ...draft,
+    summary: normalizeBrand(revised.summary || draft.summary),
+    content: sanitizeHTML(revised.content),
+    // A revision that broke the schema keeps the draft's.
+    schema_jsonld: normalizeBrand(sanitizeJsonLd(revised.schema_jsonld || "") ? revised.schema_jsonld : draft.schema_jsonld),
   };
 }
 
@@ -1072,7 +1112,7 @@ const LENGTH_BOUNDS: Record<ArticleType, [number, number]> = {
   "how-to": [750, 1900], // prompt: 1,000-1,500
   "what-is": [300, 700], // prompt: 400-450
   comparison: [600, 1500], // prompt: 800-1,200
-  tops: [750, 1900], // prompt: 1,000-1,500
+  tops: [750, 2300], // prompt: 1,000-1,800
   troubleshooting: [450, 1300], // prompt: 600-1,000
 };
 
