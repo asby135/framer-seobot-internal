@@ -49,12 +49,19 @@ export interface ResearchBrief {
 }
 
 const LIMITS: Record<ResearchDepth, { searches: number; fetches: number }> = {
-  full: { searches: 8, fetches: 10 },
-  light: { searches: 3, fetches: 3 },
+  full: { searches: 6, fetches: 6 },
+  light: { searches: 2, fetches: 2 },
 };
 
-/** Server-side web tools resume with pause_turn; a few continuations are plenty. */
-const MAX_CONTINUATIONS = 4;
+/** Server-side web tools resume with pause_turn; two continuations are plenty. */
+const MAX_CONTINUATIONS = 2;
+
+/**
+ * Wall-clock cap per request. A working pass takes well under a minute; in the
+ * first trial two passes ran 11 and 15 minutes and still produced nothing, so
+ * a slow pass is cut off and the article is written from the KB instead.
+ */
+const REQUEST_TIMEOUT_MS = 150_000;
 
 export function researchSystemPrompt(depth: ResearchDepth, today: string): string {
   const task =
@@ -151,9 +158,12 @@ export function renderResearchBrief(brief: ResearchBrief): string {
  */
 export async function researchTopic(query: string, depth: ResearchDepth): Promise<string> {
   const { searches, fetches } = LIMITS[depth];
+  // The basic tool versions, not the _20260209 ones with dynamic filtering:
+  // on the same three topics the basic pair answered in 16-47 seconds with a
+  // full fact sheet, while the dynamic pair hit a 5-minute timeout every time.
   const tools = [
-    { type: "web_search_20260209", name: "web_search", max_uses: searches },
-    { type: "web_fetch_20260209", name: "web_fetch", max_uses: fetches, max_content_tokens: 20000 },
+    { type: "web_search_20250305", name: "web_search", max_uses: searches },
+    { type: "web_fetch_20250910", name: "web_fetch", max_uses: fetches, max_content_tokens: 20000 },
   ] as unknown as Anthropic.Messages.ToolUnion[];
 
   const messages: Anthropic.MessageParam[] = [
@@ -162,6 +172,9 @@ export async function researchTopic(query: string, depth: ResearchDepth): Promis
 
   try {
     let response: Anthropic.Message | undefined;
+    // The fact sheet can arrive in any turn of a paused-and-resumed exchange,
+    // so collect the text of every turn, not only the last.
+    const texts: string[] = [];
     for (let turn = 0; turn <= MAX_CONTINUATIONS; turn++) {
       response = await anthropic.messages.create({
         model: "claude-sonnet-5",
@@ -172,18 +185,15 @@ export async function researchTopic(query: string, depth: ResearchDepth): Promis
         tools,
         system: researchSystemPrompt(depth, new Date().toISOString().slice(0, 10)),
         messages,
-      });
+      }, { timeout: REQUEST_TIMEOUT_MS, maxRetries: 0 });
+      for (const b of response.content) if (b.type === "text") texts.push(b.text);
       // The server-side tool loop hit its iteration cap: send the paused turn
       // back as is and the server resumes it. No extra "continue" message.
       if (response.stop_reason !== "pause_turn") break;
       messages.push({ role: "assistant", content: response.content });
     }
 
-    const text = (response?.content ?? [])
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    const brief = parseResearchBrief(text);
+    const brief = parseResearchBrief(texts.join("\n"));
     if (!brief) {
       logger.warn({ query, depth, stop: response?.stop_reason }, "Research returned no usable fact sheet");
       return "";

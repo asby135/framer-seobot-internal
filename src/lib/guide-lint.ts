@@ -9,7 +9,7 @@
  */
 
 const BANNED = [
-  "leverage", "seamless", "unlock", "empower", "elevate", "revolutioniz", "game-changer", "game changer",
+  "seamless", "unlock", "empower", "elevate", "revolutioniz", "game-changer", "game changer",
   "robust", "streamline", "cutting-edge", "best-in-class", "world-class", "ultimate", "synergy",
   "delve", "tapestry", "testament to", "realm", "myriad", "plethora", "embark", "paramount",
   "harness the power", "in today's", "ever-evolving", "now more than ever", "in conclusion", "to sum up",
@@ -71,6 +71,9 @@ export function lintArticle(html: string, opts: GuideLintOptions): string[] {
   if (/—/.test(plain)) issues.push("Replace every em dash (—) with a full stop, comma, colon or brackets.");
   if (/\s--\s|\w--\w/.test(plain)) issues.push("Remove double hyphens (--).");
   const banned = BANNED.filter((b) => lower.includes(b));
+  // "Leverage" is banned as filler verb only; in trading it is the borrowing
+  // ratio ("50:1 leverage") and must stay.
+  if (/\bleverag(?:e|es|ing)\s+(?:your|our|the|this|these|their|its|it|ai|data|existing)\b/.test(lower)) banned.unshift("leverage");
   if (banned.length) issues.push(`Remove banned phrasing: ${banned.join(", ")}.`);
   if ((plain.match(/!/g) ?? []).length > 1) issues.push("Use at most one exclamation mark.");
 

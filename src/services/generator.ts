@@ -91,8 +91,11 @@ export async function generateArticle(
     // problems found; what survives goes to the operator with the article.
     const needsTable = ["tops", "comparison"].includes(articleTypeOf(query));
     let guideIssues = lintArticle(article.content, { needsTable });
-    if (guideIssues.length > 0) {
-      const revised = await reviseArticle(article, guideIssues, research, approvedTitle).catch((e) => {
+    // Broken internal links and a wrong length are fixable in the same pass.
+    const fixable = runQualityChecks(article, query, existingSlugs).filter((i) => /^(Broken internal link|Article too (long|short))/.test(i));
+    if (guideIssues.length > 0 || fixable.length > 0) {
+      logger.info({ query, guideIssues, fixable }, "Revising draft against the writing guide");
+      const revised = await reviseArticle(article, [...guideIssues, ...fixable], research, approvedTitle, existingArticles).catch((e) => {
         logger.warn({ query, error: e instanceof Error ? e.message : "unknown" }, "Guide revision failed — keeping the draft");
         return null;
       });
@@ -103,6 +106,7 @@ export async function generateArticle(
           article = revised;
           guideIssues = after;
         }
+        logger.info({ query, remaining: guideIssues }, "Guide revision done");
       }
     }
 
@@ -340,7 +344,7 @@ The target keyword is the basis. Don't change the topic — but FIRST classify t
    - This is the format that earns the most traffic — treat it as the priority type.
 
 2. WHAT-IS — looks like "what is X", "X meaning", "X explained", "X definition".
-   - SHORT: 400-450 words. 2-3 <h2> sections. Do NOT pad to 1,500 — brevity IS the format.
+   - SHORT: 400-600 words of body, plus the takeaways and a short FAQ. 2-3 <h2> sections. Do NOT pad to 1,500 — brevity IS the format.
    - Define the thing clearly in the first paragraph, then why it matters and how it works.
 
 3. COMPARISON / ALTERNATIVE — looks like "X vs Y", "X alternatives", "best X alternative".
@@ -583,7 +587,8 @@ async function reviseArticle(
   draft: GeneratedArticle,
   issues: string[],
   research: string,
-  approvedTitle?: string
+  approvedTitle?: string,
+  linkTargets: Array<{ slug: string; title: string }> = []
 ): Promise<GeneratedArticle> {
   const response = await anthropic.messages.create({
     model: "claude-sonnet-5",
@@ -599,8 +604,9 @@ async function reviseArticle(
         content: `Revise this draft. Fix ONLY these problems with the writing guide:
 ${issues.map((i) => `- ${i}`).join("\n")}
 
-Keep everything else: the title, every fact, number and link, the internal links and what each section says. Do not add facts, numbers or claims that are not already in the draft or in the research block below. Return the whole article through publish_article.
+Keep everything else: the title, every sourced fact, number and link, and what each section says. Do not add facts, numbers or claims that are not already in the draft or in the research block below. A number with no source link and no source in the research block is removed or rewritten without the number, never kept unsourced. Replace a broken internal link with one from the list below or drop the link. Return the whole article through publish_article.
 ${researchBlock(research)}
+${linkTargets.length ? `\nArticles you may link to:\n${linkTargets.map((a) => `- /blog/${a.slug} — "${a.title}"`).join("\n")}` : ""}
 
 DRAFT
 Title: ${draft.title}
@@ -1110,7 +1116,7 @@ export type ArticleType = "how-to" | "what-is" | "comparison" | "tops" | "troubl
  */
 const LENGTH_BOUNDS: Record<ArticleType, [number, number]> = {
   "how-to": [750, 1900], // prompt: 1,000-1,500
-  "what-is": [300, 700], // prompt: 400-450
+  "what-is": [350, 950], // prompt: 400-600 plus takeaways and FAQ
   comparison: [600, 1500], // prompt: 800-1,200
   tops: [750, 2300], // prompt: 1,000-1,800
   troubleshooting: [450, 1300], // prompt: 600-1,000
@@ -1149,7 +1155,9 @@ export function runQualityChecks(
   if (topicCoverage(query, article.title) < 0.6) {
     issues.push("Title drifts from the topic");
   }
-  const firstPara = article.content.match(/<p>(.*?)<\/p>/s);
+  // The intro is the first paragraph after the Key takeaways block, if any.
+  const afterTakeaways = article.content.replace(/^\s*<(?:p|h2|h3)>\s*(?:<strong>)?\s*Key takeaways[\s\S]*?<\/ul>/i, "");
+  const firstPara = afterTakeaways.match(/<p>(.*?)<\/p>/s);
   if (firstPara && topicCoverage(query, firstPara[1].replace(/<[^>]+>/g, " ")) < 0.5) {
     issues.push("Topic not introduced in the first paragraph");
   }

@@ -50,6 +50,11 @@ describe("lintArticle", () => {
     expect(issues).toMatch(/seamless/);
   });
 
+  it("bans 'leverage' as filler, not as the trading term", () => {
+    expect(lintArticle(goodArticle("<p>Leverage your data today.</p>"), { needsTable: true }).join(" ")).toMatch(/leverage/);
+    expect(lintArticle(goodArticle("<p>Brokers cap leverage for retail traders.</p>"), { needsTable: true })).toEqual([]);
+  });
+
   it("flags sentences over 35 words, judged per block", () => {
     const issues = lintArticle(goodArticle(`<p>${words(40)}.</p>`), { needsTable: true }).join(" ");
     expect(issues).toMatch(/over 35 words/);
