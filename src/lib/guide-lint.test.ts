@@ -55,6 +55,12 @@ describe("lintArticle", () => {
     expect(lintArticle(goodArticle("<p>Brokers cap leverage for retail traders.</p>"), { needsTable: true })).toEqual([]);
   });
 
+  it("counts exclamation marks in our text, not inside quotes", () => {
+    expect(lintArticle(goodArticle("<p>Wow! Great!</p>"), { needsTable: true }).join(" ")).toMatch(/exclamation/);
+    const quoted = '<p>The bot says "Hello! Great! Thank you!" and stops.</p>';
+    expect(lintArticle(goodArticle(quoted), { needsTable: true })).toEqual([]);
+  });
+
   it("flags sentences over 35 words, judged per block", () => {
     const issues = lintArticle(goodArticle(`<p>${words(40)}.</p>`), { needsTable: true }).join(" ");
     expect(issues).toMatch(/over 35 words/);

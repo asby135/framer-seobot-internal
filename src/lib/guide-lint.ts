@@ -75,7 +75,9 @@ export function lintArticle(html: string, opts: GuideLintOptions): string[] {
   // ratio ("50:1 leverage") and must stay.
   if (/\bleverag(?:e|es|ing)\s+(?:your|our|the|this|these|their|its|it|ai|data|existing)\b/.test(lower)) banned.unshift("leverage");
   if (banned.length) issues.push(`Remove banned phrasing: ${banned.join(", ")}.`);
-  if ((plain.match(/!/g) ?? []).length > 1) issues.push("Use at most one exclamation mark.");
+  // Quoted text (a bot reply, an error message) keeps its own punctuation.
+  const unquoted = plain.replace(/"[^"]*"|«[^»]*»/g, "");
+  if ((unquoted.match(/!/g) ?? []).length > 1) issues.push("Use at most one exclamation mark.");
 
   // 5. Sentences over 35 words, per block so list items and cells are not merged.
   const blocks = [...body.matchAll(/<(p|li|td|th)>([\s\S]*?)<\/\1>/g)].map((m) => text(m[2]));
