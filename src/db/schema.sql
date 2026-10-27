@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS article_translations (
   summary TEXT,
   content TEXT,
   schema_jsonld TEXT, -- JSON-LD per locale (translated headline/description/FAQ)
+  manual INTEGER NOT NULL DEFAULT 0, -- 1: written by hand; the translator leaves it alone
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(article_id, locale)
 );

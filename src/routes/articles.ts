@@ -10,7 +10,7 @@ import {
   getQueueStatus,
   getTranslationQueueStatus,
 } from "../services/queue.js";
-import { translateArticle } from "../services/translator.js";
+import { LOCALES, translateArticle } from "../services/translator.js";
 import { logger } from "../lib/logger.js";
 
 const articles = new Hono();
@@ -456,6 +456,64 @@ articles.post("/:id/translate", async (c) => {
     },
     202
   );
+});
+
+// Store a hand-written translation. The translator leaves it alone from then
+// on, even when an edit to the English text forces a re-translation, so a
+// locale can carry text a translation would not produce (the exact wording of
+// a Russian UI, say). `{ auto: true }` hands the locale back to the translator.
+articles.post("/:id/translations/:locale", async (c) => {
+  const db = getDb();
+  const { id, locale } = c.req.param();
+  type Body = { title?: string; slug?: string; summary?: string; content?: string; auto?: boolean };
+  const body = await c.req.json<Body>().catch(() => ({} as Body));
+
+  if (!(LOCALES as readonly string[]).includes(locale)) {
+    return c.json({ error: `Unknown locale; use one of ${LOCALES.join(", ")}` }, 400);
+  }
+  const article = db.prepare("SELECT id, status FROM articles WHERE id = ?").get(id) as { id: string; status: string } | undefined;
+  if (!article) {
+    return c.json({ error: "Article not found" }, 404);
+  }
+
+  if (body.auto) {
+    db.prepare("UPDATE article_translations SET manual = 0 WHERE article_id = ? AND locale = ?").run(id, locale);
+    enqueueTranslation({ articleId: id, force: true });
+    return c.json({ status: "queued", article_id: id, locale });
+  }
+
+  const existing = db
+    .prepare("SELECT title, slug, summary, content FROM article_translations WHERE article_id = ? AND locale = ?")
+    .get(id, locale) as { title: string; slug: string | null; summary: string | null; content: string | null } | undefined;
+  const title = body.title?.trim() || existing?.title;
+  const content = body.content !== undefined ? sanitizeHTML(body.content) : existing?.content;
+  if (!title || !content) {
+    return c.json({ error: "A new translation needs a title and content" }, 400);
+  }
+
+  db.prepare(
+    `INSERT INTO article_translations (id, article_id, locale, title, slug, summary, content, manual)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+     ON CONFLICT(article_id, locale) DO UPDATE SET
+       title = excluded.title,
+       slug = excluded.slug,
+       summary = excluded.summary,
+       content = excluded.content,
+       manual = 1`
+  ).run(
+    nanoid(),
+    id,
+    locale,
+    title,
+    body.slug?.trim() || existing?.slug || null,
+    body.summary !== undefined ? body.summary.trim() : existing?.summary ?? null,
+    content
+  );
+  logger.info({ articleId: id, locale }, "Hand-written translation stored");
+
+  if (article.status === "published") void resyncPublishedArticle(id);
+
+  return c.json({ article_id: id, locale, title, content_length: content.length, manual: true });
 });
 
 // Bulk-enqueue multiple article translations. Atomic single-request enqueue.

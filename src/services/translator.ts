@@ -95,19 +95,26 @@ async function doTranslateArticle(
     throw new Error("Article not found");
   }
 
-  const existing = new Set(
-    (
-      db
-        .prepare("SELECT locale FROM article_translations WHERE article_id = ?")
-        .all(articleId) as { locale: string }[]
-    ).map((r) => r.locale)
-  );
+  const rows = db
+    .prepare("SELECT locale, manual FROM article_translations WHERE article_id = ?")
+    .all(articleId) as { locale: string; manual: number }[];
+  const existing = new Set(rows.map((r) => r.locale));
+  // A hand-written version (POST /articles/:id/translations/:locale) is never
+  // overwritten, not even by a forced re-translation after an edit: it holds
+  // text a translation would not produce, such as the exact wording of a
+  // Russian UI.
+  const manual = new Set(rows.filter((r) => r.manual).map((r) => r.locale));
 
   const translated: string[] = [];
   const skipped: string[] = [];
   const failed: string[] = [];
 
   for (const locale of LOCALES) {
+    if (manual.has(locale)) {
+      if (force) logger.warn({ articleId, locale }, "Hand-written translation kept; update it by hand");
+      skipped.push(locale);
+      continue;
+    }
     if (!force && existing.has(locale)) {
       skipped.push(locale);
       continue;
