@@ -6,6 +6,7 @@ import { logger } from "../lib/logger.js";
 import { sanitizeJsonLd } from "../lib/jsonld.js";
 import { normalizeBrand } from "../lib/brand.js";
 import { callJson, MODELS } from "../lib/claude.js";
+import { unwrapDisallowedLinks } from "../lib/outbound-links.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -137,6 +138,8 @@ async function doTranslateArticle(
 
     try {
       const result = await callTranslation(article, locale);
+      // The English body is already clean; this catches a link the model added.
+      result.content = unwrapDisallowedLinks(result.content);
 
       // Validate translated schema_jsonld; drop if invalid (Framer renders no <script>)
       // sanitizeJsonLd returns an HTML-<script>-safe serialization, or null if

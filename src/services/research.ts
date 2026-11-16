@@ -71,7 +71,7 @@ export function researchSystemPrompt(depth: ResearchDepth, today: string): strin
       : `Find 3-6 facts the article needs that the crmchat knowledge base cannot supply: Telegram limits or features, or facts about tools the topic names. Leave "tools" empty.`;
   return `You research facts for an article on the crmchat blog. crmchat is a Telegram CRM; do not research crmchat itself, its knowledge base covers it. Today is ${today}.
 
-The writer will use your fact sheet as the ONLY source for claims about other products and for every number, and will link each number to the URL you give. So:
+The writer will use your fact sheet as the ONLY source for claims about other products and for every number, and will name the source of each number in the text (it links only to Telegram's own docs and public bodies, never to other companies' sites). The URLs you give are how each fact gets checked. So:
 - Verify on the primary source: the product's own pricing, feature or docs page (fetch it), an official policy page, or a study or report published in the last 12 months.
 - Never use statistics roundups, listicles or other vendors' reviews as a source.
 - Leave out vendor self-claims: customer counts, "saves 30%", case-study uplifts.
@@ -135,7 +135,7 @@ export function renderResearchBrief(brief: ResearchBrief): string {
         `${t.name} (${t.url})`,
         t.job && `job: ${t.job}`,
         t.difference && `main difference: ${t.difference}`,
-        t.pricing ? `starting price: ${t.pricing} [source: ${t.pricing_url}]` : "price: not published, link the site",
+        t.pricing ? `starting price: ${t.pricing} [source: ${t.pricing_url}]` : "price: not published, say so and point readers to the vendor by name",
         t.limitation && `limitation: ${t.limitation}`,
         t.telegram && `Telegram: ${t.telegram}`,
       ].filter(Boolean);

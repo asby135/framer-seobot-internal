@@ -13,6 +13,7 @@ import { callJson, MODELS } from "../lib/claude.js";
 import { lintArticle } from "../lib/guide-lint.js";
 import { researchTopic, type ResearchDepth } from "./research.js";
 import { findBrokenLinks } from "./link-check.js";
+import { unwrapDisallowedLinks } from "../lib/outbound-links.js";
 import { TITLE_RULES } from "./title-rules.js";
 import { titleTokens, TROUBLESHOOTING_SHAPE } from "./similarity.js";
 
@@ -318,7 +319,8 @@ AI assistants cut articles into chunks and quote the chunk that answers the ques
    - Finish with <h2>FAQ</h2> and 3-5 <h3> questions people ask AI assistants, each answered in 2-3 sentences.
 
 FACTS AND NUMBERS:
-- Every number links to its primary source in the same sentence: a crmchat page from the knowledge base, a source URL from the VERIFIED RESEARCH block, or a study or report at most 12 months old. Statistics roundups do not count.
+- Every number names its primary source in the same sentence: a crmchat page from the knowledge base, a source from the VERIFIED RESEARCH block, or a study or report at most 12 months old. Statistics roundups do not count.
+- Links: link only to crmchat pages and to neutral primary sources (Telegram's own documentation, government and regulator pages, academic studies). Never hyperlink another company's site, pricing page, blog, docs or help center, competitor or not, because every such link is a backlink for them. Name the source in plain text instead: "per Infloww's pricing page", "according to OnlyMonster's FAQ".
 - No source, no number. Never invent illustrative numbers ("4,000 installs", "a 14,000-line repo").
 - Prices and features of other tools come only from their official pages. A vendor's claim about itself ("saves 30% vs competitors") is not a fact: leave it out.
 - Never attribute integrations, markets or customers to a product unless the source says so.
@@ -432,7 +434,7 @@ export function editingInstructionsBlock(instructions: string | undefined): stri
 /** The research block for the article prompt, or nothing when research found nothing. */
 function researchBlock(research: string): string {
   return research
-    ? `\nVERIFIED RESEARCH (checked on the web today; the only source for claims about other products and for any number not from the crmchat knowledge base; link each number to its source URL in the same sentence or table cell):\n${research}`
+    ? `\nVERIFIED RESEARCH (checked on the web today; the only source for claims about other products and for any number not from the crmchat knowledge base; name each number's source in the same sentence or table cell, and link it only if it is Telegram's own documentation or a public body, never another company's site):\n${research}`
     : "";
 }
 
@@ -958,7 +960,7 @@ export function sanitizeHTML(html: string): string {
   // comments through was an XSS hole: browsers end a comment at "<!-->",
   // "<!--->" or "--!>", earlier than the pattern thinks, so markup "inside"
   // one reached the page.
-  return clean.replace(TOKEN, (match, tag: string | undefined, attrs: string | undefined, text: string | undefined) => {
+  const sanitized = clean.replace(TOKEN, (match, tag: string | undefined, attrs: string | undefined, text: string | undefined) => {
     if (text !== undefined) return text.replace(/</g, "&lt;");
     if (tag === undefined) return SCREENSHOT_PLACEHOLDER.test(match) ? match : ""; // a comment
     const lowerTag = tag.toLowerCase();
@@ -966,6 +968,10 @@ export function sanitizeHTML(html: string): string {
     if (match.startsWith("</")) return `</${lowerTag}>`;
     return `<${lowerTag}${filterAttributes(attrs ?? "")}>`;
   });
+
+  // No backlinks for other companies: their names stay, their links go. Last,
+  // so it sees the attributes filterAttributes kept.
+  return unwrapDisallowedLinks(sanitized);
 }
 
 /**

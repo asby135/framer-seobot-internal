@@ -88,8 +88,13 @@ describe("sanitizeHTML — prose is never eaten", () => {
 
 describe("sanitizeHTML — still strips what it must", () => {
   it("drops event-handler attributes, quoted or not", () => {
-    expect(sanitizeHTML('<a href="https://x.com" onclick="evil()">x</a>')).toBe('<a href="https://x.com">x</a>');
+    // An allowed host: links to other companies' sites are unwrapped entirely.
+    expect(sanitizeHTML('<a href="https://crmchat.ai" onclick="evil()">x</a>')).toBe('<a href="https://crmchat.ai">x</a>');
     expect(sanitizeHTML('<img src="https://x.com/y.png" onerror=alert(1)>')).toBe('<img src="https://x.com/y.png">');
+  });
+
+  it("unwraps links to other companies' sites, keeping the text", () => {
+    expect(sanitizeHTML('<p>Per <a href="https://onlymonster.ai/faq">its FAQ</a>.</p>')).toBe("<p>Per its FAQ.</p>");
   });
 
   it("drops script and style blocks with their content", () => {

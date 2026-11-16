@@ -138,12 +138,18 @@ export function lintArticle(html: string, opts: GuideLintOptions): string[] {
     t
       .replace(/\b(?:Form|Schedule|Section|guideline|ISO)\s+[\w.()-]+/gi, "")
       .replace(/\b\d+\b/g, (n) => (nameNumbers.has(n) ? "" : n));
+  // A source counts when it is linked OR named: other companies' sites are
+  // never linked (no backlinks for them), so "per Infloww's pricing page" is
+  // how their numbers are sourced. Demanding a link here made the revision
+  // pass put competitor links back.
+  const NAMED_SOURCE = /\b(?:per|according to|as listed on|as stated on|as shown on)\b|['’]s\s+(?:pricing|official|help|docs|documentation|FAQ|site|website|page|homepage|terms|changelog)\b/i;
   const unsourced = [...body.matchAll(/<(p|li|td)>([\s\S]*?)<\/\1>/g)]
     .filter((m) => !/<a\s/i.test(m[2]))
     .map((m) => text(m[2]))
+    .filter((t) => !NAMED_SOURCE.test(t))
     .filter((t) => CLAIM.test(withoutNames(t)));
   if (unsourced.length) {
-    issues.push(`Link the source of every number; ${unsourced.length} block(s) have none, e.g. "${clip(unsourced[0])}".`);
+    issues.push(`Name or link the source of every number; ${unsourced.length} block(s) have none, e.g. "${clip(unsourced[0])}".`);
   }
 
   return issues;

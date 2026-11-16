@@ -12,6 +12,7 @@ import {
 } from "../services/queue.js";
 import { LOCALES, translateArticle } from "../services/translator.js";
 import { logger } from "../lib/logger.js";
+import { unwrapDisallowedLinks, disallowedLinkHosts } from "../lib/outbound-links.js";
 
 const articles = new Hono();
 
@@ -376,6 +377,61 @@ articles.post("/:id/regenerate", async (c) => {
 });
 
 // Bulk import articles (for migrating from external CMS)
+// Remove links to other companies' sites from every stored article, English and
+// translations, keeping the anchor text. A one-off clean-up for articles written
+// before the link rule; new text is cleaned on every write by sanitizeHTML and
+// the translator. Deterministic, so no re-translation is spent. ?dry_run=1
+// reports without writing. Does not sync: run /api/sync/framer and
+// /api/sync/publish-site afterwards so the live site follows.
+articles.post("/strip-external-links", (c) => {
+  const db = getDb();
+  const dryRun = c.req.query("dry_run") === "1";
+  const hosts: Record<string, number> = {};
+  const count = (html: string) => {
+    for (const h of disallowedLinkHosts(html)) hosts[h] = (hosts[h] ?? 0) + 1;
+  };
+
+  const articlesRows = db
+    .prepare("SELECT id, slug, content FROM articles WHERE content IS NOT NULL AND status != 'generation_failed'")
+    .all() as Array<{ id: string; slug: string; content: string }>;
+  const translationRows = db
+    .prepare("SELECT id, article_id, content FROM article_translations WHERE content IS NOT NULL")
+    .all() as Array<{ id: string; article_id: string; content: string }>;
+
+  const changedArticles: string[] = [];
+  const changedTranslations: string[] = [];
+  const updateArticle = db.prepare("UPDATE articles SET content = ?, updated_at = datetime('now') WHERE id = ?");
+  const updateTranslation = db.prepare("UPDATE article_translations SET content = ? WHERE id = ?");
+
+  db.transaction(() => {
+    for (const a of articlesRows) {
+      const cleaned = unwrapDisallowedLinks(a.content);
+      if (cleaned === a.content) continue;
+      count(a.content);
+      changedArticles.push(a.slug);
+      if (!dryRun) updateArticle.run(cleaned, a.id);
+    }
+    for (const t of translationRows) {
+      const cleaned = unwrapDisallowedLinks(t.content);
+      if (cleaned === t.content) continue;
+      changedTranslations.push(t.article_id);
+      if (!dryRun) updateTranslation.run(cleaned, t.id);
+    }
+  })();
+
+  logger.info(
+    { dryRun, articles: changedArticles.length, translations: changedTranslations.length },
+    "Stripped links to other companies' sites"
+  );
+  return c.json({
+    dry_run: dryRun,
+    articles_changed: changedArticles.length,
+    translations_changed: changedTranslations.length,
+    links_by_host: Object.fromEntries(Object.entries(hosts).sort((x, y) => y[1] - x[1])),
+    articles: changedArticles,
+  });
+});
+
 articles.post("/import", async (c) => {
   const db = getDb();
   const body = await c.req.json<{
