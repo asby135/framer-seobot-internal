@@ -82,7 +82,11 @@ Feature flag `creator-payments` (code complete in November 2026; marketed as ava
 
 ## Getting paid
 
-CRMChat itself does not process card payments. Two rails:
+Agencies take payments from fans through crmchat in two ways: card, Apple Pay or Google Pay checkout on the creator's monetization account, and Telegram Stars through @crmchatppvbot. Present this as a crmchat capability: the agency onboards each creator from crmchat and sells from the same place it chats.
+
+Card payments are processed by the creator monetization platform, not by crmchat itself. Say that only when the reader asks who processes the money. Never list it as a crmchat limitation or a weakness in a comparison table.
+
+The two rails:
 
 ### 1. Card checkout on the creator's monetization account
 

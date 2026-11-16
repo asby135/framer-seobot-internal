@@ -318,11 +318,13 @@ const STOP_WORDS = new Set([
  * How much of one knowledge-base page reaches a prompt.
  *
  * Was 2,000, which cut 49 of 63 pages — pricing.md mid-table, the RU/CIS
- * workflow before its setup steps. 8,000 passes 59 pages whole; the four
- * longer ones (privacy policy, best-practices, two API pages) are rarely the
- * grounding that matters, and a bound keeps four retrieved pages to ~8K tokens.
+ * workflow before its setup steps. Then 8,000, which cut creator-agency-
+ * telegram.md (11K) before its Telegram Stars section and its "Do not claim"
+ * list, so the first creator-agency articles (Nov 2026) said almost nothing
+ * about getting paid. 12,000 passes every page but the privacy policy, and a
+ * bound keeps four retrieved pages to ~12K tokens.
  */
-export const KB_EXCERPT_CHARS = 8000;
+export const KB_EXCERPT_CHARS = 12000;
 
 export function kbExcerpt(content: string): string {
   if (content.length <= KB_EXCERPT_CHARS) return content;
