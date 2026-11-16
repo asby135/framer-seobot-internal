@@ -47,6 +47,21 @@ const GLOSSARY: Array<{ en: string; ru: string }> = [
   { en: "lead generation", ru: "лидогенерация" },
 ];
 
+/**
+ * Rules for one language that a word-for-word glossary cannot express.
+ *
+ * «модель», not «креатор»: the Russian-speaking OnlyFans-management market
+ * calls the talent an agency manages a model (feminine), and the operator asked
+ * for that wording after the first creator-agency articles went out saying
+ * «креатор» a dozen times each. It needs grammatical agreement (модели, она),
+ * which is why it is a rule and not a glossary pair.
+ */
+export const LOCALE_RULES: Record<Locale, string[]> = {
+  ru: [
+    `In articles about creator / OnlyFans agencies, the person an agency manages ("creator", "model", "talent") is «модель», feminine (модели, моделью, она), never «креатор». Agree verbs and adjectives with it. Keep official document names in English (e.g. Telegram's "Content Creator Terms"), and keep role and product names such as Chatter in English where the source uses them.`,
+  ],
+};
+
 interface TranslationResult {
   title: string;
   slug: string;
@@ -203,6 +218,7 @@ Rules:
 - Keep URLs, links, and code blocks unchanged.
 - For technical terms with no common ${langName} equivalent, use the English term.
 - Maintain the same tone: friendly and direct, like explaining to a friend.
+${LOCALE_RULES[locale].map((r) => `- ${r}`).join("\n")}
 
 Glossary — use these exact translations:
 ${glossaryLines}
