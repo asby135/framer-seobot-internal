@@ -5,6 +5,7 @@ describe("isAllowedOutboundUrl", () => {
   it("allows crmchat, Telegram's docs, public bodies and research", () => {
     for (const u of [
       "https://crmchat.ai/content-creators",
+      "https://crmchat.fan/",
       "https://core.telegram.org/bots/api",
       "https://telegram.org/tos",
       "https://www.irs.gov/forms",

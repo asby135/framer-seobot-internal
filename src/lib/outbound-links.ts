@@ -14,6 +14,8 @@
 /** Hosts (and their subdomains) that may be linked. */
 const ALLOWED_HOSTS = [
   "crmchat.ai",
+  // Our creator landing, being folded into crmchat.ai/content-creators.
+  "crmchat.fan",
   // Telegram's own documentation and policies: primary sources, not vendors.
   "telegram.org",
   // Regulators and public bodies.
