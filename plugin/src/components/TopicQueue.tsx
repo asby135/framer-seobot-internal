@@ -201,6 +201,11 @@ export function TopicQueue() {
               <div style={styles.meta}>
                 {t.source === "seeded" && <span style={styles.seedBadge}>SEEDED</span>}
                 {t.source === "custom" && <span style={styles.customBadge}>CUSTOM</span>}
+                {t.source === "serpstat" && (
+                  <span style={styles.serpstatBadge} title="Adapted from a competitor post found via Serpstat">
+                    SERPSTAT
+                  </span>
+                )}
                 {t.source === "era-gap" && (
                   <span
                     style={styles.gapBadge}
@@ -335,6 +340,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   seedBadge: { background: "#3a2a5a", color: "#b9f", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   customBadge: { background: "#3a3a1a", color: "#fa0", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
+  serpstatBadge: { background: "#1a3a3a", color: "#5dd", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   gapBadge: { background: "#5a1a2a", color: "#f9a", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3 },
   actions: { display: "flex", gap: 8, padding: "12px 16px" },
   approveButton: { flex: 1, padding: "8px 0", background: "#2a5a2a", color: "#8f8", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 },

@@ -265,7 +265,7 @@ export function loadTitleCorpus(): string[] {
 export function insertSeededTopics(
   candidates: string[],
   niche?: string,
-  opts: { reviveRejected?: boolean } = {}
+  opts: { reviveRejected?: boolean; source?: string } = {}
 ): {
   seeded: Array<{ query: string }>;
   skipped: number;
@@ -345,9 +345,12 @@ export function insertSeededTopics(
     logger.info({ nearDuplicates }, "Seeder: skipped rewordings of existing topics or articles");
   }
 
+  // 'seeded' unless the caller names where the topics came from (e.g. a
+  // Serpstat import), so the digests can say so.
+  const source = opts.source ?? "seeded";
   const insertStmt = db.prepare(
     `INSERT INTO keywords (id, query, source, opportunity_score, status, niche)
-     VALUES (?, ?, 'seeded', ?, 'pending', ?)`
+     VALUES (?, ?, ?, ?, 'pending', ?)`
   );
   // Only a deliberate import revives (see reviveRejected). It names no niche,
   // so the revive keeps the topic's own via COALESCE — blanking it slipped a
@@ -356,13 +359,13 @@ export function insertSeededTopics(
   // pool and only ever filled a short night.
   const reviveStmt = db.prepare(
     `UPDATE keywords
-        SET status = 'pending', source = 'seeded', opportunity_score = ?,
+        SET status = 'pending', source = ?, opportunity_score = ?,
             niche = COALESCE(?, niche), proposed_title = NULL, updated_at = datetime('now')
       WHERE id = ?`
   );
   const insertMany = db.transaction((items: string[]) => {
-    for (const q of items) insertStmt.run(nanoid(), q, SEEDED_SCORE, niche ?? null);
-    for (const id of toRevive) reviveStmt.run(SEEDED_SCORE, niche ?? null, id);
+    for (const q of items) insertStmt.run(nanoid(), q, source, SEEDED_SCORE, niche ?? null);
+    for (const id of toRevive) reviveStmt.run(source, SEEDED_SCORE, niche ?? null, id);
   });
   if (toInsert.length > 0 || toRevive.length > 0) insertMany(toInsert);
 

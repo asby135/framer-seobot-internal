@@ -35,7 +35,7 @@ function alreadyOffered(t: PendingTopic): boolean {
  * closed — a new source must be added here deliberately before it can consume
  * generation budget.
  */
-const USABLE_SOURCES = new Set(["seeded", "custom"]);
+const USABLE_SOURCES = new Set(["seeded", "custom", "serpstat"]);
 
 /**
  * Topics eligible for automatic selection.

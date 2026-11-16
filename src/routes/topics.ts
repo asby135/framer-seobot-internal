@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
 import { loadTitleCorpus } from "../services/seeder.js";
 import { createTitleIndex } from "../services/similarity.js";
+import { ASSIGNABLE_SOURCES, SERPSTAT_SOURCE } from "../lib/topic-source.js";
 
 const topics = new Hono();
 
@@ -30,10 +31,10 @@ topics.get("/", (c) => {
        ORDER BY
          CASE
            WHEN k.source = 'era-gap' THEN 0
-           WHEN k.source IN ('custom', 'seeded') THEN 1
+           WHEN k.source IN ('custom', 'seeded', 'serpstat') THEN 1
            ELSE 2
          END,
-         CASE WHEN k.source IN ('era-gap', 'custom', 'seeded') THEN k.created_at END DESC,
+         CASE WHEN k.source IN ('era-gap', 'custom', 'seeded', 'serpstat') THEN k.created_at END DESC,
          k.opportunity_score DESC
        LIMIT ? OFFSET ?`
     )
@@ -88,11 +89,16 @@ topics.post("/:id/reject", (c) => {
 // Submit a custom topic
 topics.post("/custom", async (c) => {
   const db = getDb();
-  const body = await c.req.json<{ query: string; force?: boolean }>();
+  const body = await c.req.json<{ query: string; force?: boolean; source?: string }>();
 
   if (!body.query?.trim()) {
     return c.json({ error: "Query is required" }, 400);
   }
+  // A custom topic may say it came from Serpstat research, so gate 2 tags it.
+  if (body.source !== undefined && body.source !== "custom" && body.source !== SERPSTAT_SOURCE) {
+    return c.json({ error: `source must be custom or ${SERPSTAT_SOURCE}` }, 400);
+  }
+  const source = body.source ?? "custom";
 
   // The same checks seeded topics get. Custom topics had none, so a repeat of
   // a published article — or the same topic added twice, since it vanished
@@ -142,10 +148,44 @@ topics.post("/custom", async (c) => {
   const id = nanoid();
   db.prepare(
     `INSERT INTO keywords (id, query, source, status, opportunity_score)
-     VALUES (?, ?, 'custom', 'approved', 0)`
-  ).run(id, body.query.trim());
+     VALUES (?, ?, ?, 'approved', 0)`
+  ).run(id, body.query.trim(), source);
 
   return c.json({ id, status: "approved" }, 201);
+});
+
+// Re-tag the source of topics that are not written yet, matched by exact text.
+// For topics added before their source could be named (the first Serpstat
+// batch went in as plain 'seeded' and 'custom'). Generated and rejected topics
+// are left alone: their articles and history should keep what they were.
+topics.post("/source", async (c) => {
+  const body = await c.req
+    .json<{ source?: string; queries?: string[] }>()
+    .catch(() => ({ source: undefined, queries: undefined }));
+
+  if (!body.source || !ASSIGNABLE_SOURCES.has(body.source)) {
+    return c.json({ error: `source must be one of: ${[...ASSIGNABLE_SOURCES].join(", ")}` }, 400);
+  }
+  if (!Array.isArray(body.queries) || body.queries.length === 0) {
+    return c.json({ error: "queries must be a non-empty array of topic texts" }, 400);
+  }
+
+  const db = getDb();
+  const stmt = db.prepare(
+    `UPDATE keywords SET source = ?, updated_at = datetime('now')
+      WHERE lower(query) = lower(?) AND status IN ('pending', 'approved')`
+  );
+  const unmatched: string[] = [];
+  let updated = 0;
+  db.transaction((queries: string[]) => {
+    for (const q of queries.slice(0, 200)) {
+      const changes = stmt.run(body.source, (q ?? "").trim()).changes;
+      if (changes === 0) unmatched.push(q);
+      updated += changes;
+    }
+  })(body.queries);
+
+  return c.json({ updated, unmatched });
 });
 
 export { topics };

@@ -15,6 +15,7 @@ import { createGateHandlers, type KeywordRow, type ArticleRow } from "./gates.js
 import { runNightly, type TitleProposal } from "./autopilot.js";
 import { poolTarget } from "./selection.js";
 import { buildDigest, buildKeyboard, sendMessage, sendDocument, editMessage, alert, escapeHtml } from "./notify.js";
+import { sourceTag } from "../lib/topic-source.js";
 import { setArticleReadyHandler, setGenerationCrashHandler, setTranslationCompleteHandler, enqueueTranslation } from "./queue.js";
 
 /**
@@ -204,9 +205,10 @@ export function forgetDigest(digestId: string, keywordIds: string[]): void {
  * title twice, in bold and again in italics.
  */
 export function digestItems(proposals: TitleProposal[]): Array<{ label: string; sub?: string }> {
-  return proposals.map((p) =>
-    p.title.trim().toLowerCase() === p.query.trim().toLowerCase() ? { label: p.title } : { label: p.title, sub: p.query }
-  );
+  return proposals.map((p) => {
+    const label = `${p.title}${sourceTag(p.source)}`;
+    return p.title.trim().toLowerCase() === p.query.trim().toLowerCase() ? { label } : { label, sub: p.query };
+  });
 }
 
 /**
@@ -750,7 +752,11 @@ export function describeFlags(flags: Record<string, unknown>): string[] {
 export async function sendArticleReadyDigest(articleId: string): Promise<void> {
   const db = getDb();
   const article = db
-    .prepare("SELECT id, title, slug, summary, content, status, flags FROM articles WHERE id = ?")
+    .prepare(
+      `SELECT a.id, a.title, a.slug, a.summary, a.content, a.status, a.flags, k.source
+         FROM articles a LEFT JOIN keywords k ON k.id = a.keyword_id
+        WHERE a.id = ?`
+    )
     .get(articleId) as
     | {
         id: string;
@@ -760,6 +766,7 @@ export async function sendArticleReadyDigest(articleId: string): Promise<void> {
         content: string | null;
         status: string;
         flags: string | null;
+        source: string | null;
       }
     | undefined;
 
@@ -797,7 +804,7 @@ export async function sendArticleReadyDigest(articleId: string): Promise<void> {
   const text = [
     `<b>Ready for review</b>`,
     "",
-    `<b>${escapeHtml(article.title)}</b>`,
+    `<b>${escapeHtml(article.title)}</b>${escapeHtml(sourceTag(article.source))}`,
     ru ? `🇷🇺 ${escapeHtml(ru.title)}` : "",
     "",
     escapeHtml(article.summary ?? ""),

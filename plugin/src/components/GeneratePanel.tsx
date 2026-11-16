@@ -9,7 +9,7 @@ let activeGeneration: { topicId: string; query: string } | null = null;
 // audience-seeded topics don't get lost among the bulk Era topics.
 function sourceRank(source: string): number {
   if (source === "era-gap") return 0;
-  if (source === "custom") return 1;
+  if (source === "custom" || source === "serpstat") return 1;
   if (source === "seeded") return 2;
   return 3;
 }

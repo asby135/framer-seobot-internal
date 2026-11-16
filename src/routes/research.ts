@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { seedTopics, insertSeededTopics } from "../services/seeder.js";
 import { getDb } from "../db/index.js";
 import { logger } from "../lib/logger.js";
+import { ASSIGNABLE_SOURCES, SERPSTAT_SOURCE } from "../lib/topic-source.js";
 
 const research = new Hono();
 
@@ -16,15 +17,23 @@ const research = new Hono();
 // inserts them as pending with source='seeded' for normal review/generation.
 research.post("/seed", async (c) => {
   const body = await c.req
-    .json<{ audience?: string; count?: number; topics?: string[] }>()
-    .catch(() => ({ audience: undefined, count: undefined, topics: undefined }));
+    .json<{ audience?: string; count?: number; topics?: string[]; source?: string }>()
+    .catch(() => ({ audience: undefined, count: undefined, topics: undefined, source: undefined }));
 
   // Direct-import path: a known list of topic phrases (e.g. externally adapted
   // from another blog). Inserts as-is, skipping Claude generation.
   if (Array.isArray(body.topics) && body.topics.length > 0) {
+    // An import may say where its topics came from (e.g. "serpstat"), so the
+    // digests can tag them. Only sources selection knows how to use.
+    if (body.source !== undefined && (body.source === "custom" || !ASSIGNABLE_SOURCES.has(body.source))) {
+      return c.json({ error: `source must be one of: seeded, ${SERPSTAT_SOURCE}` }, 400);
+    }
     try {
       // A deliberate import: exact matches of rejected topics come back.
-      const result = insertSeededTopics(body.topics.slice(0, 100), undefined, { reviveRejected: true });
+      const result = insertSeededTopics(body.topics.slice(0, 100), undefined, {
+        reviveRejected: true,
+        source: body.source,
+      });
       logger.info(
         { provided: body.topics.length, seeded: result.seeded.length, revived: result.revived, skipped: result.skipped },
         "Direct topic import complete"

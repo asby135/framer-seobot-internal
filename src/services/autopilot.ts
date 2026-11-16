@@ -25,6 +25,8 @@ export interface TitleProposal {
   keywordId: string;
   query: string;
   title: string;
+  /** The topic's source, so the digest can tag e.g. Serpstat topics. */
+  source?: string;
 }
 
 export interface AutopilotDeps {
@@ -243,6 +245,7 @@ export async function runNightly(deps: AutopilotDeps): Promise<TitleProposal[]> 
     keywordId: topic.id,
     query: topic.query,
     title: topic.query,
+    source: topic.source,
   }));
 
   // 4. Notify — unless this is a rehearsal, in which case hand the titles back
