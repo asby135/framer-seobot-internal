@@ -12,6 +12,7 @@ describe("isAllowedOutboundUrl", () => {
       "https://www.gov.uk/guidance",
       "https://www.esma.europa.eu/x",
       "https://en.wikipedia.org/wiki/X",
+      "https://github.com/LonamiWebs/Telethon",
       "https://t.me/crmchatppvbot",
     ]) expect(isAllowedOutboundUrl(u), u).toBe(true);
   });
@@ -22,7 +23,6 @@ describe("isAllowedOutboundUrl", () => {
       "https://www.infloww.com/pricing",
       "https://help.supercreator.app/en/articles/1",
       "https://www.hubspot.com/",
-      "https://github.com/x/y",
       "https://t.me/someoneelsesbot",
       "https://notgov.com/",
     ]) expect(isAllowedOutboundUrl(u), u).toBe(false);

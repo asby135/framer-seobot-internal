@@ -20,7 +20,9 @@ const ALLOWED_HOSTS = [
   "telegram.org",
   // Regulators and public bodies.
   "europa.eu",
-  // Reference and research.
+  // Reference and research. GitHub: open-source code and docs readers need
+  // for how-to articles; the operator chose to keep these links.
+  "github.com",
   "wikipedia.org",
   "arxiv.org",
   "doi.org",
