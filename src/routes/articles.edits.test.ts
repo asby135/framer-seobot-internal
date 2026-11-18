@@ -64,6 +64,29 @@ describe("POST /:id/update", () => {
     expect(content("a")).toBe("<p>new</p><a>l</a>");
   });
 
+  it("updates the FAQ markup, so it stops quoting what the body no longer says", async () => {
+    add("a", "review");
+    const schema = JSON.stringify({
+      "@context": "https://schema.org",
+      "@graph": [
+        { "@type": "BlogPosting", headline: "T" },
+        { "@type": "FAQPage", mainEntity: [{ "@type": "Question", name: "Q?", acceptedAnswer: { "@type": "Answer", text: "Fixed answer." } }] },
+      ],
+    });
+    const res = await post("/a/update", { schema_jsonld: schema });
+    expect(res.status).toBe(200);
+    const stored = (getDb().prepare("SELECT schema_jsonld FROM articles WHERE id = 'a'").get() as { schema_jsonld: string }).schema_jsonld;
+    expect(stored).toContain("Fixed answer.");
+    expect(enqueueTranslation).toHaveBeenCalledWith({ articleId: "a", force: true });
+  });
+
+  it("refuses FAQ markup that is not valid JSON-LD and changes nothing", async () => {
+    add("a", "review");
+    const res = await post("/a/update", { schema_jsonld: "{not json", content: "<p>new</p>" });
+    expect(res.status).toBe(400);
+    expect(content("a")).toBe("<p>old</p>");
+  });
+
   it("re-translates after an edit, so RU is not a translation of the old text", async () => {
     add("a", "review");
     await post("/a/update", { content: "<p>new</p>" });

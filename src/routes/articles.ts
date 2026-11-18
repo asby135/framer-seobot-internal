@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
-import { faqVerdict } from "../lib/jsonld.js";
+import { faqVerdict, sanitizeJsonLd } from "../lib/jsonld.js";
 import { buildGateHandlers, resyncPublishedArticle } from "../services/bootstrap.js";
 import { sanitizeHTML } from "../services/generator.js";
 import {
@@ -263,7 +263,8 @@ articles.post("/:id/delete", async (c) => {
 articles.post("/:id/update", async (c) => {
   const db = getDb();
   const { id } = c.req.param();
-  const body = await c.req.json<{ title?: string; summary?: string; content?: string }>().catch(() => ({} as { title?: string; summary?: string; content?: string }));
+  type EditBody = { title?: string; summary?: string; content?: string; schema_jsonld?: string };
+  const body = await c.req.json<EditBody>().catch(() => ({} as EditBody));
 
   const article = db.prepare("SELECT id, status FROM articles WHERE id = ?").get(id) as { id: string; status: string } | undefined;
   if (!article) {
@@ -289,6 +290,20 @@ articles.post("/:id/update", async (c) => {
     updates.push("content = ?");
     // The same sanitizer generated content goes through; edits skipped it.
     values.push(sanitizeHTML(body.content));
+  }
+  // The FAQ markup is what search engines and AI assistants quote, and an edit
+  // to the body left it stating what the body no longer says (an article kept
+  // "up to five workspaces" in its FAQPage answer after the body was fixed).
+  // Same validation as generation; "" clears it. The forced re-translation
+  // below redoes the RU markup from this one.
+  if (body.schema_jsonld !== undefined) {
+    const raw = body.schema_jsonld.trim();
+    const safe = raw === "" ? "" : sanitizeJsonLd(raw);
+    if (safe === null) {
+      return c.json({ error: "schema_jsonld is not valid JSON-LD" }, 400);
+    }
+    updates.push("schema_jsonld = ?");
+    values.push(safe);
   }
 
   if (updates.length === 0) {
