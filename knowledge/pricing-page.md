@@ -46,6 +46,8 @@ forever · no credit card required
 
 All core CRM Features
 
+100 lead search credits
+
 1 Telegram account connection
 
 50 CRM leads
@@ -76,8 +78,6 @@ All in Free Plan plus
 
 Unlimited CRM leads
 
-Access to 7,000+ integrations via Zapier
-
 Telegram MCP and API for AI workflows
 
 1-week Trial
@@ -91,6 +91,8 @@ $34
 per seat per month, billed yearly
 
 All in Personal Plan plus
+
+500 lead search credits
 
 Unlimited TG account connections, 1 included
 

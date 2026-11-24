@@ -2,7 +2,7 @@
 
 crmchat offers four plans: Starter (free), Personal, Team, and Agency. Billing is monthly, quarterly or yearly: quarterly saves 15% and yearly saves 30%, on both seats and Telegram account connections. Personal and Team come with a 1-week trial.
 
-Source: https://crmchat.ai/pricing (checked 22 October 2026).
+Source: https://crmchat.ai/pricing (checked 24 November 2026).
 
 ## Starter — Free forever
 
@@ -12,6 +12,7 @@ No credit card required.
 
 Includes:
 - All core CRM Features
+- 100 lead search credits (one-time welcome bonus)
 - 1 Telegram account connection
 - 50 CRM leads
 - Unlimited Campaigns
@@ -22,7 +23,6 @@ Includes:
 
 Does NOT include:
 - Unlimited CRM leads
-- Access to 7,000+ integrations via Zapier
 - Telegram MCP and API for AI workflows
 - More than 1 Telegram account connection
 - Team collaboration
@@ -36,7 +36,6 @@ Does NOT include:
 
 Everything in Starter, plus:
 - Unlimited CRM leads
-- Access to 7,000+ integrations via Zapier
 - Telegram MCP and API for AI workflows
 
 Still 1 Telegram account connection.
@@ -53,6 +52,7 @@ Does NOT include:
 **Comprehensive CRM and outreach tools built for collaborative sales teams**
 
 Everything in Personal, plus:
+- 500 lead search credits (one-time bonus when the Team subscription is first paid)
 - Unlimited Telegram account connections, 1 included
 - +$10 per additional Telegram account connection per month ($8 billed quarterly, $7 billed yearly)
 - Team collaboration
@@ -87,6 +87,15 @@ Everything in Team, plus:
 
 To get Agency plan pricing, book a demo: https://calendly.com/hints/intro
 
+## Lead Search Credits Included With Plans
+
+Credits pay for crmchat's lead-research tools (AI Lead Search, Telegram Group Parser, Convert Phones to TG). They belong to the organization and are shared by all its workspaces. Two one-time bonuses are included:
+
+- **Starter: 100 lead search credits.** Every new account gets a one-time welcome bonus of 100 credits at signup. It is granted once per Telegram account, ever: deleting the account and signing up again does not give it again.
+- **Team: 500 lead search credits.** When an organization's Team subscription is paid for the first time (for example when the 1-week trial converts), it gets a one-time bonus of 500 credits.
+
+These are not monthly allowances. More credits can be bought at any time with Top-Up on any plan.
+
 ## Feature Comparison
 
 | Feature | Starter | Personal | Team | Agency |
@@ -98,7 +107,7 @@ To get Agency plan pricing, book a demo: https://calendly.com/hints/intro
 | Custom Proxy for each account | ✅ | ✅ | ✅ | ✅ |
 | Telegram account connections | 1 | 1 | Unlimited (1 included, +$10/mo each) | Unlimited |
 | CRM Leads | 50 | Unlimited | Unlimited | Unlimited |
-| Access to 7,000+ integrations via Zapier | ❌ | ✅ | ✅ | ✅ |
+| Lead search credits (one-time bonuses) | 100 at signup | 100 at signup | 100 at signup + 500 on first Team payment | Custom |
 | Telegram MCP and API for AI workflows | ❌ | ✅ | ✅ | ✅ |
 | Team collaboration | ❌ | ❌ | ✅ | ✅ |
 | AI account warmup | ❌ | ❌ | ✅ | ✅ |
