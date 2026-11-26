@@ -82,6 +82,19 @@ describe("lintArticle", () => {
     expect(issues).toMatch(/FAQ/);
   });
 
+  it("flags notes from the research step written into the article", () => {
+    for (const leak of [
+      "<p>I could not verify its pricing on the vendor site.</p>",
+      "<p>I picked these tools by checking each site.</p>",
+      "<p>That claim is not confirmed here, so check it.</p>",
+      "<p>Pricing was not verifiable from the vendor pages.</p>",
+    ]) {
+      expect(lintArticle(goodArticle(leak), { needsTable: true }).join(" "), leak).toMatch(/research process/);
+    }
+    // Ordinary advice in the second person is fine.
+    expect(lintArticle(goodArticle("<p>Check the vendor site before you buy.</p>"), { needsTable: true })).toEqual([]);
+  });
+
   it("flags claim numbers with no source, but not dates or form numbers", () => {
     expect(lintArticle(goodArticle("<p>Plans cost $49 a month.</p>"), { needsTable: true }).join(" ")).toMatch(
       /source of every number/

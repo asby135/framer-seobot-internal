@@ -152,5 +152,19 @@ export function lintArticle(html: string, opts: GuideLintOptions): string[] {
     issues.push(`Name or link the source of every number; ${unsourced.length} block(s) have none, e.g. "${clip(unsourced[0])}".`);
   }
 
+  // 11. Notes from the research step written into the article. Three batches
+  // in a row (Nov 2026) shipped lines such as "I could not verify its
+  // pricing", "I picked these tools" and "not confirmed here": the writer's
+  // working notes, in the first person, telling the reader what was not
+  // checked. Flagged so the revision pass states the fact or drops it.
+  const RESEARCH_NOTE =
+    /\bI (?:could not|couldn't|was unable to|picked|chose|selected|did not find|didn't find|found no|checked)\b|\bnot (?:confirmed|verified) here\b|\bcould not (?:be )?verif(?:y|ied)\b|\b(?:was|were|is) not verifiable\b|\bper the research\b|\bresearch (?:reviewed|block)\b|\bfact sheet\b/i;
+  const notes = plain.split(/(?<=[.!?])\s+/).filter((s) => RESEARCH_NOTE.test(s));
+  if (notes.length) {
+    issues.push(
+      `Remove notes about the research process (first person or "not confirmed/verified"); state the fact or leave it out. ${notes.length} found, e.g. "${clip(notes[0])}".`
+    );
+  }
+
   return issues;
 }
