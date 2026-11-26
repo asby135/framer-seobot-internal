@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
-import { searchKB, kbExcerpt, articleTextForFactCheck } from "./kb.js";
+import { searchKB, getKBArticle, kbExcerpt, articleTextForFactCheck } from "./kb.js";
 import { generateThumbnail, processScreenshots } from "./assets.js";
 import { queryToSlug, uniqueSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
@@ -71,7 +71,7 @@ export async function generateArticle(
   try {
     // Step 1: Context assembly. 4 docs: a retrieval pin (see kb.ts PINS) can take
     // one slot for the strategically-preferred workflow, leaving 3 for TF-IDF.
-    const kbResults = searchKB(query, 4);
+    const kbResults = withPricingForComparisons(query, searchKB(query, 4));
     if (kbResults.length === 0) {
       flags.low_kb_match = true;
       logger.warn({ query }, "No KB articles matched query");
@@ -240,6 +240,24 @@ async function callClaudeWithRetry(
  * tools checked on their own sites. Everything else (mostly how-tos about
  * crmchat, which the knowledge base covers) gets a light pass.
  */
+/**
+ * Add crmchat's own pricing page to the grounding of articles that compare
+ * tools.
+ *
+ * Retrieval picks the 4 pages closest to the topic, and for "Telebiz
+ * alternatives" the pricing page is never among them. With competitor prices
+ * in the research block and "no source, no number" in the rules, articles
+ * printed every rival's price and "See the crmchat site" for crmchat's own
+ * (Nov 2026). Comparisons, listicles and tool topics, the ones that get the
+ * full research pass, now always carry it.
+ */
+export const PRICING_DOC = "pricing.md";
+export function withPricingForComparisons<T extends { filename: string }>(query: string, kb: T[]): T[] {
+  if (researchDepthFor(query) !== "full" || kb.some((d) => d.filename === PRICING_DOC)) return kb;
+  const pricing = getKBArticle(PRICING_DOC);
+  return pricing ? [...kb, { ...pricing, score: 0 } as unknown as T] : kb;
+}
+
 export function researchDepthFor(topic: string): ResearchDepth {
   if (["tops", "comparison"].includes(articleTypeOf(topic))) return "full";
   if (namesCompetitor(topic)) return "full";
@@ -381,6 +399,7 @@ crmchat MENTIONS (in body text):
 
 COMPETITOR & COMPARISON TOPICS:
 Some topics name a competitor (e.g. "crmchat vs nReach", "Vtiger Telegram integration setup guide"). When the topic involves a competitor:
+- Whenever the article gives prices of other tools (in text or a table), give crmchat's real price next to them, taken from the crmchat pricing page in the knowledge base (Starter free; Personal and Team prices as listed there) and named as "per crmchat's pricing page". Never write "see the crmchat site" or "check crmchat for pricing" for crmchat itself.
 - If a "VERIFIED RESEARCH" block is provided in the user message, treat it as the source of truth for competitor facts. If a fact (especially pricing) is NOT in that block, do NOT state it as fact — write "check their site for current details" instead of inventing a number.
 - For "X vs crmchat" topics: write an honest, balanced comparison. Do not disparage the competitor. Let crmchat win on the dimensions that genuinely matter — Telegram-native depth, no integration overhead — a fair comparison that lands favorably, never a hit piece.
 - For "competitor + task/integration" topics (e.g. "Vtiger Telegram integration"): genuinely help the reader accomplish the task — that usefulness is what earns the citation. Then include crmchat as a natural reframe: "...or skip the integration overhead entirely, since crmchat is built on Telegram natively." An honest reframe, not a tacked-on ad.

@@ -85,3 +85,10 @@ describe("editing instructions", () => {
     expect(editingInstructionsBlock("   ")).toBe("");
   });
 });
+
+describe("crmchat's own price in comparisons", () => {
+  it("tells the writer to give crmchat's real price next to competitors' prices", () => {
+    expect(GENERATOR_SYSTEM_PROMPT).toMatch(/give crmchat's real price/);
+    expect(GENERATOR_SYSTEM_PROMPT).toMatch(/Never write "see the crmchat site"/);
+  });
+});
