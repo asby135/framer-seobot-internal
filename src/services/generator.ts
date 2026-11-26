@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
-import { searchKB, getKBArticle, kbExcerpt, articleTextForFactCheck } from "./kb.js";
+import { searchKB, getKBArticle, fullKBContext, articleTextForFactCheck } from "./kb.js";
 import { generateThumbnail, processScreenshots } from "./assets.js";
 import { queryToSlug, uniqueSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
@@ -122,9 +122,9 @@ export async function generateArticle(
       logger.warn({ query, issues: qualityIssues }, "Quality check issues");
     }
 
-    // Step 4: Grounding validation
-    if (kbResults.length > 0) {
-      const ungroundedClaims = await validateGrounding(article.content, kbResults);
+    // Step 4: Grounding validation, against the whole KB
+    if (fullKBContext()) {
+      const ungroundedClaims = await validateGrounding(article.content);
       if (ungroundedClaims.length > 0) {
         flags.ungrounded_claims = ungroundedClaims;
         logger.warn({ query, claims: ungroundedClaims }, "Ungrounded claims found");
@@ -287,7 +287,7 @@ export function buildTitleInstruction(approvedTitle?: string): string {
 /**
  * The article prompt. Static, and exported so the rules it states are testable.
  *
- * Its title section defers to TITLE_RULES (via the tool's title field). It used
+ * Its title section defers to TITLE_RULES (via the TITLE line of the user message). It used
  * to carry its own TITLE CRAFT rules — reframe the keyword, lead with pain, vary
  * the shape — the opposite of the house style, so an unpinned title got two
  * contradictory briefs. Only the competitor-pricing reframe remains, named as
@@ -458,11 +458,28 @@ function researchBlock(research: string): string {
 }
 
 /** The JSON shape both the article call and the revision call reply with. */
-function articleSchema(approvedTitle?: string) {
+/**
+ * The whole knowledge base as the cached part of the system prompt. Identical
+ * on every call (and so is articleSchema), so the writer and the revision pass
+ * share one cache entry instead of paying for ~90k tokens each time.
+ */
+export function kbSystemBlock(): string | undefined {
+  const kb = fullKBContext();
+  return kb
+    ? `CRMCHAT KNOWLEDGE BASE: every doc. It is the only source for claims about crmchat itself (features, prices, limits). Do NOT invent features. Use the docs that fit the topic and ignore the rest.\n\n${kb}`
+    : undefined;
+}
+
+/**
+ * The reply shape. Static: a schema that changes per call (it used to carry the
+ * title instruction) starts the prompt cache over; the title goes in the user
+ * message instead.
+ */
+function articleSchema() {
   return {
     type: "object" as const,
     properties: {
-      title: { type: "string" as const, description: buildTitleInstruction(approvedTitle) },
+      title: { type: "string" as const, description: "The article title. Follow the TITLE instruction in the user message." },
       slug: { type: "string" as const, description: "URL-friendly slug" },
       category: { type: "string" as const, enum: ["outreach", "crm", "telegram", "sales", "automation", "guides"], description: "Article category" },
       summary: { type: "string" as const, description: "1-2 sentence meta description (under 155 chars)" },
@@ -489,12 +506,11 @@ async function callClaude(
   instructions?: string,
   research = ""
 ): Promise<GeneratedArticle> {
-  const kbContext = kbResults
-    .map(
-      (kb, i) =>
-        `--- KB Article ${i + 1}: ${kb.title} ---\n${kbExcerpt(kb.content)}`
-    )
-    .join("\n\n");
+  // The whole KB is in the cached system block; this only points at the docs
+  // retrieval ranked highest for the topic.
+  const kbHint = kbResults.length
+    ? `\nMost relevant knowledge-base docs for this topic: ${kbResults.map((kb) => kb.title).join("; ")}.`
+    : "";
 
   const relatedContext =
     relatedQueries.length > 0
@@ -522,9 +538,12 @@ Key site pages you can link to where relevant:
     effort: "medium",
     maxTokens: 32000,
     system: GENERATOR_SYSTEM_PROMPT,
-    schema: articleSchema(approvedTitle),
+    cachedContext: kbSystemBlock(),
+    schema: articleSchema(),
     user: `Target keyword: "${query}"
-${kbContext ? `\ncrmchat knowledge base (use for accuracy — do NOT invent features):\n${kbContext}` : ""}
+
+TITLE: ${buildTitleInstruction(approvedTitle)}
+${kbHint}
 ${researchBlock(research)}
 ${relatedContext}
 ${existingArticlesList}
@@ -596,12 +615,17 @@ async function reviseArticle(
     effort: "medium",
     maxTokens: 32000,
     system: GENERATOR_SYSTEM_PROMPT,
+    // Same system, KB block and schema as the writer: the revision reads the
+    // writer's cache entry.
+    cachedContext: kbSystemBlock(),
+    schema: articleSchema(),
     // The title is pinned: it may have been approved at gate 1.
-    schema: articleSchema(approvedTitle ?? draft.title),
-    user: `Revise this draft. Fix ONLY these problems with the writing guide:
+    user: `TITLE: ${buildTitleInstruction(approvedTitle ?? draft.title)}
+
+Revise this draft. Fix ONLY these problems with the writing guide:
 ${issues.map((i) => `- ${i}`).join("\n")}
 
-Keep everything else: the title, every sourced fact, number and link, and what each section says. Do not add facts, numbers or claims that are not already in the draft or in the research block below. A number with no source link and no source in the research block is removed or rewritten without the number, never kept unsourced. Replace a broken internal link with one from the list below or drop the link. Return the whole article as the JSON object.
+Keep everything else: the title, every sourced fact, number and link, and what each section says. Do not add facts, numbers or claims that are not already in the draft, in the research block below, or (for claims about crmchat itself) in the knowledge base. A number with no source link and no source in the research block is removed or rewritten without the number, never kept unsourced. Replace a broken internal link with one from the list below or drop the link. Return the whole article as the JSON object.
 ${researchBlock(research)}
 ${linkTargets.length ? `\nArticles you may link to:\n${linkTargets.map((a) => `- /blog/${a.slug} — "${a.title}"`).join("\n")}` : ""}
 
@@ -817,15 +841,8 @@ Return valid JSON-LD in the schema_jsonld field.`,
   return reply.schema_jsonld || "";
 }
 
-async function validateGrounding(
-  articleContent: string,
-  kbResults: Array<{ title: string; content: string }>
-): Promise<string[]> {
+async function validateGrounding(articleContent: string): Promise<string[]> {
   try {
-    const kbContext = kbResults
-      // The same excerpt the writer saw, so a claim it grounded is checkable.
-      .map((kb) => `--- ${kb.title} ---\n${kbExcerpt(kb.content)}`)
-      .join("\n\n");
 
     // Structured output: Haiku 5.5 thinks by default, so the reply can open
     // with a thinking block; reading content[0] as text silently returned [].
@@ -843,7 +860,9 @@ Only flag specific, verifiable product claims. General marketing language or ind
         required: ["claims"],
         additionalProperties: false,
       },
-      user: `ARTICLE:\n${articleTextForFactCheck(articleContent)}\n\nKNOWLEDGE BASE:\n${kbContext}`,
+      // The whole KB the writer saw, cached; the article varies, so it goes last.
+      cachedContext: `KNOWLEDGE BASE:\n${fullKBContext()}`,
+      user: `ARTICLE:\n${articleTextForFactCheck(articleContent)}`,
     });
     return Array.isArray(reply.claims) ? reply.claims.filter((c) => typeof c === "string") : [];
   } catch (e) {

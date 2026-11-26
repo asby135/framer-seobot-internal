@@ -263,7 +263,10 @@ articles.post("/:id/delete", async (c) => {
 articles.post("/:id/update", async (c) => {
   const db = getDb();
   const { id } = c.req.param();
-  type EditBody = { title?: string; summary?: string; content?: string; schema_jsonld?: string };
+  // retranslate: false when the caller fixes the RU version by hand right
+  // after (POST /:id/translations/ru): the forced re-translation is a paid
+  // API call for text that is about to be overwritten anyway.
+  type EditBody = { title?: string; summary?: string; content?: string; schema_jsonld?: string; retranslate?: boolean };
   const body = await c.req.json<EditBody>().catch(() => ({} as EditBody));
 
   const article = db.prepare("SELECT id, status FROM articles WHERE id = ?").get(id) as { id: string; status: string } | undefined;
@@ -320,7 +323,7 @@ articles.post("/:id/update", async (c) => {
 
   // The RU version was a translation of the old text; redo it. Its completion
   // pushes the new RU to the site too, if the article is live.
-  enqueueTranslation({ articleId: id, force: true });
+  if (body.retranslate !== false) enqueueTranslation({ articleId: id, force: true });
   // And the edit itself goes live now rather than with some unrelated publish.
   if (article.status === "published") void resyncPublishedArticle(id);
 
@@ -536,7 +539,18 @@ articles.post("/:id/translate", async (c) => {
 articles.post("/:id/translations/:locale", async (c) => {
   const db = getDb();
   const { id, locale } = c.req.param();
-  type Body = { title?: string; slug?: string; summary?: string; content?: string; auto?: boolean };
+  // manual: false stores a hand fix (say, a corrected price) while leaving the
+  // locale to the translator for later edits; by default a hand-written
+  // version is kept through every re-translation.
+  type Body = {
+    title?: string;
+    slug?: string;
+    summary?: string;
+    content?: string;
+    schema_jsonld?: string;
+    manual?: boolean;
+    auto?: boolean;
+  };
   const body = await c.req.json<Body>().catch(() => ({} as Body));
 
   if (!(LOCALES as readonly string[]).includes(locale)) {
@@ -554,23 +568,38 @@ articles.post("/:id/translations/:locale", async (c) => {
   }
 
   const existing = db
-    .prepare("SELECT title, slug, summary, content FROM article_translations WHERE article_id = ? AND locale = ?")
-    .get(id, locale) as { title: string; slug: string | null; summary: string | null; content: string | null } | undefined;
+    .prepare("SELECT title, slug, summary, content, schema_jsonld FROM article_translations WHERE article_id = ? AND locale = ?")
+    .get(id, locale) as
+    | { title: string; slug: string | null; summary: string | null; content: string | null; schema_jsonld: string | null }
+    | undefined;
   const title = body.title?.trim() || existing?.title;
   const content = body.content !== undefined ? sanitizeHTML(body.content) : existing?.content;
   if (!title || !content) {
     return c.json({ error: "A new translation needs a title and content" }, 400);
   }
+  // The RU FAQ markup is what search engines quote from the RU page; a hand
+  // fix to the body left it stating the old text. Same validation as /update.
+  let schema = existing?.schema_jsonld ?? null;
+  if (body.schema_jsonld !== undefined) {
+    const raw = body.schema_jsonld.trim();
+    const safe = raw === "" ? "" : sanitizeJsonLd(raw);
+    if (safe === null) {
+      return c.json({ error: "schema_jsonld is not valid JSON-LD" }, 400);
+    }
+    schema = safe;
+  }
+  const manual = body.manual === false ? 0 : 1;
 
   db.prepare(
-    `INSERT INTO article_translations (id, article_id, locale, title, slug, summary, content, manual)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `INSERT INTO article_translations (id, article_id, locale, title, slug, summary, content, schema_jsonld, manual)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(article_id, locale) DO UPDATE SET
        title = excluded.title,
        slug = excluded.slug,
        summary = excluded.summary,
        content = excluded.content,
-       manual = 1`
+       schema_jsonld = excluded.schema_jsonld,
+       manual = excluded.manual`
   ).run(
     nanoid(),
     id,
@@ -578,13 +607,15 @@ articles.post("/:id/translations/:locale", async (c) => {
     title,
     body.slug?.trim() || existing?.slug || null,
     body.summary !== undefined ? body.summary.trim() : existing?.summary ?? null,
-    content
+    content,
+    schema,
+    manual
   );
-  logger.info({ articleId: id, locale }, "Hand-written translation stored");
+  logger.info({ articleId: id, locale, manual: !!manual }, "Hand-written translation stored");
 
   if (article.status === "published") void resyncPublishedArticle(id);
 
-  return c.json({ article_id: id, locale, title, content_length: content.length, manual: true });
+  return c.json({ article_id: id, locale, title, content_length: content.length, manual: !!manual });
 });
 
 // Bulk-enqueue multiple article translations. Atomic single-request enqueue.

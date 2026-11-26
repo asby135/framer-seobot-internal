@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { env } from "./env.js";
+import { logger } from "./logger.js";
 
 /**
  * Which model does which job, in one place.
@@ -58,6 +59,13 @@ export interface JsonCallParams {
   thinking?: "adaptive" | "off";
   timeoutMs?: number;
   maxRetries?: number;
+  /**
+   * A large block that is the same on every call (the knowledge base). It goes
+   * after `system` with a 1-hour cache marker, so calls within the hour read it
+   * at a fraction of the input price instead of paying for it each time.
+   * Anything that varies per call belongs in `user`, never here.
+   */
+  cachedContext?: string;
 }
 
 /**
@@ -74,7 +82,12 @@ export async function callJson<T>(client: Anthropic, p: JsonCallParams): Promise
   const body = {
     model: p.model,
     max_tokens: p.maxTokens,
-    system: p.system,
+    system: p.cachedContext
+      ? [
+          { type: "text", text: p.system },
+          { type: "text", text: p.cachedContext, cache_control: { type: "ephemeral", ttl: "1h" } },
+        ]
+      : p.system,
     messages: [{ role: "user", content: p.user }],
     thinking: thinkingFor(p.model, p.thinking ?? "adaptive"),
     output_config: {
@@ -86,6 +99,15 @@ export async function callJson<T>(client: Anthropic, p: JsonCallParams): Promise
   const message = await client.messages
     .stream(body as unknown as Anthropic.MessageStreamParams, requestOptions(p, fallback))
     .finalMessage();
+  if (p.cachedContext) {
+    // Zero reads across calls within the hour means something in the prefix
+    // varies per call (system text, schema, thinking or effort settings).
+    const u = message.usage as Anthropic.Usage | undefined;
+    logger.info(
+      { model: p.model, cacheRead: u?.cache_read_input_tokens ?? 0, cacheWrite: u?.cache_creation_input_tokens ?? 0, input: u?.input_tokens ?? 0 },
+      "Cached context usage"
+    );
+  }
   return parseJsonReply<T>(message);
 }
 

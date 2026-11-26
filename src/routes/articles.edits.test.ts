@@ -104,6 +104,15 @@ describe("POST /:id/update", () => {
     await post("/a/update", { title: "Better Title" });
     expect(resyncPublishedArticle).not.toHaveBeenCalled();
   });
+
+  it("skips the paid re-translation when the caller fixes RU by hand", async () => {
+    add("a", "published");
+    const res = await post("/a/update", { content: "<p>new</p>", retranslate: false });
+    expect(res.status).toBe(200);
+    expect(content("a")).toBe("<p>new</p>");
+    expect(enqueueTranslation).not.toHaveBeenCalled();
+    expect(resyncPublishedArticle).toHaveBeenCalledWith("a");
+  });
 });
 
 describe("POST /:id/translations/:locale", () => {
@@ -137,6 +146,32 @@ describe("POST /:id/translations/:locale", () => {
     add("a", "published");
     await post("/a/translations/ru", { title: "Т", content: "<p>x</p>" });
     expect(resyncPublishedArticle).toHaveBeenCalledWith("a");
+  });
+
+  it("updates the RU FAQ markup too, so it stops quoting the old text", async () => {
+    add("a", "review");
+    getDb()
+      .prepare("INSERT INTO article_translations (id, article_id, locale, title, content, schema_jsonld) VALUES ('t', 'a', 'ru', 'Т', '<p>old</p>', '{}')")
+      .run();
+    const schema = JSON.stringify({ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: [{ "@type": "Question", name: "В?", acceptedAnswer: { "@type": "Answer", text: "Новый ответ." } }] });
+    expect((await post("/a/translations/ru", { schema_jsonld: schema })).status).toBe(200);
+    const row = getDb().prepare("SELECT content, schema_jsonld FROM article_translations WHERE article_id = 'a'").get() as { content: string; schema_jsonld: string };
+    expect(row.schema_jsonld).toContain("Новый ответ.");
+    expect(row.content).toBe("<p>old</p>");
+  });
+
+  it("refuses RU FAQ markup that is not valid JSON-LD and changes nothing", async () => {
+    add("a", "review");
+    getDb().prepare("INSERT INTO article_translations (id, article_id, locale, title, content) VALUES ('t', 'a', 'ru', 'Т', '<p>old</p>')").run();
+    expect((await post("/a/translations/ru", { content: "<p>new</p>", schema_jsonld: "{nope" })).status).toBe(400);
+    expect(ru("a")?.content).toBe("<p>old</p>");
+  });
+
+  it("can store a hand fix without locking the locale against later re-translations", async () => {
+    add("a", "review");
+    getDb().prepare("INSERT INTO article_translations (id, article_id, locale, title, content) VALUES ('t', 'a', 'ru', 'Т', '<p>old</p>')").run();
+    await post("/a/translations/ru", { content: "<p>fixed</p>", manual: false });
+    expect(ru("a")).toMatchObject({ content: "<p>fixed</p>", manual: 0 });
   });
 
   it("hands the locale back to the translator on request", async () => {

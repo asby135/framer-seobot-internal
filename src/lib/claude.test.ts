@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseJsonReply, thinkingFor, ModelRefusalError, MODELS, requestOptions } from "./claude.js";
+import type Anthropic from "@anthropic-ai/sdk";
+import { parseJsonReply, thinkingFor, ModelRefusalError, MODELS, requestOptions, callJson } from "./claude.js";
 
 const reply = (content: unknown[], stop_reason = "end_turn") => ({ content, stop_reason }) as never;
 
@@ -59,5 +60,43 @@ describe("requestOptions", () => {
 
   it("sends the fallback beta header only when the model supports it", () => {
     expect(requestOptions({}, true)).toEqual({ headers: { "anthropic-beta": "server-side-fallback-2026-07-01" } });
+  });
+});
+
+describe("callJson with a cached context", () => {
+  const fakeClient = () => {
+    const bodies: Record<string, unknown>[] = [];
+    const client = {
+      messages: {
+        stream: (body: Record<string, unknown>) => {
+          bodies.push(body);
+          return {
+            finalMessage: async () => ({
+              content: [{ type: "text", text: '{"ok":true}' }],
+              stop_reason: "end_turn",
+              usage: { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+            }),
+          };
+        },
+      },
+    };
+    return { client: client as unknown as Anthropic, bodies };
+  };
+  const base = { model: "claude-haiku-5-5", system: "S", user: "U", schema: { type: "object" }, maxTokens: 10 };
+
+  it("puts the block after the system prompt with a 1-hour cache marker", async () => {
+    const { client, bodies } = fakeClient();
+    await callJson(client, { ...base, cachedContext: "KB" });
+    expect(bodies[0].system).toEqual([
+      { type: "text", text: "S" },
+      { type: "text", text: "KB", cache_control: { type: "ephemeral", ttl: "1h" } },
+    ]);
+    expect(bodies[0].messages).toEqual([{ role: "user", content: "U" }]);
+  });
+
+  it("keeps a plain system prompt when there is nothing to cache", async () => {
+    const { client, bodies } = fakeClient();
+    await callJson(client, base);
+    expect(bodies[0].system).toBe("S");
   });
 });

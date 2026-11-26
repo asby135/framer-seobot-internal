@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { kbExcerpt, KB_EXCERPT_CHARS, articleTextForFactCheck, loadKB, searchKB, getKBArticle } from "./kb.js";
+import { readFileSync, readdirSync } from "node:fs";
+import { kbExcerpt, KB_EXCERPT_CHARS, articleTextForFactCheck, loadKB, searchKB, getKBArticle, fullKBContext } from "./kb.js";
 
 /**
  * How much of a knowledge-base page reaches the model.
@@ -76,5 +76,22 @@ describe("search on common words", () => {
     loadKB("knowledge");
     const files = searchKB("how to parse telegram groups", 4).map((r) => r.filename);
     expect(files).toContain("telegram-group-parser.md");
+  });
+});
+
+describe("fullKBContext", () => {
+  it("holds every doc, in a fixed order, so the cached prefix never changes between calls", () => {
+    loadKB("knowledge");
+    const a = fullKBContext();
+    const files = readdirSync("knowledge").filter((f) => f.endsWith(".md")).sort();
+    for (const f of files) expect(a).toContain(`--- KB doc: ${f} (`);
+    expect(a.indexOf(`--- KB doc: ${files[0]} (`)).toBe(0);
+    loadKB("knowledge");
+    expect(fullKBContext()).toBe(a);
+  });
+
+  it("includes the pricing page whole, whatever the topic", () => {
+    loadKB("knowledge");
+    expect(fullKBContext()).toContain(readFileSync("knowledge/pricing.md", "utf-8").trim());
   });
 });

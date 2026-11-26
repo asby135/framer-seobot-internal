@@ -10,6 +10,7 @@ interface KBArticle {
 }
 
 let articles: KBArticle[] = [];
+let fullContext: string | null = null;
 
 /**
  * Load all .md files from the knowledge base directory.
@@ -23,7 +24,27 @@ export function loadKB(dir: string): void {
     const terms = computeTF(content);
     return { filename: f, title, content, terms };
   });
+  fullContext = null;
   logger.info({ count: articles.length }, "Knowledge base loaded");
+}
+
+/**
+ * Every KB doc in one block, in filename order.
+ *
+ * The writer, the revision pass and the fact-checker read the whole knowledge
+ * base rather than the 4 docs TF-IDF picks: a pick missed pricing.md on
+ * comparisons and the articles shipped without crmchat's own price. The block
+ * goes in as a cached prompt prefix, so it must be byte-identical between
+ * calls; it changes only when the KB does (a deploy).
+ */
+export function fullKBContext(): string {
+  if (fullContext === null) {
+    fullContext = [...articles]
+      .sort((a, b) => (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0))
+      .map((a) => `--- KB doc: ${a.filename} (${a.title}) ---\n${a.content.trim()}`)
+      .join("\n\n");
+  }
+  return fullContext;
 }
 
 /**
