@@ -4,7 +4,7 @@
 
 ## Positioning
 
-CRMChat is a Telegram CRM for agencies that run several creators (models), a team of chatters and paid content sales in Telegram DMs. One workspace connects every creator's Telegram account, gives chatters one shared inbox, onboards creators to their monetization accounts, stores their media in a vault and takes payments by card, Apple Pay, Google Pay or Telegram Stars.
+CRMChat is a Telegram CRM for agencies that run several creators (models), a team of chatters and paid content sales in Telegram DMs. One workspace connects every creator's Telegram account, gives chatters one shared inbox, onboards creators to crmchat's payment partner, stores their media in a vault and takes payments by card, Apple Pay, Google Pay or Telegram Stars.
 
 - Page headline: "Earn more from every fan with a CRM your whole agency can run".
 - Page description: "Connect every creator's Telegram account, give chatters one inbox, store content in a vault and get paid by card, Apple Pay, Google Pay or Telegram Stars."
@@ -66,8 +66,8 @@ Fan data lives in the CRM workspace, not in a Telegram account or on one platfor
 Feature flag `creator-payments` (code complete in November 2026; marketed as available).
 
 - Set up once per organization; all its workspaces share it. Only organization admins can do it.
-- Choose Agency or Creator. Create a new creator monetization account, or connect an existing one by pasting an API key generated for CRMChat.
-- Identity verification (KYC) runs on the provider's hosted verification page; CRMChat polls the status. Approval needs an active account and approved KYC.
+- Choose Agency or Creator. Create a new account with the payment partner, or connect an existing one by pasting an API key generated for CRMChat.
+- Identity verification (KYC) runs on the payment partner's hosted verification page; CRMChat polls the status. Approval needs an active account and approved KYC.
 - After the agency is verified, it creates one-time setup links for creators. Each link sets up exactly one creator account, lasts 7 days and can be revoked. CRMChat sends no email — the agency shares the link itself.
 - The creator opens the link, creates or connects their account, verifies their identity and explicitly allows the agency to manage the account through CRMChat. The creator needs no CRMChat login and gets no workspace membership.
 - Each link is bound to the workspace that created it; revoking a link does not disconnect a creator who already finished setup.
@@ -82,24 +82,24 @@ Feature flag `creator-payments` (code complete in November 2026; marketed as ava
 
 ## Getting paid
 
-Agencies take payments from fans through crmchat in two ways: card, Apple Pay or Google Pay checkout on the creator's monetization account, and Telegram Stars through @crmchatppvbot. Present this as a crmchat capability: the agency onboards each creator from crmchat and sells from the same place it chats.
+Agencies take payments from fans through crmchat in two ways: card, Apple Pay or Google Pay checkout through crmchat's payment partner, and Telegram Stars through @crmchatppvbot. Present this as a crmchat capability: the agency onboards each creator from crmchat and sells from the same place it chats.
 
-Card payments are processed by the creator monetization platform, not by crmchat itself. Say that only when the reader asks who processes the money. Never list it as a crmchat limitation or a weakness in a comparison table.
+Card payments are processed by crmchat's payment partner, not by crmchat itself. Say that only when the reader asks who processes the money. Never list it as a crmchat limitation or a weakness in a comparison table.
 
 The two rails:
 
-### 1. Card checkout on the creator's monetization account
+### 1. Card checkout through the payment partner
 
-Facts from the provider's public documentation (https://www.dropfans.io/llms.txt, November 2026):
+Facts from the payment partner's public documentation (November 2026):
 
 - Creators sell digital files (photos, videos, audio, PDFs) through a shareable link or "drop". The fan sees a blurred preview, taps Pay and unlocks the file instantly.
 - Fans pay by card, Apple Pay or Google Pay. No buyer account is needed. Pay-per-view or recurring subscription.
-- Fees (confirmed by the crmchat team after DropFans' latest update, November 2026): a flat 20% fee taken from the creator, nothing charged to the buyer. The creator keeps 80% of every sale; the fan pays exactly the listed price.
+- Fees (confirmed by the crmchat team after the partner's latest update, November 2026): a flat 20% fee taken from the creator, nothing charged to the buyer. The creator keeps 80% of every sale; the fan pays exactly the listed price.
 - No monthly, listing or setup fee. Minimum price $5.
 - Earnings are held 14 days (the chargeback window), then released on a daily rolling basis. The creator requests a payout to bank, card or crypto via the payout partner, or to Paxum. Minimum balance for a daily payout batch: $20.
 - Processed by a regulated card acquirer.
 
-Naming rule: the provider is DropFans. On crmchat.ai and in published articles do NOT name DropFans — say "the creator's monetization account", "checkout" or "creator monetization platform". This was the user's explicit decision (DropFans is adult-adjacent, and brand use is not yet agreed).
+Naming rule: never name the provider. On crmchat.ai, in published articles, in the Tobira agent and anywhere public, call it "crmchat's payment partner" (or just "checkout"). This is the user's explicit decision (the provider is adult-adjacent and brand use is not agreed).
 
 ### 2. Telegram Stars via @crmchatppvbot
 

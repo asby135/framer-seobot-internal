@@ -166,12 +166,6 @@ Build workflows that match how you actually sell
 
 Boost SLA by 50%
 
-Integrate CRMChat with everything you need
-
-+ 7.000 more integrations
-
-Provided by Zapier
-
 Advanced Features
 
 Other interesting features for you to try

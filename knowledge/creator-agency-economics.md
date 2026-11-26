@@ -20,9 +20,9 @@ The business result is loyalty and repeat purchases from the fans who matter mos
 
 Agencies don't want every sale to depend on a single platform's rules, payment flow or inbox. With CRMChat the Telegram relationship is the hub, and the agency chooses how each fan pays:
 
-- **Card checkout on a third-party creator monetization platform** — fans unlock paid content from a blurred preview and pay by card, Apple Pay or Google Pay, with no buyer account. The creator keeps 80% (20% fee from the creator, nothing charged to the buyer) and payouts are released daily after a 14-day hold. Do not name the platform in published content.
+- **Card checkout through crmchat's payment partner** — fans unlock paid content from a blurred preview and pay by card, Apple Pay or Google Pay, with no buyer account. The creator keeps 80% (20% fee from the creator, nothing charged to the buyer) and payouts are released daily after a 14-day hold. Never name the payment partner.
 - **Telegram Stars via @crmchatppvbot** — sell pay-per-view right inside the chat; the fan never leaves Telegram.
-- The agency onboards each creator to the monetization platform from CRMChat (one-time setup links with identity verification) and keeps their media in a vault, so the sales tooling lives next to the conversations.
+- The agency onboards each creator to the payment partner from CRMChat (one-time setup links with identity verification) and keeps their media in a vault, so the sales tooling lives next to the conversations.
 
 Frame this as flexibility and resilience: more ways for fans to pay, less dependence on any single platform.
 
@@ -56,7 +56,7 @@ CRMChat is the operations layer for running personal fan relationships on Telegr
 > Exact, verified capabilities and the list of things NOT to claim are in creator-agency-telegram.md. Use that file for any feature detail.
 
 - **Multi-account inbox with the right account by default** — one chatter handles many model accounts from a single inbox, and CRMChat opens each fan's chat on the account that already talks to them (switchable in the chat header). This keeps conversations personal and consistent at scale — a benefit, not the headline problem.
-- **Getting paid** — card, Apple Pay and Google Pay checkout on the creator's monetization account (no buyer account, creator keeps 80%, daily payouts after a 14-day hold), or Telegram Stars through @crmchatppvbot without leaving the chat.
+- **Getting paid** — card, Apple Pay and Google Pay checkout through crmchat's payment partner (no buyer account, creator keeps 80%, daily payouts after a 14-day hold), or Telegram Stars through @crmchatppvbot without leaving the chat.
 - **Chatter coordination & permissions** — all chatters work from one inbox; the Chatter role cannot delete messages or chats or see billing; each fan has an owner who gets a Telegram ping when the fan writes.
 - **Creator onboarding & vault** — verify the agency once, send each creator a one-time setup link, and keep every creator's photos and videos in a shared vault.
 - **Fan CRM** — custom fields, notes and bot reminders for custom requests and follow-ups.
