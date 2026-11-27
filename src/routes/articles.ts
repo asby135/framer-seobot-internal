@@ -536,6 +536,17 @@ articles.post("/:id/translate", async (c) => {
 // on, even when an edit to the English text forces a re-translation, so a
 // locale can carry text a translation would not produce (the exact wording of
 // a Russian UI, say). `{ auto: true }` hands the locale back to the translator.
+// The stored translation, so a hand fix (POST below) can start from the
+// current text; a review-stage article is not in the Framer collection yet.
+articles.get("/:id/translations/:locale", (c) => {
+  const { id, locale } = c.req.param();
+  const row = getDb()
+    .prepare("SELECT title, slug, summary, content, schema_jsonld, manual FROM article_translations WHERE article_id = ? AND locale = ?")
+    .get(id, locale);
+  if (!row) return c.json({ error: "Translation not found" }, 404);
+  return c.json({ article_id: id, locale, ...(row as object) });
+});
+
 articles.post("/:id/translations/:locale", async (c) => {
   const db = getDb();
   const { id, locale } = c.req.param();

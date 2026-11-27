@@ -174,6 +174,15 @@ describe("POST /:id/translations/:locale", () => {
     expect(ru("a")).toMatchObject({ content: "<p>fixed</p>", manual: 0 });
   });
 
+  it("reads back the stored translation, and 404s when there is none", async () => {
+    add("a", "review");
+    expect((await articles.request("/a/translations/ru")).status).toBe(404);
+    getDb().prepare("INSERT INTO article_translations (id, article_id, locale, title, content, schema_jsonld) VALUES ('t', 'a', 'ru', 'Т', '<p>ру</p>', '{}')").run();
+    const res = await articles.request("/a/translations/ru");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ article_id: "a", locale: "ru", title: "Т", content: "<p>ру</p>", schema_jsonld: "{}" });
+  });
+
   it("hands the locale back to the translator on request", async () => {
     add("a", "review");
     await post("/a/translations/ru", { title: "Т", content: "<p>x</p>" });
