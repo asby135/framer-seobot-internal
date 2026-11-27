@@ -351,32 +351,3 @@ export function kbExcerpt(content: string): string {
   if (content.length <= KB_EXCERPT_CHARS) return content;
   return `${content.slice(0, KB_EXCERPT_CHARS)}\n[…page truncated]`;
 }
-
-/**
- * The article as the fact-checker should read it: all of it, as text.
- *
- * It used to get the first 6,000 characters of HTML, which a 1,000-1,500 word
- * article exceeds — the second product mention the prompt places in a later
- * section was never checked. Markup is dropped so the whole article fits.
- */
-export function articleTextForFactCheck(html: string): string {
-  return html
-    .replace(/<\/(p|h[1-6]|li|tr|blockquote|pre|figcaption)>/gi, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    // Cells apart: "<td>Starter</td><td>$29</td>" read as "Starter$29".
-    .replace(/<\/t[dh]>/gi, " ")
-    // Inline markup vanishes ("A <a>link</a>." stays "A link."); anything
-    // else is a boundary.
-    .replace(/<\/?(a|strong|em|b|i|u|span|code|sup|sub)\b[^>]*>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/[ \t]+/g, " ")
-    .replace(/ *\n */g, "\n")
-    .replace(/\n{2,}/g, "\n")
-    .trim();
-}

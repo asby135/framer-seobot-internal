@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { kbExcerpt, KB_EXCERPT_CHARS, articleTextForFactCheck, loadKB, searchKB, getKBArticle, fullKBContext } from "./kb.js";
+import { kbExcerpt, KB_EXCERPT_CHARS, loadKB, searchKB, getKBArticle, fullKBContext } from "./kb.js";
 
 /**
  * How much of a knowledge-base page reaches the model.
@@ -24,18 +24,6 @@ describe("kbExcerpt", () => {
   });
 });
 
-describe("articleTextForFactCheck", () => {
-  it("checks the whole article, not its first 6,000 characters", () => {
-    // The brand mention the prompt puts in a later section was never checked.
-    const html = "<h2>Intro</h2><p>" + "word ".repeat(2000) + "</p><p>CRMChat costs $5 per seat.</p>";
-    expect(articleTextForFactCheck(html)).toContain("CRMChat costs $5 per seat.");
-  });
-
-  it("sends text, not markup", () => {
-    expect(articleTextForFactCheck('<h2>Title</h2><p>A <a href="/x">link</a>.</p>')).toBe("Title\nA link.");
-  });
-});
-
 describe("legal pages", () => {
   it("are never returned by search, however the query is worded", () => {
     loadKB("knowledge");
@@ -52,15 +40,6 @@ describe("legal pages", () => {
   it("are still reachable by name", () => {
     loadKB("knowledge");
     expect(getKBArticle("privacy-policy.md")).toBeDefined();
-  });
-});
-
-describe("fact-check text keeps table cells apart", () => {
-  it("separates cells and inline markup with spaces", () => {
-    // "<td>Starter</td><td>$29</td>" became "Starter$29" — the pricing rows
-    // the checker most needs to read.
-    const text = articleTextForFactCheck("<table><tr><td>Starter</td><td>$29</td></tr></table>");
-    expect(text).toMatch(/Starter\s+\$29/);
   });
 });
 

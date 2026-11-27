@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
 import { getDb } from "../db/index.js";
-import { searchKB, getKBArticle, fullKBContext, articleTextForFactCheck } from "./kb.js";
+import { searchKB, getKBArticle, fullKBContext } from "./kb.js";
 import { generateThumbnail, processScreenshots } from "./assets.js";
 import { queryToSlug, uniqueSlug } from "../lib/utils.js";
 import { env } from "../lib/env.js";
@@ -122,14 +122,9 @@ export async function generateArticle(
       logger.warn({ query, issues: qualityIssues }, "Quality check issues");
     }
 
-    // Step 4: Grounding validation, against the whole KB
-    if (fullKBContext()) {
-      const ungroundedClaims = await validateGrounding(article.content);
-      if (ungroundedClaims.length > 0) {
-        flags.ungrounded_claims = ungroundedClaims;
-        logger.warn({ query, claims: ungroundedClaims }, "Ungrounded claims found");
-      }
-    }
+    // No separate fact-check pass: a Haiku check against the whole KB flagged
+    // claims the KB states word for word (11-15 per article, Nov 2026), so its
+    // flags were noise. The writer and the revision read the whole KB instead.
 
     // Step 5: Save article to database first (assets reference article via FK)
     const articleId = nanoid();
@@ -839,39 +834,6 @@ ${content.slice(0, 8000)}
 Return valid JSON-LD in the schema_jsonld field.`,
   });
   return reply.schema_jsonld || "";
-}
-
-async function validateGrounding(articleContent: string): Promise<string[]> {
-  try {
-
-    // Structured output: Haiku 5.5 thinks by default, so the reply can open
-    // with a thinking block; reading content[0] as text silently returned [].
-    const reply = await callJson<{ claims: string[] }>(anthropic, {
-      model: MODELS.light,
-      effort: "low",
-      maxTokens: 4096,
-      system: `You are a fact-checker. Compare the article against the product knowledge base.
-Identify any specific product claims (pricing, features, capabilities, limitations) in the article that are NOT supported by the knowledge base.
-Return them in "claims", one ungrounded claim per string; an empty list when every claim is grounded.
-Only flag specific, verifiable product claims. General marketing language or industry knowledge is fine.`,
-      schema: {
-        type: "object",
-        properties: { claims: { type: "array", items: { type: "string" } } },
-        required: ["claims"],
-        additionalProperties: false,
-      },
-      // The whole KB the writer saw, cached; the article varies, so it goes last.
-      cachedContext: `KNOWLEDGE BASE:\n${fullKBContext()}`,
-      user: `ARTICLE:\n${articleTextForFactCheck(articleContent)}`,
-    });
-    return Array.isArray(reply.claims) ? reply.claims.filter((c) => typeof c === "string") : [];
-  } catch (e) {
-    logger.error(
-      { error: e instanceof Error ? e.message : "unknown" },
-      "Grounding validation failed"
-    );
-    return ["Grounding validation failed - manual review recommended"];
-  }
 }
 
 // --- HTML Sanitization ---
